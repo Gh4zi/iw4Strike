@@ -1,0 +1,11 @@
+[package]
+name = "mdl_goldsrc"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "GoldSrc studio models (.mdl v10, Half-Life / Counter-Strike 1.6): parse, decode animation, pose bones, expand triangles."
+
+[dependencies]
+
+[lints]
+workspace = true
