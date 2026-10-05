@@ -3,6 +3,8 @@ mod blood;
 mod breath_hint;
 mod chrome;
 mod compass;
+mod cs_crosshair;
+mod cs_hud;
 mod draw2d;
 mod expr_cache;
 mod flash;
@@ -45,6 +47,7 @@ pub use overhead_names::{
     OverheadPosedHead, OverheadPosedModelFrame, OverheadPosedPlayerFrame,
     OverheadPosedPlayerFramePublished,
 };
+pub use cs_crosshair::{dynamic_crosshair, set_dynamic_crosshair};
 pub use plugin::HudPlugin;
 pub use presentation_scale::{
     HorizontalAlign, PlacedRect, PresentationScale, ScaleClass, VIRTUAL_HEIGHT, VIRTUAL_WIDTH,

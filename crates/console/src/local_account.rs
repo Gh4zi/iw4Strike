@@ -19,6 +19,8 @@ const SNAPSHOT_BYTES: usize = EMPTY_BYTES + 16 + PLAYER_DATA_BUFFER_BYTES;
 pub(crate) struct AccountPersistence {
     path: Option<PathBuf>,
     saved: Option<AccountSnapshot>,
+    /// The snapshot being written and its writer thread.
+    writing: Option<(AccountSnapshot, std::thread::JoinHandle<io::Result<()>>)>,
 }
 
 pub(crate) fn load(
@@ -71,7 +73,63 @@ pub(crate) fn save(
         return;
     };
     let mut authority = authority;
-    let snapshot = if *role == frame::RuntimeRole::Listen {
+    let listen = *role == frame::RuntimeRole::Listen;
+
+    // Land a write that finished; while one is in flight, nothing else starts.
+    if let Some((snapshot, writer)) = persistence.writing.take() {
+        if !writer.is_finished() {
+            persistence.writing = Some((snapshot, writer));
+            return;
+        }
+        match writer.join() {
+            Ok(Ok(())) => {
+                if listen && let Some(authority) = authority.as_mut() {
+                    authority
+                        .0
+                        .persistent_data_mut()
+                        .acknowledge_saved(account.id, snapshot.revision);
+                }
+                if let Some(receipt) = receipt.as_mut() {
+                    receipt.0 = Some(snapshot.clone());
+                }
+                persistence.saved = Some(snapshot.clone());
+                account.snapshot = Some(snapshot);
+            }
+            Ok(Err(error)) => warn!("could not save local account {}: {error}", path.display()),
+            Err(_) => warn!("local account save thread panicked"),
+        }
+    }
+
+    // Revisions first: copying the player data every frame to find it unchanged cost more than
+    // anything this system does when it has work.
+    let live_revision = if listen {
+        authority
+            .as_ref()
+            .and_then(|authority| authority.0.persistent_data().revision(account.id))
+    } else {
+        account.snapshot.as_ref().map(|snapshot| snapshot.revision)
+    };
+    let Some(live_revision) = live_revision else {
+        return;
+    };
+    if let Some(saved) = persistence.saved.as_ref()
+        && saved.revision == live_revision
+    {
+        if let Some(receipt) = receipt.as_mut()
+            && receipt.0.as_ref().map(|snapshot| snapshot.revision) != Some(live_revision)
+        {
+            receipt.0 = Some(saved.clone());
+        }
+        if listen && let Some(authority) = authority.as_mut() {
+            authority
+                .0
+                .persistent_data_mut()
+                .acknowledge_saved(account.id, live_revision);
+        }
+        return;
+    }
+
+    let snapshot = if listen {
         authority
             .as_ref()
             .and_then(|authority| authority.0.persistent_data().snapshot(account.id))
@@ -81,43 +139,29 @@ pub(crate) fn save(
     let Some(snapshot) = snapshot else {
         return;
     };
-    if persistence.saved.as_ref() == Some(&snapshot) {
-        if let Some(receipt) = receipt.as_mut() {
-            receipt.0 = Some(snapshot.clone());
-        }
-        if *role == frame::RuntimeRole::Listen
-            && let Some(authority) = authority.as_mut()
-        {
-            authority
-                .0
-                .persistent_data_mut()
-                .acknowledge_saved(account.id, snapshot.revision);
-        }
-        return;
-    };
-
     let next = LocalAccount {
         id: account.id,
         key: account.key.clone(),
         snapshot: Some(snapshot.clone()),
     };
-    match save_current(&path, &next, persistence.saved.as_ref()) {
-        Ok(()) => {
-            if *role == frame::RuntimeRole::Listen
-                && let Some(authority) = authority.as_mut()
-            {
-                authority
-                    .0
-                    .persistent_data_mut()
-                    .acknowledge_saved(account.id, snapshot.revision);
-            }
-            if let Some(receipt) = receipt.as_mut() {
-                receipt.0 = Some(snapshot.clone());
-            }
-            persistence.saved = Some(snapshot.clone());
-            account.snapshot = Some(snapshot);
+    // The write locks, rereads and replaces the file; on Windows that can stall for hundreds of
+    // milliseconds, so it runs off the frame and lands on a later one.
+    let expected = persistence.saved.clone();
+    let writer = std::thread::Builder::new()
+        .name("iw4l-account-save".into())
+        .spawn(move || save_current(&path, &next, expected.as_ref()));
+    match writer {
+        Ok(writer) => persistence.writing = Some((snapshot, writer)),
+        Err(error) => warn!("could not start the local account save: {error}"),
+    }
+}
+
+impl AccountPersistence {
+    /// Wait for a save still on its way to disk; the process is about to exit.
+    pub(crate) fn finish_pending_save(&mut self) {
+        if let Some((_, writer)) = self.writing.take() {
+            let _ = writer.join();
         }
-        Err(error) => warn!("could not save local account {}: {error}", path.display()),
     }
 }
 

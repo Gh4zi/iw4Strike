@@ -426,6 +426,11 @@ impl PersistentDataStore {
             .definition
             .enum_index(&record.bytes, record.definition.lookup(keys)?)?)
     }
+    /// The account's current revision, without copying its data.
+    pub fn revision(&self, account: AccountId) -> Option<u64> {
+        self.accounts.get(&account).map(|record| record.revision)
+    }
+
     pub fn snapshot(&self, account: AccountId) -> Option<AccountSnapshot> {
         let record = self.accounts.get(&account)?;
         Some(AccountSnapshot {

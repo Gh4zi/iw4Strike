@@ -44,6 +44,10 @@ pub(crate) fn update(
             .as_ref()
             .and_then(|w| w.0.facts_of(weapon))
             .is_some_and(|f| f.can_hold_breath)
+        // CS guns have no breath to hold; SHIFT walks.
+        || weapons.as_ref().is_some_and(|w| {
+            weapon_iw4::cs::cs_weapon_index_for(&w.0.script_name_of(weapon)).is_some()
+        })
     {
         return;
     }

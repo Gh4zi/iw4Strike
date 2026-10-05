@@ -7,6 +7,7 @@ description = "Client UI state, settings and loading overlays."
 
 [dependencies]
 diag.workspace = true
+movement_iw4 = { path = "../movement_iw4" }
 bevy.workspace = true
 asset_core.workspace = true
 asset_game.workspace = true

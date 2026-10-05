@@ -4,10 +4,10 @@ use crate::observation::{BotObservation, WeaponAction, WeaponSlot};
 
 /// Ticks a failed decision waits before the same state may commit again. Without
 /// it an impossible reload and an impossible switch can alternate every think.
-const RETRY_TICKS: u32 = 20;
+const RETRY_TICKS: u32 = sim::ticks_for_ms(1000);
 /// Slack over the simulator's own timing before a commitment is abandoned.
-const DEADLINE_SLACK_TICKS: u32 = 8;
-const TICK_MS: i32 = 50;
+const DEADLINE_SLACK_TICKS: u32 = sim::ticks_for_ms(400);
+const TICK_MS: i32 = sim::MATCH_TICK_MS as i32;
 /// Used when the content has no timings for the weapon in hand. Reloading is a
 /// legal command either way; only the comparison needs real numbers.
 const DEFAULT_ACTION_MS: i32 = 2000;

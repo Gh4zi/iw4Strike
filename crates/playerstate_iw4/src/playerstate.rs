@@ -121,6 +121,85 @@ pub struct PlayerState {
     pub kill_cam_look_at_entity: i32,
     pub kill_cam_client_num: i32,
     pub recoil_scale: i32,
+    /// CS movement: jump stamina in ms (GoldSrc `fuser2`). Slows the next jump and ground speed.
+    pub cs_stamina: f32,
+    /// CS movement: duck timer in ms (GoldSrc `flDuckTime`), counts down from 1000.
+    pub cs_duck_time: f32,
+    /// CS movement: `cs_duck::IN_DUCK` while the view lowers, `cs_duck::DUCKED` once the hull shrank.
+    pub cs_duck_state: u32,
+    /// CS movement: downward speed while airborne, kept for landing damage (GoldSrc `flFallVelocity`).
+    pub cs_fall_velocity: f32,
+    /// CS weapons: recoil punch (pitch, yaw, roll) bullets and the view follow (`punchangle`).
+    pub cs_punch: [f32; 3],
+    /// CS weapons: shots in the current spray (`m_iShotsFired`).
+    pub cs_shots_fired: i32,
+    /// CS weapons: spray inaccuracy (`m_flAccuracy`).
+    pub cs_accuracy: f32,
+    /// CS weapons: server time of the previous shot, 0 before the first.
+    pub cs_last_fire_ms: i32,
+    /// CS weapons: side the lateral kick pushes (`m_iDirection`).
+    pub cs_recoil_dir: i32,
+    /// CS weapons: server time the spray count next drops (`m_flDecreaseShotsFired`).
+    pub cs_decrease_shots_ms: i32,
+    /// CS weapons: 1 while the trigger is held since the last shot (`m_bDelayFire`).
+    pub cs_delay_fire: u32,
+    /// CS weapons: the weapon the state above belongs to; a switch resets it.
+    pub cs_gun_weapon: u32,
+    /// CS knife: server time the next slash / stab may start (`m_flNextPrimaryAttack`,
+    /// `m_flNextSecondaryAttack`).
+    pub cs_next_attack_ms: i32,
+    pub cs_next_attack2_ms: i32,
+    /// CS knife: the last attack, `cs_knife` bits (animation, what it hit, swing count).
+    pub cs_knife: u32,
+    /// CS scope: the zoomed field of view (40, 10), 0 unzoomed (`m_iFOV`).
+    pub cs_zoom: u32,
+    /// CS scope: the zoom a shot dropped, restored once the gun is ready again
+    /// (`m_iLastZoom` while `m_bResumeZoom`); 0 for none.
+    pub cs_last_zoom: u32,
+    /// CS grenade in hand: `cs_grenade::IDLE`, `PULLED` (pin out, `cs_next_attack2_ms` the pull
+    /// time) or `THROWN` (`cs_last_fire_ms` the throw); `cs_next_attack_ms` is when it next acts.
+    pub cs_grenade: u32,
+    /// CS kevlar points (0-100) and whether a helmet comes with them (`m_iKevlar`).
+    pub cs_armor: u32,
+    pub cs_helmet: u32,
+    /// CS flashbang on this player: when it went off (server ms), how long it holds the screen
+    /// white and then fades (ms), and how white (255 full) — `weapon_iw4::cs::CsFlash`.
+    pub cs_flash_start_ms: i32,
+    pub cs_flash_hold_ms: i32,
+    pub cs_flash_fade_ms: i32,
+    pub cs_flash_alpha: u32,
+    /// CS guns with their silencer on, one bit per CS weapon index (`cs::silencer_bit`), and
+    /// until when (server ms) a silencer is being attached or detached (no firing).
+    pub cs_silencers: u32,
+    pub cs_adjust_ms: i32,
+}
+
+pub mod cs_grenade {
+    pub const IDLE: u32 = 0;
+    pub const PULLED: u32 = 1;
+    pub const THROWN: u32 = 2;
+}
+
+/// `PlayerState::cs_knife`: the low nibble names the animation, the next two bits what the
+/// blade met, and the rest counts slashes (they alternate between two animations).
+pub mod cs_knife {
+    pub const ANIM_MASK: u32 = 0xf;
+    pub const ANIM_SLASH1: u32 = 1;
+    pub const ANIM_SLASH2: u32 = 2;
+    pub const ANIM_STAB: u32 = 3;
+    pub const ANIM_STAB_MISS: u32 = 4;
+    pub const HIT_SHIFT: u32 = 4;
+    pub const HIT_MASK: u32 = 0x3 << HIT_SHIFT;
+    pub const HIT_NOTHING: u32 = 0;
+    pub const HIT_PLAYER: u32 = 1;
+    pub const HIT_WORLD: u32 = 2;
+    pub const SWING_SHIFT: u32 = 8;
+}
+
+pub mod cs_duck {
+    pub const IN_DUCK: u32 = 0x1;
+
+    pub const DUCKED: u32 = 0x2;
 }
 
 pub mod eflags {
@@ -335,6 +414,32 @@ impl PlayerState {
         kill_cam_look_at_entity: 0,
         kill_cam_client_num: 0,
         recoil_scale: 0,
+        cs_stamina: 0.0,
+        cs_duck_time: 0.0,
+        cs_duck_state: 0,
+        cs_fall_velocity: 0.0,
+        cs_punch: [0.0; 3],
+        cs_shots_fired: 0,
+        cs_accuracy: 0.0,
+        cs_last_fire_ms: 0,
+        cs_recoil_dir: 0,
+        cs_decrease_shots_ms: 0,
+        cs_delay_fire: 0,
+        cs_gun_weapon: 0,
+        cs_next_attack_ms: 0,
+        cs_next_attack2_ms: 0,
+        cs_knife: 0,
+        cs_zoom: 0,
+        cs_last_zoom: 0,
+        cs_grenade: 0,
+        cs_armor: 0,
+        cs_helmet: 0,
+        cs_flash_start_ms: 0,
+        cs_flash_hold_ms: 0,
+        cs_flash_fade_ms: 0,
+        cs_flash_alpha: 0,
+        cs_silencers: 0,
+        cs_adjust_ms: 0,
     };
 
     pub fn anim(&self) -> AnimPair {

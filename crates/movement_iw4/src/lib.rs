@@ -11,6 +11,9 @@ mod cmdscale;
 mod collision;
 mod correct_solid;
 mod crash;
+pub mod cs;
+pub mod rules;
+pub mod source;
 mod dmgtimer;
 mod drop_timers;
 mod events;
@@ -83,6 +86,7 @@ pub use pml::Pml;
 pub use pmove::Pmove;
 pub use single::{
     GroundTraceInput, MoveBounds, PmoveResult, PmoveSingle, PmoveSingleContext, pmove,
+    pmove_with_rules,
 };
 pub(crate) use slide::project_velocity;
 pub use slide::{slide_move, step_slide_move};

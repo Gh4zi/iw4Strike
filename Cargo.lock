@@ -317,6 +317,7 @@ dependencies = [
  "fastfile_iw4",
  "fastfile_iw5",
  "fastfile_t5",
+ "mdl_source",
 ]
 
 [[package]]
@@ -455,6 +456,7 @@ dependencies = [
  "frame",
  "libc",
  "lighting_iw4",
+ "movement_iw4",
  "png",
  "render_material",
  "serde_json",
@@ -2261,15 +2263,18 @@ dependencies = [
  "hud",
  "input_iw4",
  "master_protocol",
+ "movement_iw4",
  "net",
  "perf",
  "render",
+ "render_anim",
  "render_frontend",
  "render_fx",
  "replay",
  "session",
  "sim",
  "ui",
+ "weapon_iw4",
 ]
 
 [[package]]
@@ -3426,6 +3431,7 @@ dependencies = [
  "gamemode_iw4",
  "hud_iw4",
  "math_iw4",
+ "mdl_source",
  "movement_iw4",
  "net",
  "playerstate_iw4",
@@ -4064,6 +4070,17 @@ name = "math_iw4"
 version = "0.1.0"
 dependencies = [
  "libm",
+]
+
+[[package]]
+name = "mdl_goldsrc"
+version = "0.1.0"
+
+[[package]]
+name = "mdl_source"
+version = "0.1.0"
+dependencies = [
+ "mdl_goldsrc",
 ]
 
 [[package]]
@@ -5284,6 +5301,7 @@ version = "0.1.0"
 dependencies = [
  "anim_iw4",
  "asset_anim",
+ "asset_audio",
  "asset_core",
  "asset_game",
  "asset_iw4",
@@ -5304,10 +5322,14 @@ dependencies = [
  "hud_iw4",
  "lighting_iw4",
  "math_iw4",
+ "mdl_goldsrc",
+ "mdl_source",
+ "movement_iw4",
  "net",
  "perf",
  "playerstate_iw4",
  "render_frame",
+ "render_gpu",
  "render_material",
  "render_scene",
  "sim",
@@ -5378,6 +5400,7 @@ dependencies = [
  "render_anim",
  "render_frame",
  "render_fx",
+ "render_gpu",
  "render_material",
  "render_scene",
  "sim",
@@ -5864,6 +5887,7 @@ dependencies = [
  "frame",
  "gamemode_iw4",
  "hud_iw4",
+ "movement_iw4",
  "net",
  "perf",
  "render_frontend",
@@ -6694,6 +6718,7 @@ dependencies = [
  "bevy",
  "diag",
  "frame",
+ "movement_iw4",
  "net",
  "session",
  "sim",

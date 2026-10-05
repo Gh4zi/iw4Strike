@@ -180,7 +180,8 @@ pub(crate) fn steer(
                 2500.0
             });
         }
-        speed *= 1.0 - turn / 180.0 * 0.05;
+        // Authored as a per-20Hz-frame bleed; compounded so it holds at any tick rate.
+        speed *= (1.0 - turn / 180.0 * 0.05).powf(seconds / 0.05);
     }
     projectile.velocity = (direction * speed).to_array();
     projectile.pos = entity_iw4::Trajectory {

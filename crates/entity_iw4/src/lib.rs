@@ -73,6 +73,7 @@ pub use script_mover::{
     CG_SCRIPT_MOVER_NODRAW, SCRIPT_MOVER_BMODEL_SOLID, script_mover_add_bmodel,
 };
 pub use trajectory::{
-    TR_GRAVITY, TR_INTERPOLATE, TR_LINEAR, TR_LINEAR_STOP, TR_STATIONARY, Trajectory,
+    TR_GRAVITY, TR_GRAVITY_HALF, TR_INTERPOLATE, TR_LINEAR, TR_LINEAR_STOP, TR_STATIONARY,
+    Trajectory, is_gravity,
     evaluate_trajectory, evaluate_trajectory_delta, truncated_tr_delta,
 };

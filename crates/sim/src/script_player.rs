@@ -111,6 +111,47 @@ pub(crate) fn spawn(
         },
     );
     world.link_player_standing_area(id);
+    give_cs_knife(world, id);
+}
+
+/// The CS fork's knife: every living player owns it from spawn on, held when nothing else is,
+/// and scripts cannot take it away.
+fn give_cs_knife(world: &mut FrameWorld, id: ClientId) {
+    if !SCRIPT_GIVES_NO_WEAPONS
+        || !world
+            .client_meta(id)
+            .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+    {
+        return;
+    }
+    let Some(knife) = world.weapon_index_by_script_name(weapon_iw4::cs::CS_KNIFE.mw2_name) else {
+        return;
+    };
+    let Some(facts) = world.combat_facts_for(knife) else {
+        return;
+    };
+    let Some(ps) = world.player_mut(id) else {
+        return;
+    };
+    if !ps.weapons.contains(&(knife as i32)) {
+        inventory_add_weapon(ps, knife, false);
+        if !ps.weapons.contains(&(knife as i32)) {
+            return;
+        }
+        let (clip, clip_alt, stock) = weapon_iw4::spawn_clip_stock(&facts, 0);
+        seed_ps_ammo_tables(ps, knife, &facts, clip, clip_alt, false, stock);
+        world.client_meta_mut(id).set_ammo(knife, clip, stock);
+    }
+    if world.player(id).is_some_and(|ps| ps.weapon == 0) {
+        let _ = set_spawn_weapon(world, id, knife);
+    }
+}
+
+fn is_cs_knife(world: &FrameWorld, weapon: u32) -> bool {
+    SCRIPT_GIVES_NO_WEAPONS
+        && world
+            .combat_facts_for(weapon)
+            .is_some_and(|facts| weapon_iw4::cs::is_knife(facts.cs_weapon))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -253,6 +294,25 @@ pub(crate) fn debug_damage(world: &mut FrameWorld, tick: Tick, id: ClientId, amo
     crate::script::player_damage(world.ecs(), tick, &hit);
 }
 
+/// A hard landing, through the gametype's damage callback like any world hit.
+pub(crate) fn fall_damage(world: &mut FrameWorld, tick: Tick, id: ClientId, amount: i32) {
+    let origin = world.player(id).map_or([0.0; 3], |ps| ps.origin);
+    let hit = Hit {
+        victim: id,
+        attacker: None,
+        amount,
+        flags: 0,
+        means: "MOD_FALLING",
+        weapon: 0,
+        point: origin,
+        dir: [0.0, 0.0, -1.0],
+        hitloc: 0,
+        inflictor: None,
+        commit: None,
+    };
+    crate::script::player_damage(world.ecs(), tick, &hit);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Finish {
     Hurt,
@@ -263,6 +323,66 @@ pub(crate) enum Finish {
 pub(crate) fn god_mode(world: &FrameWorld, id: ClientId) -> bool {
     world.bootstrap_ref().allow_debug_actions
         && world.client_meta(id).is_some_and(|meta| meta.god_mode)
+}
+
+/// CS kevlar and helmet (`CBasePlayer::TakeDamage`): a covered hit (body and arms with a vest,
+/// the head only with a helmet; never legs or falls) keeps part of its damage and wears the
+/// vest down. Explosions count as body hits.
+pub(crate) fn cs_armor_absorb(
+    world: &mut FrameWorld,
+    id: ClientId,
+    amount: i32,
+    means: &str,
+    weapon: &str,
+    hitloc: &str,
+) -> i32 {
+    let penetration = weapon_iw4::cs::cs_weapon_index_for(weapon)
+        .map_or(1.0, weapon_iw4::cs::armor_penetration);
+    let Some(ps) = world.player_mut(id) else {
+        return amount;
+    };
+    let head = matches!(hitloc, "head" | "helmet");
+    let legs = hitloc.contains("leg") || hitloc.contains("foot");
+    let uncovered = matches!(
+        means,
+        "MOD_FALLING" | "MOD_SUICIDE" | "MOD_TRIGGER_HURT" | "MOD_CRUSH"
+    );
+    if ps.cs_armor == 0 || amount <= 0 || uncovered || legs || (head && ps.cs_helmet == 0) {
+        return amount;
+    }
+    let blast = means.contains("GRENADE") || means.contains("EXPLOSIVE") || means.contains("PROJECTILE");
+    let (through, left) = weapon_iw4::cs::armor_absorb(
+        amount as f32,
+        ps.cs_armor as f32,
+        penetration,
+        blast,
+    );
+    ps.cs_armor = left as u32;
+    if ps.cs_armor == 0 {
+        ps.cs_helmet = 0;
+    }
+    diag::debug!(
+        Sim,
+        "cs armor: client {} {amount} {means} {hitloc} -> {} through, armor {}",
+        id.0,
+        through as i32,
+        ps.cs_armor
+    );
+    through as i32
+}
+
+/// CS `buy vest` / `buy vesthelm`: a full vest, and a helmet with the second.
+pub(crate) fn cs_buy_armor(world: &mut FrameWorld, id: ClientId, helmet: bool) {
+    if !world
+        .client_meta(id)
+        .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+    {
+        return;
+    }
+    if let Some(ps) = world.player_mut(id) {
+        ps.cs_armor = 100;
+        ps.cs_helmet = u32::from(helmet || ps.cs_helmet != 0);
+    }
 }
 
 pub(crate) fn finish_damage(
@@ -456,6 +576,15 @@ fn living(world: &FrameWorld, id: ClientId) -> Result<(), String> {
     Ok(())
 }
 
+/// MW2 weapons, equipment and killstreak items all reach players through GSC `giveweapon`.
+/// The CS fork spawns everyone empty-handed until CS weapons replace them; the console
+/// `give` command still works.
+const SCRIPT_GIVES_NO_WEAPONS: bool = true;
+
+/// The CS fork has no MW2 perks or deathstreaks: GSC `setperk` (class perks, deathstreak perks
+/// such as Martyrdom or Final Stand) gives nothing, so every `hasperk` check fails.
+pub(crate) const SCRIPT_GIVES_NO_PERKS: bool = true;
+
 pub(crate) fn give_weapon(
     world: &mut FrameWorld,
     id: ClientId,
@@ -463,7 +592,7 @@ pub(crate) fn give_weapon(
     akimbo: bool,
 ) -> Result<(), String> {
     living(world, id)?;
-    if world.weapon_is_melee_only(weapon) {
+    if SCRIPT_GIVES_NO_WEAPONS || world.weapon_is_melee_only(weapon) {
         return Ok(());
     }
     let facts = world
@@ -495,6 +624,9 @@ pub(crate) fn give_weapon(
 }
 
 pub(crate) fn take_weapon(world: &mut FrameWorld, id: ClientId, weapon: u32) {
+    if is_cs_knife(world, weapon) {
+        return;
+    }
     let Some(ps) = world.player_mut(id) else {
         return;
     };
@@ -530,6 +662,7 @@ pub(crate) fn take_all_weapons(world: &mut FrameWorld, id: ClientId) {
     let meta = world.client_meta_mut(id);
     meta.clear_ammo_inventory();
     meta.controls.switch_to = 0;
+    give_cs_knife(world, id);
 }
 
 pub(crate) fn set_spawn_weapon(
@@ -538,6 +671,14 @@ pub(crate) fn set_spawn_weapon(
     weapon: u32,
 ) -> Result<(), String> {
     living(world, id)?;
+    // Scripts name the class gun they meant to give; the CS fork gave nothing, so keep the knife.
+    if SCRIPT_GIVES_NO_WEAPONS
+        && !world
+            .player(id)
+            .is_some_and(|ps| ps.weapons.contains(&(weapon as i32)))
+    {
+        return Ok(());
+    }
     let facts = world
         .combat_facts_for(weapon)
         .unwrap_or_else(weapon_iw4::WeaponCombatFacts::none);

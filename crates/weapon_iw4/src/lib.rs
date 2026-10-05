@@ -4,6 +4,7 @@
 mod ads_allow;
 mod ads_overlay;
 mod ammo;
+pub mod cs;
 pub mod event_sound;
 mod fire_sound;
 mod fire_weapon;

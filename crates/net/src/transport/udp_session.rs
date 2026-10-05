@@ -277,7 +277,7 @@ impl PeerReplicationState {
     }
 }
 
-const FULL_SNAPSHOT_RESEND_TICKS: u32 = 10;
+const FULL_SNAPSHOT_RESEND_TICKS: u32 = sim::ticks_for_ms(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AppliedAction {

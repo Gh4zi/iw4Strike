@@ -2399,7 +2399,7 @@ fn emit_smodel_static_lane(
     if list.logged_buckets != Some(buckets) {
         list.logged_buckets = Some(buckets);
         let [rigid, skinned, cached, unread, consume] = buckets;
-        diag::info!(
+        diag::debug!(
             World,
             "smodel buckets: rigid={rigid} skinned={skinned} cached={cached} unread={unread} consume={consume}",
         );
@@ -2490,6 +2490,7 @@ pub(crate) fn rebuild_static_draw_lane(
     world_generation: Option<Res<WorldGeneration>>,
 ) {
     let _post_rebuild = perf::Span::HostPostRebuildMs.enter();
+    let rebuild_started = std::time::Instant::now();
     let (world_plan, scene) = world_geom;
     let (smodel_plan, lighting, dpvs, smc_cache, smc_enable, pretess_dvar) = smodel;
     let smc_on = smc_enable.enabled != Some(false);
@@ -2578,6 +2579,7 @@ pub(crate) fn rebuild_static_draw_lane(
                 list.census.smodel_hidden_n = smodel_walk.hidden_n;
                 list.last_smodel_picks.clone_from(&smodel_walk.picks);
             }
+            let walked = rebuild_started.elapsed();
             if !world_hold {
                 emit_world_static_lane(
                     list.as_mut(),
@@ -2587,6 +2589,7 @@ pub(crate) fn rebuild_static_draw_lane(
                     &runtime.catalog,
                 );
             }
+            let world_done = rebuild_started.elapsed();
             if !smodel_hold && let Some(plan) = smodel_plan.as_deref() {
                 emit_smodel_static_lane(
                     list.as_mut(),
@@ -2598,11 +2601,31 @@ pub(crate) fn rebuild_static_draw_lane(
                     &runtime.catalog,
                 );
             }
+            let smodel_done = rebuild_started.elapsed();
             compose_static_lanes(list.as_mut());
+            let total = rebuild_started.elapsed();
+            if total.as_millis() >= SLOW_STATIC_REBUILD_MS {
+                diag::warn!(
+                    World,
+                    "slow static draw rebuild: {:.1}ms (walk {:.1} world {:.1} smodel {:.1} \
+                     compose {:.1}) world_hold={world_hold} smodel_hold={smodel_hold} \
+                     generation_hold={generation_hold} world_n={} smodel_n={}",
+                    total.as_secs_f64() * 1000.0,
+                    walked.as_secs_f64() * 1000.0,
+                    (world_done - walked).as_secs_f64() * 1000.0,
+                    (smodel_done - world_done).as_secs_f64() * 1000.0,
+                    (total - smodel_done).as_secs_f64() * 1000.0,
+                    list.census.world_n,
+                    list.census.smodel_n,
+                );
+            }
         }
     }
     list.last_static = Some((world_id, vis_id, eye_key));
 }
+
+/// A static lane rebuild this slow is a visible hitch and gets logged with its breakdown.
+const SLOW_STATIC_REBUILD_MS: u128 = 20;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SunShadowCasterPlan {

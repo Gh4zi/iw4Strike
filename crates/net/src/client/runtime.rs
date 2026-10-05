@@ -550,6 +550,14 @@ pub fn reconcile_prediction(
         } else {
             prediction.0.retire_acks(ack);
         }
+        let metrics = prediction.0.metrics();
+        if metrics.snapshots > 0
+            && metrics
+                .snapshots
+                .is_multiple_of(u64::from(sim::ticks_for_ms(PREDICTION_REPORT_MS)))
+        {
+            diag::info!(Net, "prediction: {}", metrics.report_line());
+        }
         for cmd in tick.frame.svc_sounds {
             reliable.svc.sound.write(crate::SvcLocalSound {
                 stop: cmd.stop,
@@ -1000,6 +1008,49 @@ pub fn sample_client_input(
             input_iw4::set_ads(&mut actions.client, false);
         }
     }
+    // Counter-Strike slot keys: select the owned weapon in that slot.
+    let weapon_slots = std::mem::take(&mut actions.client.weapon_slots);
+    if let Some(ps) = ps.filter(|_| !frozen) {
+        for slot in weapon_slots {
+            if !input_iw4::weapon_select::weapon_cycle_allowed(ps, clock.time(), select.time, 0, 0)
+            {
+                continue;
+            }
+            let world = prediction.0.world();
+            let in_slot: Vec<u32> = ps
+                .weapons
+                .iter()
+                .filter_map(|&weapon| u32::try_from(weapon).ok().filter(|&w| w != 0))
+                .filter(|&weapon| {
+                    world
+                        .weapon_combat_row(weapon)
+                        .is_some_and(|facts| weapon_iw4::cs::slot_of(&facts) == slot)
+                })
+                .collect();
+            // Pressing a slot again steps through what it holds (CS: 4 cycles the grenades).
+            let target = match in_slot.iter().position(|&w| w == select.index) {
+                Some(at) => in_slot.get((at + 1) % in_slot.len()).copied(),
+                None => in_slot.first().copied(),
+            };
+            if let Some(target) = target
+                && target != select.index
+            {
+                select.index = target;
+                select.mapped_index = target;
+                select.time = clock.time();
+                input_iw4::set_ads(&mut actions.client, false);
+            }
+        }
+    }
+    if std::mem::take(&mut actions.client.drop_weapon)
+        && !frozen
+        && let (Some(inbox), Some(ids)) = (action_inbox.as_mut(), request_ids.as_mut())
+    {
+        let request_id = ids.allocate();
+        if let Err(error) = inbox.push(local.0, sim::ClientAction::DropWeapon { request_id }) {
+            diag::warn!(Net, "drop: not queued — {error}");
+        }
+    }
     let cycles = std::mem::take(&mut actions.client.weapon_cycles);
     let in_killcam = view.is_some_and(|v| v.in_killcam());
     if let Some(ps) = ps {
@@ -1373,15 +1424,46 @@ pub fn predict_local_move(
         return;
     }
 
-    let sample = proxy.0.shot_sample(cg_clock.time());
-    if let Some((seq, cmd)) = prediction
+    // One command per authority tick, each simulating exactly one tick, as Source does: movement
+    // integrates the same at any frame rate, and a slow frame catches up with whole ticks.
+    let now = cg_clock.time();
+    let aligned = now - now.rem_euclid(AUTHORITY_MS);
+    let mut next = prediction
         .0
-        .predict(template.cmd, ServerTime::from_ms(cg_clock.time()))
-    {
+        .last_cmd()
+        .map(|cmd| cmd.server_time.saturating_add(AUTHORITY_MS))
+        // A clock that stepped far back (resync, new level) restarts the cadence at now.
+        .filter(|next| next.saturating_sub(aligned) <= CLOCK_STEP_BACK_TOLERANCE_MS)
+        .unwrap_or(aligned);
+    if next > aligned {
+        return;
+    }
+    let oldest_kept = aligned - (MAX_CMDS_PER_FRAME - 1) * AUTHORITY_MS;
+    if next < oldest_kept {
+        next = oldest_kept;
+    }
+    let sample = proxy.0.shot_sample(now);
+    while next <= aligned {
+        if !pending.has_command_capacity(next) {
+            break;
+        }
+        let Some((seq, cmd)) = prediction
+            .0
+            .predict(template.cmd, ServerTime::from_ms(next))
+        else {
+            break;
+        };
         actions.consume_edges();
         pending.push(seq, cmd, sample);
+        next = next.saturating_add(AUTHORITY_MS);
     }
 }
+
+/// A frame this far behind catches up with at most this many ticks of commands; older ticks fold
+/// into the first command's step.
+const MAX_CMDS_PER_FRAME: i32 = 8;
+
+const CLOCK_STEP_BACK_TOLERANCE_MS: i32 = 1000;
 
 pub fn flush_bootstrap_applied(
     mut link: Option<ResMut<crate::transport::udp_session::UdpClientLink>>,
@@ -1555,6 +1637,7 @@ pub fn publish_presented(
     has_world: Option<Res<HasWorld>>,
     mut presented: ResMut<PresentedSnapshot>,
     mut present_census: ResMut<PresentLocalCensus>,
+    look: Res<LookState>,
     phase: Option<ResMut<crate::UpdatePhaseCensus>>,
     trace: Option<ResMut<ClientPhaseTrace>>,
 ) {
@@ -1609,7 +1692,10 @@ pub fn publish_presented(
         .iter()
         .find(|(id, _)| *id == local.0)
         .map(|(_, ps)| ps);
-    let predicted_ps = prediction.0.predicted_local().copied();
+    let predicted_ps = prediction.0.presented_local(
+        cg_clock.time() as f32 + cg_clock.frac_ms(),
+        AUTHORITY_MS as f32,
+    );
     let previous = presented.player(local.0).copied();
     let armed = prediction.0.is_armed();
     let frame_interpolation = clock.accumulator_ms / AUTHORITY_MS as f32;
@@ -1692,6 +1778,25 @@ pub fn publish_presented(
     if archived {
         if let Some(seat) = remote_poses.remove(&local.0) {
             predicted = seat;
+        }
+    } else if armed && predicted.pm_type == 0 {
+        // Commands leave once per tick; the camera turns with the mouse every frame.
+        let look_cmd = playerstate_iw4::UserCmd {
+            angles: look.angles,
+            ..playerstate_iw4::UserCmd::default()
+        };
+        movement_iw4::update_view_angles(
+            &mut predicted,
+            &look_cmd,
+            movement_iw4::ViewAngleClamp {
+                pitch_up: 85.0,
+                pitch_down: 85.0,
+                unclamped_pitch_bit: false,
+            },
+        );
+        // CS weapons: the camera shows the recoil punch the next bullet will fire along.
+        for (angle, punch) in predicted.viewangles.iter_mut().zip(predicted.cs_punch) {
+            *angle += punch;
         }
     }
     for mut runtime in &mut entities {
@@ -1922,3 +2027,6 @@ pub fn register_client_runtime(app: &mut App) {
 pub fn register_listen_prediction_arm(app: &mut App) {
     app.add_systems(Update, arm_listen_prediction.in_set(ClientSet::Load));
 }
+
+/// How often the client logs its prediction counters, in game time.
+const PREDICTION_REPORT_MS: u32 = 20_000;

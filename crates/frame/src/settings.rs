@@ -29,6 +29,12 @@ pub struct GameSettings {
     pub fullscreen: bool,
     pub vsync: bool,
     pub fov: f32,
+    /// Counter-Strike viewmodel field of view (horizontal degrees at 4:3, widened Hor+).
+    pub viewmodel_fov: f32,
+    /// Movement preset (`mv_mode`): csgo, surf, mmod or cs16.
+    pub mv_mode: String,
+    /// Map destructibles (cars, barrels) take damage (`sv_destructibles`); off for CS play.
+    pub destructibles: bool,
     pub third_person: bool,
     pub master_volume: f32,
     pub brightness: f32,
@@ -63,6 +69,9 @@ impl Default for GameSettings {
             fullscreen: false,
             vsync: true,
             fov: Self::FOV_DEFAULT,
+            viewmodel_fov: Self::VIEWMODEL_FOV_DEFAULT,
+            mv_mode: "csgo".to_owned(),
+            destructibles: false,
             third_person: false,
             master_volume: 1.0,
             brightness: 0.0,
@@ -94,6 +103,9 @@ impl GameSettings {
     pub const FOV_DEFAULT: f32 = 65.0;
     pub const FOV_MIN: f32 = 65.0;
     pub const FOV_MAX: f32 = 120.0;
+    pub const VIEWMODEL_FOV_DEFAULT: f32 = 68.0;
+    pub const VIEWMODEL_FOV_MIN: f32 = 54.0;
+    pub const VIEWMODEL_FOV_MAX: f32 = 90.0;
     pub const PAD_SENSITIVITY_PRESETS: [f32; 10] =
         [0.6, 1.0, 1.4, 1.8, 2.0, 2.2, 2.6, 3.0, 3.5, 4.0];
 
@@ -118,6 +130,12 @@ impl GameSettings {
             self.fov.clamp(Self::FOV_MIN, Self::FOV_MAX)
         } else {
             Self::FOV_DEFAULT
+        };
+        self.viewmodel_fov = if self.viewmodel_fov.is_finite() {
+            self.viewmodel_fov
+                .clamp(Self::VIEWMODEL_FOV_MIN, Self::VIEWMODEL_FOV_MAX)
+        } else {
+            Self::VIEWMODEL_FOV_DEFAULT
         };
         self.brightness = if self.brightness.is_finite() {
             self.brightness.clamp(-0.2, 0.2)

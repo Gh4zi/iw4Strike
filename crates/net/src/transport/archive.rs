@@ -10,7 +10,7 @@ pub const ARCHIVE_TICK_MS: i32 = AUTHORITY_MS;
 
 pub const ARCHIVE_CACHED_SNAPSHOT_CLIENTS: usize = 0x144;
 
-pub const ARCHIVE_MAX_TICKS: usize = 0x4b0;
+pub const ARCHIVE_MAX_TICKS: usize = sim::ticks_for_ms(60_000) as usize;
 
 pub const ARCHIVE_BYTE_BUDGET: usize = 32 * 1024 * 1024;
 

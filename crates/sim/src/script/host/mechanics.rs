@@ -26,7 +26,7 @@ struct Body {
 }
 
 const TICK_S: f32 = crate::MATCH_TICK_MS as f32 / 1000.0;
-const SETTLE_TICKS: u32 = 200;
+const SETTLE_TICKS: u32 = crate::ticks_for_ms(10_000);
 const BODY_MINS: [f32; 3] = [-12.0, -12.0, 0.0];
 const BODY_MAXS: [f32; 3] = [12.0, 12.0, 24.0];
 const EXPLOSION_FORCE: f32 = 12500.0;

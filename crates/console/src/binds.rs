@@ -16,6 +16,33 @@ pub use key_names::{
     BINDABLE_KEYS, display_button, host_keynum, parse_button_name, parse_key_name,
 };
 
+/// How a button is written to settings.cfg: like its display name, except that right-side
+/// modifiers keep their own names. `CTRL` reads back as both Ctrl keys, so writing the right one
+/// as `CTRL` too let it overwrite the left one's bind on every load.
+#[must_use]
+pub fn config_button_name(button: BindButton) -> String {
+    match button {
+        BindButton::Key(KeyCode::ControlRight) => "rctrl".into(),
+        BindButton::Key(KeyCode::ShiftRight) => "rshift".into(),
+        BindButton::Key(KeyCode::AltRight) => "ralt".into(),
+        other => display_button(other),
+    }
+}
+
+/// The same modifier on the other side of the keyboard.
+fn modifier_twin(button: BindButton) -> Option<BindButton> {
+    let twin = match button {
+        BindButton::Key(KeyCode::ControlLeft) => KeyCode::ControlRight,
+        BindButton::Key(KeyCode::ControlRight) => KeyCode::ControlLeft,
+        BindButton::Key(KeyCode::ShiftLeft) => KeyCode::ShiftRight,
+        BindButton::Key(KeyCode::ShiftRight) => KeyCode::ShiftLeft,
+        BindButton::Key(KeyCode::AltLeft) => KeyCode::AltRight,
+        BindButton::Key(KeyCode::AltRight) => KeyCode::AltLeft,
+        _ => return None,
+    };
+    Some(BindButton::Key(twin))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindButton {
     Key(KeyCode),
@@ -372,6 +399,15 @@ impl KeyBinds {
         self.map.insert(button, id);
     }
 
+    /// Binds `button` and, for Ctrl, Shift and Alt, the same key on the other side: MW2 has one
+    /// CTRL key, and a stale bind left on the other side would come back on the next load.
+    pub fn set_both_sides(&mut self, button: BindButton, id: u32) {
+        self.set(button, id);
+        if let Some(twin) = modifier_twin(button) {
+            self.set(twin, id);
+        }
+    }
+
     pub fn clear_button(&mut self, button: BindButton) -> bool {
         self.map.remove(&button).is_some()
     }
@@ -423,7 +459,7 @@ impl KeyBinds {
             .map
             .iter()
             .filter_map(|(button, id)| {
-                command_name(*id).map(|name| format!("bind {} {name}", display_button(*button)))
+                command_name(*id).map(|name| format!("bind {} {name}", config_button_name(*button)))
             })
             .collect();
         lines.sort();
@@ -494,4 +530,32 @@ pub(crate) fn pulse_wheel_binding(
     client.keys[key_num].binding = id;
     key_event(client, key_num, true, now_msec, frame_msec);
     key_event(client, key_num, false, now_msec, frame_msec);
+}
+
+#[cfg(test)]
+mod modifier_tests {
+    use super::*;
+
+    #[test]
+    fn left_and_right_ctrl_binds_survive_a_save_and_load() {
+        let crouch = command_id_lookup("+movedown").expect("+movedown");
+        let prone = command_id_lookup("toggleprone").expect("toggleprone");
+        let mut saved = KeyBinds::default();
+        saved.set(BindButton::Key(KeyCode::ControlLeft), crouch);
+        saved.set(BindButton::Key(KeyCode::ControlRight), prone);
+        let script = saved.list_lines().join("
+");
+        let mut loaded = KeyBinds::default();
+        let _ = loaded.apply_config_script(&script);
+        assert_eq!(loaded.get(BindButton::Key(KeyCode::ControlLeft)), Some(crouch), "{script}");
+        assert_eq!(loaded.get(BindButton::Key(KeyCode::ControlRight)), Some(prone), "{script}");
+    }
+
+    #[test]
+    fn binding_a_modifier_binds_both_sides() {
+        let crouch = command_id_lookup("+movedown").expect("+movedown");
+        let mut binds = KeyBinds::default();
+        binds.set_both_sides(BindButton::Key(KeyCode::ControlLeft), crouch);
+        assert_eq!(binds.get(BindButton::Key(KeyCode::ControlRight)), Some(crouch));
+    }
 }

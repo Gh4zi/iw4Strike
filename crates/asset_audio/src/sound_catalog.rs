@@ -363,6 +363,16 @@ pub struct PickedSound<'a> {
     pub layer: Option<String>,
 }
 
+/// 16-bit PCM from outside the zones, for [`SoundCatalog::add_loose_alias`].
+#[derive(Clone, Debug)]
+pub struct LooseClip {
+    pub name: String,
+    pub rate: u32,
+    pub channels: i32,
+    /// Interleaved little-endian `i16` samples.
+    pub pcm16: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SoundCatalog {
     pub sounds: Vec<CapturedSound>,
@@ -762,6 +772,73 @@ impl SoundCatalog {
 
     pub fn sound(&self, alias: &str) -> Option<&CapturedSound> {
         self.sound_in(AssetNamespace::Iw4, alias)
+    }
+
+    pub fn has_alias(&self, ns: AssetNamespace, alias: &str) -> bool {
+        self.index_in(ns, alias).is_some()
+    }
+
+    /// First alias in `ns` whose name ends with `suffix` (case-insensitive), in catalog order.
+    pub fn first_alias_ending_with(&self, ns: AssetNamespace, suffix: &str) -> Option<String> {
+        let suffix = suffix.to_ascii_lowercase();
+        self.sounds
+            .iter()
+            .filter(|sound| ns_of(sound.game) == ns)
+            .map(|sound| &sound.name)
+            .find(|name| name.to_ascii_lowercase().ends_with(&suffix))
+            .cloned()
+    }
+
+    /// Register `clips` as the variants of a new IW4 alias `name`, each copying the first variant
+    /// of `template` for everything but its sound (volume, distance, channel, flags). The clips come
+    /// from outside the zones (Counter-Strike's own wave files). False when the template is missing
+    /// or no clip could be added.
+    pub fn add_loose_alias(&mut self, name: &str, template: &str, clips: Vec<LooseClip>) -> bool {
+        let Some(row) = self
+            .sound_in(AssetNamespace::Iw4, template)
+            .and_then(|sound| sound.aliases.first())
+            .cloned()
+        else {
+            return false;
+        };
+        let mut aliases = Vec::with_capacity(clips.len());
+        for clip in clips {
+            let lanes = clip.channels.max(1) as usize;
+            let frames = clip.pcm16.len() / 2 / lanes;
+            if frames == 0 || clip.name.is_empty() {
+                continue;
+            }
+            let order = self.loaded.len();
+            let mut loaded = LoadedSoundPcm::captured(
+                clip.name.clone(),
+                MSS_PCM,
+                clip.rate,
+                clip.channels,
+                clip.pcm16,
+                Vec::new(),
+            );
+            loaded.samples = frames as u32;
+            self.register_loaded(loaded);
+            let mut alias = row.clone();
+            alias.alias_name = name.to_owned();
+            alias.loaded_name = Some(clip.name);
+            alias.loaded = LoadedSoundEdge::bind_order(order, ZoneOwner::default());
+            alias.streamed = None;
+            alias.secondary = None;
+            alias.chain = None;
+            alias.probability = 1.0;
+            aliases.push(alias);
+        }
+        if aliases.is_empty() {
+            return false;
+        }
+        self.register_sound(CapturedSound {
+            name: name.to_owned(),
+            aliases,
+            game: ZoneGame::Iw4,
+            zone: ZoneOwner::default(),
+        });
+        true
     }
 
     pub fn loaded_index_in(&self, ns: AssetNamespace, name: &str) -> Option<usize> {

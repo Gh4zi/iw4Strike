@@ -274,6 +274,22 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
             "hitvol — what the authority holds for a bullet to clip against: world tables, live player volumes, script-model clips, kit models",
         ),
         (
+            "destructibles",
+            "destructibles — the map's cars, barrels and breakable walls, and whether they take damage",
+        ),
+        (
+            "cylinders",
+            "cylinders — big pipes in the map collision mesh (long triangles turning around one axis)",
+        ),
+        (
+            "smodels",
+            "smodels [filter] — solid static models whose name contains filter, with position and size",
+        ),
+        (
+            "ladders",
+            "ladders — where the map's ladders are (ladder brushes and mesh), for climbing tests",
+        ),
+        (
             "bot",
             "bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z>",
         ),

@@ -1,3 +1,5 @@
+pub mod cs_scope;
+pub mod cs_viewmodel;
 pub mod dyn_ent;
 pub mod dyn_ent_phys;
 pub mod fpv_present;

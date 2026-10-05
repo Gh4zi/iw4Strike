@@ -14,8 +14,9 @@ pub use discover::{
     find_common_mp_for_zone, find_localized_common_mp_for_zone, find_runtime_common_mp,
     find_runtime_zone, find_zone_file, find_zone_file_version, find_zone_for_tree,
     game_root_for_zone, games_content_report, games_root_from_env, games_root_report,
-    group_mp_maps, list_mp_map_packs, list_mp_maps, load_dotenv, map_load_title, peek_zone_version,
-    search_roots, split_zone_key, zone_game_for_path, zone_version,
+    group_mp_maps, list_mp_map_packs, list_mp_maps, load_dotenv, map_load_title, only_mw2,
+    peek_zone_version, search_roots, split_zone_key, zone_game_for_path, zone_version,
+    ONLY_MW2_ENV,
 };
 pub use iwd::{
     IwdFile, IwdIndex, IwdSoundIndex, cached_iwd_dirs, game_main_for_zone, game_mains_under,
@@ -28,7 +29,10 @@ pub use progress::{
     StageOutcome, StageScope, StageSnapshot, WorkCount, peak_resident_bytes,
     process_resident_bytes,
 };
-pub use steam::{MW2_SHORTCUT, SteamCandidate, SteamProbe, link_steam_games};
+pub use steam::{
+    CSS_ENV, CSTRIKE_ENV, MW2_SHORTCUT, SteamCandidate, SteamProbe, find_css_pak, find_cstrike,
+    link_steam_games,
+};
 pub use zone::{
     Iw4WireFormat, Iw5ZoneMemory, T5ZoneMemory, ZoneImage, ZoneMemory, ZoneOpenError, open_zone,
     open_zone_shared, parse_zone_image, xfile_arena_row, zone_share_counts,

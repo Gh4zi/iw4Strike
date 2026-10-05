@@ -908,20 +908,26 @@ fn fanout_loopback(
         .configuration_changes
         .push_journal(&tick.snapshot.meta.journal);
 
-    let mut listen_snapshot = tick.snapshot.clone();
+    // The viewer's snapshot is built from the live one; cloning the live one first only to drop
+    // it cost a full snapshot copy every tick.
+    let (listen_snapshot, viewer_sample) = match queues.local.as_ref() {
+        Some(local) => {
+            let (out, sample) = crate::policy::seat::snapshot_and_sample_for_viewer(
+                &archive,
+                &seats,
+                &tick.snapshot,
+                local.0,
+                clock.time_ms,
+            );
+            (out, Some((local.0, sample)))
+        }
+        None => (tick.snapshot.clone(), None),
+    };
     let mut seat_applied = 0i32;
-    if let Some(local) = queues.local.as_ref() {
-        let (out, sample) = crate::policy::seat::snapshot_and_sample_for_viewer(
-            &archive,
-            &seats,
-            &tick.snapshot,
-            local.0,
-            clock.time_ms,
-        );
-        listen_snapshot = out;
+    if let Some((local, sample)) = viewer_sample {
         if let Some(sample) = sample {
             seat_applied = 1;
-            let session = seats.get(local.0);
+            let session = seats.get(local);
             queues.fanout_census.seat_archivetime_ms = session.map(|s| s.archivetime_ms);
             queues.fanout_census.seat_focus_client = session.map(|s| s.focus_client.0 as i32);
             queues.fanout_census.seat_lookup_tick = sample.lookup.tick.map(|t| t.0 as i32);

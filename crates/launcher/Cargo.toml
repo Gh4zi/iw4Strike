@@ -12,6 +12,7 @@ path = "src/main.rs"
 [features]
 bevy-debug = ["bootstrap/bevy-debug"]
 bevy-trace = ["bootstrap/bevy-trace"]
+bevy-profile = ["bootstrap/bevy-profile"]
 
 [dependencies]
 updater = { path = "../updater" }

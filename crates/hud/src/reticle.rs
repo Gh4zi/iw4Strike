@@ -109,6 +109,11 @@ pub(crate) fn update_reticle(
         hide_all(&mut quads);
         return;
     };
+    if crate::cs_crosshair::cs_crosshair_for(ps, weapons).is_some() {
+        // CS rules with a CS gun or empty hands: the CS crosshair (or none, for snipers).
+        hide_all(&mut quads);
+        return;
+    }
     let Some(facts) = weapons.0.facts_of(viewmodel_index) else {
         gaps.raise(GapCause::ReticleWeaponNotInCatalog { viewmodel_index });
         hide_all(&mut quads);

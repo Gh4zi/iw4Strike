@@ -251,12 +251,18 @@ pub struct ClientInput {
     pub stance_latch: i32,
 
     pub weapon_cycles: Vec<bool>,
+    /// Counter-Strike slot selections this frame (1 primary, 2 pistol, 3 knife, ...).
+    pub weapon_slots: Vec<u8>,
+    /// Counter-Strike `drop` pressed this frame.
+    pub drop_weapon: bool,
     pub action_slots: Vec<usize>,
 
     pub offhand_hold_cancel: bool,
 
     pub stance_held: Option<(i32, i32)>,
     pub center_view: bool,
+    /// CS rules: every crouch or stance binding is held `+movedown` (CS `+duck`), never a toggle.
+    pub hold_crouch: bool,
 }
 
 impl Default for ClientInput {
@@ -267,10 +273,13 @@ impl Default for ClientInput {
             using_ads: false,
             stance_latch: 0,
             weapon_cycles: Vec::new(),
+            weapon_slots: Vec::new(),
+            drop_weapon: false,
             action_slots: Vec::new(),
             offhand_hold_cancel: false,
             stance_held: None,
             center_view: false,
+            hold_crouch: false,
         }
     }
 }
@@ -367,11 +376,25 @@ pub fn input_cmd(client: &mut ClientInput, cmd_id: u32, key: i32, now_msec: i32,
         75 => client.stance_latch = buttons::CROUCH as i32,
         76 => client.using_ads = !client.using_ads,
         77 => set_ads(client, false),
+        78..=82 => client.weapon_slots.push((cmd_id - 77) as u8),
+        83 => client.drop_weapon = true,
         _ => {}
     }
 }
 
 const STANCE_HOLD_MS: i32 = 300;
+
+/// `+movedown`: held crouch.
+const MOVEDOWN_ID: u32 = 35;
+
+/// With `hold_crouch`, the stance commands (`+stance`, `+prone`, `togglecrouch`,
+/// `toggleprone`, `goprone`, `gocrouch`) all become held `+movedown`.
+fn effective_binding(client: &ClientInput, binding: u32) -> u32 {
+    match binding {
+        23 | 53 | 72..=75 if client.hold_crouch => MOVEDOWN_ID,
+        _ => binding,
+    }
+}
 
 fn stance_button(client: &mut ClientInput, down: bool, now_msec: i32) {
     if client.kb.prone.active || client.kb.movedown.active {
@@ -412,14 +435,14 @@ pub fn key_event(
     if down {
         client.keys[key_num].down = 1;
         client.keys[key_num].repeats = client.keys[key_num].repeats.saturating_add(1);
-        let id = client.keys[key_num].binding;
+        let id = effective_binding(client, client.keys[key_num].binding);
         if id != 0 {
             input_cmd(client, id, key_num as i32, now_msec, frame_msec);
         }
     } else {
         client.keys[key_num].down = 0;
         client.keys[key_num].repeats = 0;
-        let id = client.keys[key_num].binding;
+        let id = effective_binding(client, client.keys[key_num].binding);
         if let Some(up_id) = key_up_command_id(id) {
             input_cmd(client, up_id, key_num as i32, now_msec, frame_msec);
         }
@@ -602,3 +625,35 @@ fn movement_key_state(btn: &mut Kbutton, now_msec: i32, frame_msec: u32) -> f32 
 }
 
 pub const CMD_RING_MASK: u32 = 0x7f;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEY: usize = 0x9d;
+
+    #[test]
+    fn cs_rules_hold_every_crouch_binding() {
+        for binding in ["togglecrouch", "toggleprone", "gocrouch", "goprone", "+stance", "+prone"] {
+            let mut client = ClientInput {
+                hold_crouch: true,
+                ..ClientInput::default()
+            };
+            client.keys[KEY].binding = command_id_from_name(binding).expect("known command");
+            key_event(&mut client, KEY, true, 1000, 10);
+            assert!(client.kb.movedown.active, "{binding}: pressed");
+            key_event(&mut client, KEY, false, 1100, 10);
+            assert!(!client.kb.movedown.active, "{binding}: released");
+            assert_eq!(client.stance_latch, 0, "{binding}: no latched stance");
+        }
+    }
+
+    #[test]
+    fn iw4_rules_keep_the_crouch_toggle() {
+        let mut client = ClientInput::default();
+        client.keys[KEY].binding = command_id_from_name("togglecrouch").expect("known command");
+        key_event(&mut client, KEY, true, 1000, 10);
+        key_event(&mut client, KEY, false, 1100, 10);
+        assert_eq!(client.stance_latch, buttons::CROUCH as i32);
+    }
+}

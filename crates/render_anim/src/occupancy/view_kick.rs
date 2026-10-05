@@ -200,9 +200,11 @@ pub fn tick_session_view_kick(
 
     let dt = clock.frametime_secs();
     kick.seeded_this_frame = 0;
+    // CS weapons recoil through the replicated punch angle; MW2 kick and sway stay off.
+    let cs_weapon = weapon_iw4::cs::cs_weapon_index_for(&reg.0.script_name_of(viewmodel)).is_some();
 
     let n = walk.map(|w| w.local_fire).unwrap_or(0);
-    if n > 0 {
+    if n > 0 && !cs_weapon {
         let reduce_window_active = ps.weapon_restrict_kick_time > 0;
         let params = kick_params(&facts.kick);
         for _ in 0..n {
@@ -223,6 +225,10 @@ pub fn tick_session_view_kick(
     kick.state
         .advance(&params, weapon_index, ps.f_weapon_pos_frac, dt_ms);
 
+    if cs_weapon {
+        kick.sway.reset();
+        return;
+    }
     let overlay_active = facts.overlay_reticle != 0;
     kick.sway.advance(
         facts.sway.hip_params(),
@@ -341,6 +347,7 @@ pub fn sync_camera_from_presented(
             viewmodel,
             weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)),
             false,
+            0,
             actions.as_deref_mut(),
         )
         .unwrap_or(settings.fov);
@@ -370,8 +377,14 @@ pub fn sync_camera_from_presented(
         ps.viewangles,
         clock.time(),
     );
+    // CS guns fire at the true view centre (plus punch): MW2 idle, ADS and scope sway would move
+    // the camera off it, so they only keep the hit flinch.
+    let cs_weapon = weapons.as_ref().is_some_and(|w| {
+        viewmodel != 0
+            && weapon_iw4::cs::cs_weapon_index_for(&w.0.script_name_of(viewmodel)).is_some()
+    });
     let bob_angles = match weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)) {
-        Some(facts) if facts.body_resolved => view_angle_bob(ViewAngleBobInputs {
+        Some(facts) if facts.body_resolved && !cs_weapon => view_angle_bob(ViewAngleBobInputs {
             org,
             e_flags: ps.e_flags,
             overlay_reticle: facts.overlay_reticle,
@@ -411,13 +424,20 @@ pub fn sync_camera_from_presented(
         ps.origin[1] + offset[1],
         ps.origin[2] + offset[2] + ps.view_height_current,
     ];
+    // CS has neither MW2's walking camera bob nor its landing dip; under CS rules the dip would
+    // bounce the view (and the gun with it) on every bhop landing.
+    let cs_camera = movement_iw4::rules::CS_RULES;
     let bob = view_org_bob(org);
-    origin[2] += bob.vertical;
+    if !cs_camera {
+        origin[2] += bob.vertical;
+    }
 
     let (fwd, right, up) = angle_vectors(angles);
-    origin[0] += bob.horizontal * right[0];
-    origin[1] += bob.horizontal * right[1];
-    origin[2] += bob.horizontal * right[2];
+    if !cs_camera {
+        origin[0] += bob.horizontal * right[0];
+        origin[1] += bob.horizontal * right[1];
+        origin[2] += bob.horizontal * right[2];
+    }
     let land_ofs = stamp_and_land_origin_z(
         &mut kick,
         ps.gravity,
@@ -426,7 +446,9 @@ pub fn sync_camera_from_presented(
         ps.ground_entity_num,
         clock.time(),
     );
-    origin[2] += land_ofs;
+    if !cs_camera {
+        origin[2] += land_ofs;
+    }
     let delta_ms = clock.time().wrapping_sub(kick.land_time);
     kick.viewweapon_land_z = viewweapon_land_origin_z(delta_ms, kick.land_change);
     kick.viewweapon_land_view = [
@@ -464,6 +486,7 @@ pub fn sync_camera_from_presented(
         viewmodel,
         weapons.as_ref().and_then(|w| w.0.facts_of(viewmodel)),
         kick.b_position_to_ads,
+        ps.cs_zoom,
         actions.as_deref_mut(),
     ) {
         kick.horiz_fov_deg = horiz;
@@ -480,6 +503,7 @@ fn apply_fpv_lens_fov(
     viewmodel: u32,
     facts: Option<WeaponBodyFacts>,
     b_position_to_ads: bool,
+    cs_zoom: u32,
     actions: Option<&mut ClientActionInput>,
 ) -> Option<f32> {
     let facts = facts.filter(|f| f.body_resolved).unwrap_or_default();
@@ -507,6 +531,9 @@ fn apply_fpv_lens_fov(
         fov_min: CG_FOV_MIN_DEFAULT,
     };
     let (horiz, _) = calc_fov_from_ads(&inputs, f_weapon_pos_frac, b_position_to_ads, &overlay);
+    // A CS scope snaps straight to its zoom (4:3 horizontal degrees, as CS's fov), and the mouse
+    // slows with it.
+    let horiz = if cs_zoom != 0 { cs_zoom as f32 } else { horiz };
     let zoom_sensitivity = zoom_sensitivity(horiz);
     if let Some(actions) = actions {
         actions.fov_scale = zoom_sensitivity * actions.shellshock_look_scale;

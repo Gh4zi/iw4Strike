@@ -11,7 +11,7 @@ use crate::{ReplayError, demo_path};
 
 pub const CLIP_MS: u32 = 45_000;
 
-pub const CLIP_TICK_MS: u32 = 50;
+pub const CLIP_TICK_MS: u32 = sim::MATCH_TICK_MS;
 
 pub const CLIP_TICKS: usize = (CLIP_MS / CLIP_TICK_MS) as usize;
 
@@ -23,7 +23,7 @@ pub const CLIP_MANIFEST_FILE: &str = "manifest.toml";
 
 pub const CLIP_BYTE_BUDGET: usize = 32 * 1024 * 1024;
 
-const _: () = assert!(CLIP_TICKS == 900);
+const _: () = assert!(CLIP_TICKS == 4500);
 const _: () = assert!(CLIP_TICK_MS as i32 == AUTHORITY_MS);
 
 #[derive(Clone, Debug)]

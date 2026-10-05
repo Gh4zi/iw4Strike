@@ -109,6 +109,8 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
         .set(LogPlugin {
             filter: "warn,iw4l=info".into(),
             level: bevy::log::Level::WARN,
+            #[cfg(feature = "bevy-profile")]
+            custom_layer: crate::system_profile::layer,
             ..default()
         })
         .set(BevyRenderPlugin {

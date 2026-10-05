@@ -776,6 +776,8 @@ pub(super) fn register(app: &mut App) {
             Core3d,
             draw_iw_tess
                 .in_set(Core3dSystems::PostProcess)
-                .after(super::postfx::PostFxSet),
+                .after(super::postfx::PostFxSet)
+                .after(super::cs_viewmodel::CsViewmodelSet)
+                .after(super::cs_scope::CsScopeSet),
         );
 }

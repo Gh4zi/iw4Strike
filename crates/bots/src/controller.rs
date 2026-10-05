@@ -12,15 +12,15 @@ use crate::query::{QueryResult, QuerySubsystem, SightSample, WalkSample, WorldQu
 use crate::task::{ActionStage, Decision, SwitchReason, Task, TaskKind};
 use crate::weapon::WeaponSkill;
 
-const THINK_PERIOD_TICKS: u32 = 2;
+const THINK_PERIOD_TICKS: u32 = sim::ticks_for_ms(100);
 const SWITCH_MARGIN: f32 = 12.0;
 const STEP_IN: f32 = 64.0;
 const WAYPOINT_IN: f32 = 24.0;
-const LAST_SEEN_FRESH_TICKS: u32 = 40;
+const LAST_SEEN_FRESH_TICKS: u32 = sim::ticks_for_ms(2000);
 /// How stale the positive observation behind a shot may be. Committing to a
 /// target is a movement and aiming decision; firing needs the enemy to have
 /// been seen, not merely remembered.
-const FIRE_FRESH_TICKS: u32 = 4;
+const FIRE_FRESH_TICKS: u32 = sim::ticks_for_ms(200);
 /// Free-space fallback ring, used only where there is no navigation graph.
 const FIGHT_RING: u32 = 12;
 /// How many baked supports one scan evaluates. Two queries each, so the whole
@@ -29,12 +29,12 @@ const FIGHT_CANDIDATES: usize = 6;
 /// How far the threat may move before its firing position is re-derived. Far
 /// wider than a step, so a moving target does not rebuild the goal every tick.
 const FIGHT_COMMIT_MOVE: f32 = 128.0;
-const FIGHT_SCAN_MAX_AGE_TICKS: u32 = 8;
+const FIGHT_SCAN_MAX_AGE_TICKS: u32 = sim::ticks_for_ms(400);
 /// A committed position is abandoned if the engagement has not resolved by
 /// then, so a stale goal cannot outlive its fight.
-const FIGHT_COMMIT_MAX_AGE_TICKS: u32 = 60;
+const FIGHT_COMMIT_MAX_AGE_TICKS: u32 = sim::ticks_for_ms(3000);
 /// Commanded movement without displacement for this long is a stuck bot.
-const STUCK_TICKS: u32 = 40;
+const STUCK_TICKS: u32 = sim::ticks_for_ms(2000);
 
 #[derive(Clone, Debug)]
 pub struct HostController {
@@ -552,7 +552,7 @@ impl HostController {
             if floor.startsolid || floor.fraction >= 1.0 {
                 continue;
             }
-            self.escape = Some((floor.endpos, obs.tick + 16));
+            self.escape = Some((floor.endpos, obs.tick + sim::ticks_for_ms(800)));
             return Some(BotIntent {
                 look_at: Some(floor.endpos),
                 move_goal: Some(floor.endpos),

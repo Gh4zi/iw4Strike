@@ -6,7 +6,7 @@ use sim::{ClientId, Snapshot};
 
 use crate::authority::inbox::AUTHORITY_MS;
 
-pub const PROXY_BUFFER_TICKS: usize = 32;
+pub const PROXY_BUFFER_TICKS: usize = sim::ticks_for_ms(1600) as usize;
 
 pub const PROXY_DELAY_MS: i32 = 100;
 

@@ -15,6 +15,7 @@ fastfile_t5.workspace = true
 diag.workspace = true
 bevy.workspace = true
 blake3 = "=1.8.5"
+mdl_source.workspace = true
 
 [lints]
 workspace = true

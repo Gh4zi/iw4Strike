@@ -254,6 +254,8 @@ pub(crate) struct PredictionRemoteBody {
     pub shield_collision: Option<crate::ShieldCarrierCollision>,
     pub client: ClientId,
     pub origin: [f32; 3],
+    /// CS rules: the body's box height (stand or duck hull); `None` is the IW4 capsule.
+    pub box_height: Option<f32>,
     pub life_sequence: crate::LifeSequence,
 }
 
@@ -608,6 +610,8 @@ pub struct SimState {
 
     pub(crate) recent_kills: Vec<(ClientId, i32, u32)>,
     pub(crate) weapon_notes: Vec<crate::equipment::WeaponNote>,
+    /// CS smokes whose MW2 cloud is fired again to last as long as a CS:S smoke.
+    pub(crate) cs_smokes: Vec<crate::equipment::CsSmoke>,
 
     pending_player_cards: Vec<PendingPlayerCardEvent>,
 
@@ -709,6 +713,7 @@ impl Default for SimState {
             num_kills: 0,
             recent_kills: Vec::new(),
             weapon_notes: Vec::new(),
+            cs_smokes: Vec::new(),
             pending_player_cards: Vec::new(),
             pending_prints: Vec::new(),
             pending_local_sounds: Vec::new(),
@@ -786,6 +791,7 @@ impl SimState {
         self.game_win_winner = None;
         self.placement_cointoss_unwired = 0;
         self.weapon_notes.clear();
+        self.cs_smokes.clear();
         self.next_shot = ShotId(1);
         self.collision_history.clear();
         self.entity_collision_history.clear();
@@ -2352,7 +2358,30 @@ impl SimState {
         )
     }
 
+    /// A player's hit volumes. The attached head model's own bones (face, jaw, brows) carry no
+    /// part classification; they sit in front of the head box, so they count as the head rather
+    /// than turning headshots into hits on nothing.
     fn player_hitvol_bones(
+        &self,
+        id: ClientId,
+        ps: &PlayerState,
+    ) -> Result<(Vec<xmodel_runtime::CollisionBone>, Option<[f32; 3]>), String> {
+        let (mut bones, shield_normal) = self.player_hitvol_bones_raw(id, ps)?;
+        let kit = self.collision_kit(id);
+        if let (Some(body), Some(_)) = (kit.body.as_ref(), kit.head.as_ref())
+            && xmodel_runtime::tp_head_attach_tag(&body.pose.bone_names).is_some()
+        {
+            let head_base = body.pose.bone_names.len();
+            for bone in &mut bones {
+                if usize::from(bone.bone) >= head_base && bone.part_classification == 0 {
+                    bone.part_classification = hud_iw4::HITLOC_HEAD;
+                }
+            }
+        }
+        Ok((bones, shield_normal))
+    }
+
+    fn player_hitvol_bones_raw(
         &self,
         id: ClientId,
         ps: &PlayerState,
@@ -3201,6 +3230,7 @@ impl SimState {
                                 shield_collision: meta.shield_collision.clone(),
                                 client: *id,
                                 origin: ps.origin,
+                                box_height: movement_iw4::rules::body_height(ps),
                                 life_sequence: meta.life_sequence,
                             },
                         )

@@ -11,6 +11,7 @@ impl Plugin for RenderAdaptersPlugin {
         crate::adapters::fx::system::register_combat_fx_systems(app);
         motion_tracker::register(app);
         crate::adapters::anim::dyn_ent::register_dyn_ent_frontend(app);
+        crate::adapters::anim::cs_viewmodel_light::register_cs_viewmodel_light(app);
         crate::adapters::anim::dyn_ent_brush::register_dyn_ent_brush_systems(app);
     }
 }

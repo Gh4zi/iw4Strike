@@ -96,6 +96,8 @@ pub struct BotSlot {
     pub joined: bool,
     pub class_picked_in: Option<LifeSequence>,
     pub class_picks: u32,
+    /// The command the brain last produced, resent on the ticks between thinks.
+    pub last_cmd: Option<playerstate_iw4::UserCmd>,
 }
 
 #[derive(Resource, Debug)]
@@ -150,6 +152,7 @@ impl BotRoster {
                 joined: false,
                 class_picked_in: None,
                 class_picks: 0,
+                last_cmd: None,
             });
             added.push(id);
         }

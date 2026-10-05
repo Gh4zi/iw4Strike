@@ -156,6 +156,7 @@ fn hash_combat(h: &mut Digest, combat: &[WeaponCombatFacts]) {
         for value in row.location_damage {
             h.f32(value);
         }
+        h.byte(row.cs_weapon);
     }
 }
 

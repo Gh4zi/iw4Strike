@@ -308,6 +308,13 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         registry.register(Method, name, |world, receiver, args| {
             let client = player(world, receiver)?;
             let menu: Arc<str> = string(args, 0)?.to_ascii_lowercase().into();
+            if movement_iw4::rules::CS_RULES && menu.starts_with("changeclass") {
+                // Counter-Strike has no classes: answer the class choice at once, as a click on
+                // the first preset would, so picking a team (or rejoining from spectating)
+                // spawns the player instead of waiting on a class menu.
+                crate::script::choose_default_class(world, client, 0);
+                return Ok(Value::Int(1));
+            }
             if let Some(cs_index) = hud_iw4::script_menu_cs_index(&menu) {
                 FrameWorld::from_world(world).push_player_card_open(ClientId(client), cs_index);
             } else {
@@ -592,6 +599,36 @@ fn register_death(registry: &mut NativeRegistry) {
         let inflictor_entity = super::super::players::damage_entity(world, args.first());
         let attacker_entity = super::super::players::damage_entity(world, args.get(1));
         let amount = int(args, 2)?;
+        // CS weapons deal the damage the engine worked out (CS damage, range and hitgroup); MW2's
+        // script modifiers (Stopping Power and the rest) do not apply to them.
+        let engine_hit = world
+            .resource::<Runtime>()
+            .current_hit
+            .as_ref()
+            .filter(|hit| hit.victim == id && amount > 0)
+            .map(|hit| (hit.weapon, hit.amount));
+        let amount = match engine_hit {
+            Some((weapon, engine_amount))
+                if FrameWorld::from_world(world)
+                    .combat_facts_for(weapon)
+                    .is_some_and(|facts| facts.cs_weapon != 0) =>
+            {
+                engine_amount
+            }
+            _ => amount,
+        };
+        let text = |i: usize| match args.get(i) {
+            Some(Value::String(s)) => s.to_string(),
+            _ => String::new(),
+        };
+        let amount = script_player::cs_armor_absorb(
+            &mut FrameWorld::from_world(world),
+            id,
+            amount,
+            &text(4),
+            &text(5),
+            &text(8),
+        );
         if args
             .get(8)
             .is_some_and(|value| matches!(value, Value::String(s) if s.as_ref() == "shield"))
@@ -1538,6 +1575,9 @@ fn register_inventory(registry: &mut NativeRegistry) {
     registry.register(Method, "setperk", |world, receiver, args| {
         let client = player(world, receiver)?;
         let name: Arc<str> = string(args, 0)?.into();
+        if script_player::SCRIPT_GIVES_NO_PERKS {
+            return Ok(Value::Undefined);
+        }
         script_player::set_perk(
             &mut FrameWorld::from_world(world),
             ClientId(client),

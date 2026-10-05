@@ -2138,7 +2138,18 @@ fn drain_weapon_fire_fx(
         combat.last_weapon_tracer_edge = combat_fx.map(|fx| fx.tracer.edge_kind().to_owned());
         combat.last_weapon_flash_edge =
             combat_fx.map(|fx| fx.flash_edge(player_view).edge_kind().to_owned());
-        let muzzle_name = combat_fx.and_then(|fx| fx.flash_present(player_view));
+        // A CS gun draws its own CS:S flash on the CS model (own pass and depth): MW2's first-person
+        // flash sits on the hidden MW2 gun, and its big sniper flash cut holes in smoke.
+        let cs_gun_view = player_view
+            && weapons.as_deref().is_some_and(|weapons| {
+                weapon_iw4::cs::cs_weapon_index_for(
+                    &weapons.0.script_name_of(fire.event.payload.weapon),
+                )
+                .is_some()
+            });
+        let muzzle_name = combat_fx
+            .filter(|_| !cs_gun_view)
+            .and_then(|fx| fx.flash_present(player_view));
         combat.last_muzzle_name = muzzle_name.map(|n| n.name.to_owned());
 
         let hand = usize::from(is_left_hand_fire_event(fire.event.event));
@@ -2207,6 +2218,30 @@ fn drain_weapon_fire_fx(
             let weapons = weapons.as_deref()?;
             let bank = sound_bank.as_deref()?;
             let weapon = fire.event.payload.weapon;
+            // Counter-Strike guns fire with CS's own gunshots (added to the bank from the installs):
+            // Counter-Strike: Source's sound script entry when it is installed, else CS 1.6's wave.
+            if let Some(cs) = weapon_iw4::cs::cs_weapon_index_for(&weapons.0.script_name_of(weapon))
+                .and_then(weapon_iw4::cs::cs_weapon)
+            {
+                let suffix = if player_view {
+                    asset_audio::CS_SOUND_PLAYER_SUFFIX
+                } else {
+                    ""
+                };
+                let css = format!(
+                    "{}{}{suffix}",
+                    asset_audio::CSS_SOUND_PREFIX,
+                    cs.css_fire_sound.to_ascii_lowercase()
+                );
+                let goldsrc = weapon_iw4::cs::fire_sound(cs, fire.event.payload.correlation)
+                    .map(|name| format!("{}{name}{suffix}", asset_audio::CS_SOUND_PREFIX));
+                if let Some(alias) = std::iter::once(css)
+                    .chain(goldsrc)
+                    .find(|alias| bank.0.has_alias(asset_core::AssetNamespace::Iw4, alias))
+                {
+                    return Some((std::borrow::Cow::Owned(alias), player_view));
+                }
+            }
             audio::select_cg_fire_alias(
                 last_shot,
                 player_view,
@@ -2229,10 +2264,10 @@ fn drain_weapon_fire_fx(
                     &bank.0,
                 ),
             )
-            .map(|alias| (alias, player_view))
+            .map(|alias| (std::borrow::Cow::Borrowed(alias), player_view))
         });
         if let (Some((alias, player_view)), Some(sounds)) = (alias, sounds.as_deref_mut()) {
-            combat.last_fire_alias = Some(alias.to_owned());
+            combat.last_fire_alias = Some(alias.to_string());
 
             let sound_origin = flash_target
                 .map(|target| target.orientation.origin)
@@ -2248,7 +2283,7 @@ fn drain_weapon_fire_fx(
                     .as_deref()
                     .and_then(|w| w.0.namespace_of(fire.event.payload.weapon))
                     .unwrap_or(asset_core::AssetNamespace::Iw4),
-                alias: alias.to_owned(),
+                alias: alias.to_string(),
                 origin_inches: (!player_view).then_some(sound_origin),
                 snd_ent: audio::ent_from_number(fire.event.payload.number),
             });

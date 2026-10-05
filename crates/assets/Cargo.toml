@@ -6,6 +6,7 @@ license.workspace = true
 description = "Asset lane orchestration, linking and conversion into engine objects."
 
 [dependencies]
+movement_iw4 = { path = "../movement_iw4" }
 structured_data_iw4.workspace = true
 render_material.workspace = true
 diag.workspace = true

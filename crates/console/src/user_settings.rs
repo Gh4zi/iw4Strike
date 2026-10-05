@@ -21,6 +21,9 @@ pub(crate) struct PendingMenuBinding {
 pub(crate) struct UserSettingsPersistence {
     path: Option<PathBuf>,
     last_payload: Option<String>,
+    /// The save in flight. Writes leave the frame: a Windows file write and rename can stall for
+    /// hundreds of milliseconds.
+    writer: Option<std::thread::JoinHandle<()>>,
 }
 
 pub(crate) fn load_user_settings(
@@ -143,7 +146,7 @@ pub(crate) fn consume_menu_binding(
     capture.command = None;
     capture.consumed_input = true;
     binds.clear_command_on(id, false);
-    binds.set(button, id);
+    binds.set_both_sides(button, id);
     pending.id = None;
     pending.armed = false;
     view.listening = None;
@@ -258,6 +261,28 @@ pub(crate) fn save_user_settings(
     let Some(path) = persistence.path.clone() else {
         return;
     };
+    // One write at a time, so an older payload can never land after a newer one.
+    if let Some(previous) = persistence.writer.take() {
+        let _ = previous.join();
+    }
+    let contents = payload.clone();
+    persistence.writer = std::thread::Builder::new()
+        .name("iw4l-settings-save".into())
+        .spawn(move || write_settings_file(&path, &contents))
+        .ok();
+    persistence.last_payload = Some(payload);
+}
+
+impl UserSettingsPersistence {
+    /// Wait for a save still on its way to disk; the process is about to exit.
+    pub(crate) fn finish_pending_save(&mut self) {
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
+    }
+}
+
+fn write_settings_file(path: &std::path::Path, payload: &str) {
     let Some(parent) = path.parent() else { return };
     if let Err(error) = fs::create_dir_all(parent) {
         warn!("could not create {}: {error}", parent.display());
@@ -265,12 +290,10 @@ pub(crate) fn save_user_settings(
     }
     let temporary = path.with_extension("cfg.tmp");
     if let Err(error) =
-        fs::write(&temporary, payload.as_bytes()).and_then(|()| fs::rename(&temporary, &path))
+        fs::write(&temporary, payload.as_bytes()).and_then(|()| fs::rename(&temporary, path))
     {
         warn!("could not atomically save {}: {error}", path.display());
-        return;
     }
-    persistence.last_payload = Some(payload);
 }
 
 pub(crate) fn settings_path(artifacts: &std::path::Path) -> Option<PathBuf> {
@@ -321,6 +344,9 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("master_volume={:.3}", settings.master_volume),
         format!("brightness={:.3}", settings.brightness),
         format!("fov={:.0}", settings.fov),
+        format!("viewmodel_fov={:.0}", settings.viewmodel_fov),
+        format!("mv_mode={}", settings.mv_mode),
+        format!("sv_destructibles={}", u8::from(settings.destructibles)),
         format!("third_person={}", settings.third_person),
         format!("shadows={}", settings.shadows),
         format!("depth_of_field={}", settings.depth_of_field),
@@ -389,6 +415,13 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "fov" => {
                 if let Ok(v) = value.parse() {
                     settings.fov = v;
+                }
+            }
+            "viewmodel_fov" => parse_into(value, &mut settings.viewmodel_fov),
+            "sv_destructibles" => settings.destructibles = value.trim() == "1",
+            "mv_mode" => {
+                if movement_iw4::rules::MovementMode::from_name(value).is_some() {
+                    value.trim().clone_into(&mut settings.mv_mode);
                 }
             }
             "brightness" => {

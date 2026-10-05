@@ -40,6 +40,17 @@ pub enum ClientAction {
         request_id: ActionRequestId,
     },
 
+    /// Counter-Strike `drop`: throw the held gun.
+    DropWeapon {
+        request_id: ActionRequestId,
+    },
+
+    /// Counter-Strike `buy vest` / `buy vesthelm`.
+    BuyArmor {
+        request_id: ActionRequestId,
+        helmet: bool,
+    },
+
     SpawnClient {
         request_id: ActionRequestId,
     },
@@ -178,6 +189,8 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::GiveWeapon { request_id, .. }
         | ClientAction::ChangeWeaponConfiguration { request_id, .. }
         | ClientAction::ForceDeath { request_id }
+        | ClientAction::DropWeapon { request_id }
+        | ClientAction::BuyArmor { request_id, .. }
         | ClientAction::SpawnClient { request_id }
         | ClientAction::ForceSpawn { request_id, .. }
         | ClientAction::SpawnIntermission { request_id }

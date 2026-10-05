@@ -82,6 +82,13 @@ fn local_sound(
 ) -> Result<Value, String> {
     let client = player(world, receiver)?;
     let alias = string(args, 0)?;
+    if movement_iw4::rules::CS_RULES
+        && crate::cs_settings::MUTED_LOCAL_SOUNDS
+            .iter()
+            .any(|muted| alias.eq_ignore_ascii_case(muted))
+    {
+        return Ok(Value::Undefined);
+    }
     let mut frame = FrameWorld::from_world(world);
     let alias_index = frame.sound_alias_index(&alias);
     frame.push_local_sound(crate::PendingLocalSound {
