@@ -7,6 +7,7 @@ pub use render_anim::occupancy::{
     third_person, view_kick,
 };
 
+pub mod cs_viewmodel_light;
 pub mod dyn_ent;
 pub mod dyn_ent_brush;
 pub mod dyn_ent_wake;

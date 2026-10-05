@@ -30,6 +30,8 @@ pub(crate) fn register_drawsurf_render(app: &mut App) {
     super::sun_effects::register(app);
     super::postfx::register(app);
     super::iw_tess::register(app);
+    super::cs_viewmodel::register(app);
+    super::cs_scope::register(app);
     super::model_lighting_tiles::register(app);
     super::geometry_diagnostic::register(app);
 }

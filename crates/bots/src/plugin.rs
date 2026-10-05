@@ -2,8 +2,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::tasks::{Task, futures_lite::future};
 use net::{
-    AUTHORITY_MS, AuthorityClock, AuthorityWorld, ClientActionInbox, ClientCommandInbox,
-    LocalPresentClient, ReliableEventHub, authority_should_tick, look_angles_from_degrees,
+    AuthorityClock, AuthorityWorld, ClientActionInbox, ClientCommandInbox, LocalPresentClient,
+    ReliableEventHub, authority_should_tick, look_angles_from_degrees,
 };
 use sim::{ClientAction, ClientLifecycle, SimWorld, Tick};
 
@@ -19,9 +19,11 @@ use frame::{AuthoritySet, BotNavigationReady, ClientSet, HasWorld, MatchTornDown
 const VIEW_PITCH_DOWN: f32 = 85.0;
 const TRACE_QUOTA: u32 = 96;
 const ASTAR_QUOTA: u32 = 2048;
-/// Ten seconds of authority ticks between aggregates. Compact enough to leave
+/// Bots think once per script frame, the retail server rate.
+const BOT_THINK_MS: u32 = sim::SCRIPT_FRAME_MS;
+/// Ten seconds of bot thinks between aggregates. Compact enough to leave
 /// in a match, coarse enough not to be a per-query log in the hot path.
-const METER_PERIOD_TICKS: u32 = 200;
+const METER_PERIOD_TICKS: u32 = 10_000 / BOT_THINK_MS;
 
 #[derive(Resource, Default)]
 struct BotNav {
@@ -389,6 +391,20 @@ fn think_bots(mut p: ThinkBots) {
         return;
     }
 
+    // Bots think at the retail 20 Hz: a world snapshot and perception traces every 10 ms tick
+    // cost more than all the players' movement. The ticks between resend each bot's last command,
+    // so it still moves every tick.
+    let now_ms = u64::from(p.clock.tick) * u64::from(sim::MATCH_TICK_MS);
+    if !now_ms.is_multiple_of(u64::from(BOT_THINK_MS)) {
+        for bot in &p.roster.bots {
+            if let Some(mut cmd) = bot.last_cmd {
+                cmd.server_time = p.clock.time_ms;
+                p.cmds.push(bot.id, None, cmd, None);
+            }
+        }
+        return;
+    }
+
     let snapshot = p.world.0.snapshot(Tick(p.clock.tick.saturating_sub(1)));
     let fires = p.fire.drain();
     let mut budget = TraceBudget::new(TRACE_QUOTA);
@@ -406,6 +422,7 @@ fn think_bots(mut p: ThinkBots) {
             if let Some(brain) = bot.brain.as_mut() {
                 brain.cancel_navigation();
             }
+            bot.last_cmd = None;
             continue;
         }
         if bot.class_picked_in != Some(meta.life_sequence) {
@@ -450,7 +467,7 @@ fn think_bots(mut p: ThinkBots) {
                 &mut queried,
                 Some(&p.nav.graph),
                 &mut astar,
-                AUTHORITY_MS,
+                BOT_THINK_MS as i32,
             );
             controller_us += started.elapsed().as_micros() as u64;
             cmd.server_time = p.clock.time_ms;
@@ -464,6 +481,7 @@ fn think_bots(mut p: ThinkBots) {
         }) {
             cmd.buttons |= playerstate_iw4::buttons::ATTACK;
         }
+        bot.last_cmd = Some(cmd);
         p.cmds.push(bot.id, None, cmd, None);
     }
     if count == 0 {

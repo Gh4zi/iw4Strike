@@ -4,6 +4,7 @@
 # Rust
 /target/
 **/target/
+/target-*/
 /dist/
 
 # Runtime output next to the binary / cwd.

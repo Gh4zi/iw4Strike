@@ -381,6 +381,7 @@ fn run_players_system(ecs: &mut World) {
             };
             let script = world.player_anim_script();
             let mantle = world.xanims();
+            let before_move = world.player(*id).map(|ps| (ps.origin, ps.velocity, ps.ground_entity_num));
             let (
                 walking,
                 linked_bounds,
@@ -394,6 +395,8 @@ fn run_players_system(ecs: &mut World) {
                 jump_animations,
                 force_movement_anim,
                 landing_animation,
+                landing_speed,
+                unstuck,
             ) = {
                 let ps = world
                     .player_mut(*id)
@@ -435,8 +438,38 @@ fn run_players_system(ecs: &mut World) {
                     pml.jump_animations,
                     pml.mantle_movetype.is_some(),
                     pml.landing_animation,
+                    result.landing_speed,
+                    result.unstuck,
                 )
             };
+            if world.publishes_snapshot()
+                && let Some(ps) = world.player(*id)
+            {
+                report_edge_hang(*id, ps, &cmd, &backend, linked_bounds);
+                if commanded_move
+                    && move_diagnostics() != MoveDiagnostics::Off
+                    && let Some(before) = before_move
+                {
+                    report_speed_loss(*id, before, ps, &backend, linked_bounds);
+                }
+            }
+            if unstuck
+                && world.publishes_snapshot()
+                && let Some(ps) = world.player(*id)
+            {
+                diag::warn!(
+                    Sim,
+                    "movement: client {} started a command inside geometry at [{:.1}, {:.1}, {:.1}] (from [{:.1}, {:.1}, {:.1}]) duck_state={} — freed",
+                    id.0,
+                    ps.origin[0],
+                    ps.origin[1],
+                    ps.origin[2],
+                    moved_from[0],
+                    moved_from[1],
+                    moved_from[2],
+                    ps.cs_duck_state
+                );
+            }
             world
                 .client_meta_mut(*id)
                 .input_receipt
@@ -502,6 +535,10 @@ fn run_players_system(ecs: &mut World) {
                 phase_trace(&mut world, tick, &emissions);
             }
             crate::equipment::phase_offhand(&mut world, tick, &[(*id, cmd)]);
+            let fall = movement_iw4::rules::fall_damage(landing_speed);
+            if fall > 0 && world.publishes_snapshot() {
+                crate::script_player::fall_damage(&mut world, tick, *id, fall);
+            }
             world.set_old_cmd(*id, cmd.buttons, cmd.angles);
             consumed.push((*id, cmd));
         }
@@ -562,6 +599,7 @@ fn run_entity_types_system(ecs: &mut World) {
         crate::remote_missile::advance(&mut world, tick);
         crate::entity_run::phase_run_entity_thinks(&mut world, tick);
         if world.publishes_snapshot() {
+            crate::equipment::refire_cs_smokes(&mut world, tick);
             world.world_objects_mut().glass_update(
                 i32::try_from(tick.0.saturating_mul(crate::MATCH_TICK_MS)).unwrap_or(i32::MAX),
             );
@@ -787,6 +825,12 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                 if meta.lifecycle == ClientLifecycle::Connecting {
                     meta.lifecycle = ClientLifecycle::ChoosingClass;
                 }
+                // CS has no classes, and free-for-all has no team to pick: joining is spawning
+                // (the scripts' class question is answered by `openpopupmenu`). Team modes keep
+                // the team menu.
+                if movement_iw4::rules::CS_RULES && !world.game_mode_kind().is_team() {
+                    crate::script::answer_join(world.ecs(), id.0);
+                }
             }
             ClientAction::ChooseDefaultClass {
                 request_id: _,
@@ -817,6 +861,10 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                 world.client_meta_mut(*id).name = name;
             }
             ClientAction::UseCopycat { .. } | ClientAction::SpawnClient { .. } => {}
+            ClientAction::DropWeapon { .. } => crate::item::drop_cs_weapon(world, tick, *id),
+            ClientAction::BuyArmor { helmet, .. } => {
+                crate::script_player::cs_buy_armor(world, *id, helmet);
+            }
             ClientAction::ActionSlot {
                 request_id: _,
                 slot,
@@ -1447,7 +1495,45 @@ fn apply_give_weapon(
         return;
     };
 
-    let outgoing = if world
+    if let Some(grenade) = weapon_iw4::cs::cs_grenade(facts.cs_weapon) {
+        // CS grenades stack up to their carry limit and never take the hand.
+        let clip_key = weapon_iw4::clip_table_key(facts.clip_index, weapon);
+        let have = if next.weapons.contains(&(weapon as i32)) {
+            weapon_iw4::get_clip_for_hand(&next.ammoclip, clip_key, 0)
+        } else {
+            inventory_add_weapon(&mut next, weapon, false);
+            if !next.weapons.contains(&(weapon as i32)) {
+                reject(world, crate::GiveRejectReason::InvalidWeapon);
+                return;
+            }
+            seed_ps_ammo_tables(&mut next, weapon, &facts, 0, 0, false, 0);
+            0
+        };
+        let count = (have + 1).min(grenade.carry);
+        let _ = weapon_iw4::set_clip_for_hand(&mut next.ammoclip, clip_key, 0, count);
+        *world.player_mut(id).expect("validated alive player") = next;
+        world.client_meta_mut(id).set_ammo(weapon, count, 0);
+        world.push_event(
+            tick,
+            EventAudience::Client(id),
+            SimEvent::GiveAccepted { request_id, weapon },
+        );
+        return;
+    }
+    let outgoing = if facts.cs_weapon != 0 {
+        // Counter-Strike: a gun replaces the one in its own slot (rifle for rifle, pistol for
+        // pistol), whatever is held; an empty slot just takes it.
+        let slot = weapon_iw4::cs::slot_of(&facts);
+        next.weapons
+            .iter()
+            .filter_map(|&w| u32::try_from(w).ok().filter(|&w| w != 0 && w != weapon))
+            .find(|&w| {
+                world
+                    .combat_facts_for(w)
+                    .is_some_and(|f| weapon_iw4::cs::slot_of(&f) == slot)
+            })
+            .unwrap_or(0)
+    } else if world
         .combat_facts_for(next.weapon)
         .is_some_and(|facts| facts.inventory_type == 3)
         && next.weapons.contains(&(next.weapon_primary as i32))
@@ -1805,6 +1891,8 @@ pub(crate) fn log_forced_spawn(
 struct PlayerBodyClip {
     entnum: u16,
     origin: [f32; 3],
+    /// CS rules: solid box this tall (stand or duck hull); `None` keeps the IW4 capsule.
+    box_height: Option<f32>,
 }
 
 fn alive_body_clips(world: &FrameWorld) -> Vec<PlayerBodyClip> {
@@ -1820,6 +1908,7 @@ fn alive_body_clips(world: &FrameWorld) -> Vec<PlayerBodyClip> {
             world.player(id).map(|ps| PlayerBodyClip {
                 entnum: id.0 as u16,
                 origin: ps.origin,
+                box_height: movement_iw4::rules::body_height(ps),
             })
         })
         .collect();
@@ -1830,6 +1919,7 @@ fn alive_body_clips(world: &FrameWorld) -> Vec<PlayerBodyClip> {
             .map(|body| PlayerBodyClip {
                 entnum: body.client.0 as u16,
                 origin: body.origin,
+                box_height: body.box_height,
             }),
     );
     bodies
@@ -2052,6 +2142,276 @@ pub(crate) fn script_mantle(
     Ok(available)
 }
 
+/// Commands a player may stay airborne without falling before it is reported as hanging.
+const EDGE_HANG_COMMANDS: u32 = 20;
+
+/// Diagnostic for CS movement: a player in the air whose height does not change for
+/// `EDGE_HANG_COMMANDS` commands is perched on something it should land on or fall off (the
+/// rounded IW4 capsule on a mesh edge). Logged once per hang with the position.
+fn report_edge_hang(
+    id: ClientId,
+    ps: &PlayerState,
+    cmd: &playerstate_iw4::UserCmd,
+    backend: &ClipBackend<'_>,
+    bounds: movement_iw4::MoveBounds,
+) {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static HANGS: Mutex<Option<HashMap<u32, (u32, f32)>>> = Mutex::new(None);
+    let Ok(mut guard) = HANGS.lock() else {
+        return;
+    };
+    let hangs = guard.get_or_insert_with(HashMap::new);
+    let airborne = ps.pm_type == 0 && ps.ground_entity_num == playerstate_iw4::ENTITYNUM_NONE;
+    let entry = hangs.entry(id.0).or_insert((0, ps.origin[2]));
+    if !airborne || (ps.origin[2] - entry.1).abs() > 0.5 {
+        *entry = (0, ps.origin[2]);
+        return;
+    }
+    entry.0 += 1;
+    if entry.0 == EDGE_HANG_COMMANDS {
+        diag::warn!(
+            Sim,
+            "movement: client {} hanging in the air at [{:.1}, {:.1}, {:.1}] vel [{:.0}, {:.0}, {:.0}] duck_state={} buttons={:#x} move={}/{}",
+            id.0,
+            ps.origin[0],
+            ps.origin[1],
+            ps.origin[2],
+            ps.velocity[0],
+            ps.velocity[1],
+            ps.velocity[2],
+            ps.cs_duck_state,
+            cmd.buttons,
+            cmd.forwardmove,
+            cmd.rightmove
+        );
+        let probe = |label: &str, end: [f32; 3]| {
+            let t = CollisionBackend::trace(
+                backend,
+                GroundTraceInput {
+                    start: ps.origin,
+                    end,
+                    mins: bounds.mins,
+                    maxs: bounds.maxs,
+                    tracemask: bounds.tracemask,
+                },
+            );
+            diag::warn!(
+                Sim,
+                "movement:   {label}: frac {:.3} startsolid {} allsolid {} normal [{:.2}, {:.2}, {:.2}] hit_type {} hit_id {} contents {:#x} bounds {:?}..{:?}",
+                t.fraction,
+                t.startsolid,
+                t.allsolid,
+                t.normal[0],
+                t.normal[1],
+                t.normal[2],
+                t.hit_type,
+                t.hit_id,
+                t.contents,
+                bounds.mins,
+                bounds.maxs
+            );
+        };
+        let o = ps.origin;
+        probe("here", o);
+        probe("down 2", [o[0], o[1], o[2] - 2.0]);
+        probe("up 2", [o[0], o[1], o[2] + 2.0]);
+        probe("back 4", [o[0] - 4.0 * cmd_forward(ps)[0], o[1] - 4.0 * cmd_forward(ps)[1], o[2]]);
+        let f = cmd_forward(ps);
+        probe("fwd 1", [o[0] + f[0], o[1] + f[1], o[2]]);
+        probe("fwd 1 down", [o[0] + f[0], o[1] + f[1], o[2] - 0.08]);
+        probe("fwd 0.05", [o[0] + 0.05 * f[0], o[1] + 0.05 * f[1], o[2]]);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MoveDiagnostics {
+    Off,
+    /// `IW4L_MOVE_DIAG=1`: log snags (most of the run lost in one tick).
+    Snags,
+    /// `IW4L_MOVE_DIAG=trace`: also every command.
+    Trace,
+}
+
+fn move_diagnostics() -> MoveDiagnostics {
+    static MODE: std::sync::OnceLock<MoveDiagnostics> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("IW4L_MOVE_DIAG").as_deref() {
+        Ok("trace") => MoveDiagnostics::Trace,
+        Ok(v) if !v.is_empty() && v != "0" => MoveDiagnostics::Snags,
+        _ => MoveDiagnostics::Off,
+    })
+}
+
+/// A command that keeps a direction held but loses most of the player's horizontal speed in one
+/// tick ran into something: log where, and what a forward sweep from the start meets (stand
+/// height and a step up), so snags on map geometry can be found.
+fn report_speed_loss(
+    id: ClientId,
+    (from, velocity, ground): ([f32; 3], [f32; 3], i32),
+    ps: &PlayerState,
+    backend: &ClipBackend<'_>,
+    bounds: movement_iw4::MoveBounds,
+) {
+    let before = velocity[0].hypot(velocity[1]);
+    let after = ps.velocity[0].hypot(ps.velocity[1]);
+    if move_diagnostics() == MoveDiagnostics::Trace {
+        diag::info!(
+            Sim,
+            "movetrace: [{:.2}, {:.2}, {:.2}] -> [{:.2}, {:.2}, {:.2}] v [{:.0}, {:.0}, {:.0}] -> [{:.0}, {:.0}, {:.0}] ground {} -> {}",
+            from[0], from[1], from[2], ps.origin[0], ps.origin[1], ps.origin[2],
+            velocity[0], velocity[1], velocity[2], ps.velocity[0], ps.velocity[1], ps.velocity[2],
+            ground, ps.ground_entity_num
+        );
+    }
+    if ps.pm_type != 0 || before < 150.0 || after > before * 0.6 {
+        return;
+    }
+    diag::info!(
+        Sim,
+        "movement: client {} lost speed {:.0} -> {:.0} at [{:.1}, {:.1}, {:.1}] -> [{:.1}, {:.1}, {:.1}] vel_z {:.0} -> {:.0} ground {} -> {}",
+        id.0,
+        before,
+        after,
+        from[0],
+        from[1],
+        from[2],
+        ps.origin[0],
+        ps.origin[1],
+        ps.origin[2],
+        velocity[2],
+        ps.velocity[2],
+        ground,
+        ps.ground_entity_num
+    );
+    let dir = [velocity[0] / before, velocity[1] / before];
+    // The surface ahead, sampled every 2 units with a thin trace: height and slope.
+    let mut profile = String::new();
+    for step in -2..14 {
+        let along = step as f32 * 2.0;
+        let x = from[0] + dir[0] * along;
+        let y = from[1] + dir[1] * along;
+        let t = CollisionBackend::trace(
+            backend,
+            GroundTraceInput {
+                start: [x, y, from[2] + 48.0],
+                end: [x, y, from[2] - 48.0],
+                mins: [0.0; 3],
+                maxs: [0.0; 3],
+                tracemask: bounds.tracemask,
+            },
+        );
+        let z = from[2] + 48.0 - 96.0 * t.fraction;
+        profile.push_str(&format!(" {along:.0}:{:.1}/{:.2}", z - from[2], t.normal[2]));
+    }
+    diag::info!(Sim, "movement:   ground ahead (dist:dz/nz):{profile}");
+    for (label, lift) in [("forward", 0.0), ("forward +18", 18.0)] {
+        let start = [from[0], from[1], from[2] + lift];
+        let end = [start[0] + dir[0] * 16.0, start[1] + dir[1] * 16.0, start[2]];
+        let t = CollisionBackend::trace(
+            backend,
+            GroundTraceInput {
+                start,
+                end,
+                mins: bounds.mins,
+                maxs: bounds.maxs,
+                tracemask: bounds.tracemask,
+            },
+        );
+        diag::info!(
+            Sim,
+            "movement:   {label}: frac {:.3} startsolid {} normal [{:.2}, {:.2}, {:.2}] hit_type {} hit_id {} contents {:#x}",
+            t.fraction,
+            t.startsolid,
+            t.normal[0],
+            t.normal[1],
+            t.normal[2],
+            t.hit_type,
+            t.hit_id,
+            t.contents
+        );
+    }
+}
+
+fn cmd_forward(ps: &PlayerState) -> [f32; 2] {
+    let yaw = ps.viewangles[1].to_radians();
+    [yaw.cos(), yaw.sin()]
+}
+
+/// Gap a box sweep stops short of a body, like the world traces' clip epsilon.
+const BODY_CLIP_EPSILON: f32 = 0.125;
+
+/// CS player collision: the mover's box swept against another player's box (both axis-aligned),
+/// so the top of a body is a flat floor to stand on. Slab test on the Minkowski-expanded box.
+fn trace_box_through_body(
+    input: GroundTraceInput,
+    origin: [f32; 3],
+    body_mins: [f32; 3],
+    body_maxs: [f32; 3],
+) -> Trace {
+    let mut hit = Trace {
+        fraction: 1.0,
+        endpos: input.end,
+        ..Trace::default()
+    };
+    if input.tracemask & crate::world::CONTENTS_BODY == 0 {
+        return hit;
+    }
+    let low: [f32; 3] = std::array::from_fn(|a| origin[a] + body_mins[a] - input.maxs[a]);
+    let high: [f32; 3] = std::array::from_fn(|a| origin[a] + body_maxs[a] - input.mins[a]);
+    let mut enter = -1.0_f32;
+    let mut leave = 1.0_f32;
+    let mut normal = [0.0_f32; 3];
+    let mut starts_out = false;
+    let mut ends_out = false;
+    for axis in 0..3 {
+        // (distance of start and end in front of the face, outward normal sign)
+        for (d1, d2, sign) in [
+            (input.start[axis] - high[axis], input.end[axis] - high[axis], 1.0),
+            (low[axis] - input.start[axis], low[axis] - input.end[axis], -1.0),
+        ] {
+            if d2 > 0.0 {
+                ends_out = true;
+            }
+            if d1 > 0.0 {
+                starts_out = true;
+            }
+            if d1 > 0.0 && (d2 >= BODY_CLIP_EPSILON || d2 >= d1) {
+                return hit;
+            }
+            if d1 <= 0.0 && d2 <= 0.0 {
+                continue;
+            }
+            if d1 > d2 {
+                let f = (d1 - BODY_CLIP_EPSILON) / (d1 - d2);
+                if f > enter {
+                    enter = f;
+                    normal = [0.0; 3];
+                    normal[axis] = sign;
+                }
+            } else {
+                let f = (d1 + BODY_CLIP_EPSILON) / (d1 - d2);
+                leave = leave.min(f);
+            }
+        }
+    }
+    hit.contents = crate::world::CONTENTS_BODY;
+    if !starts_out {
+        hit.startsolid = 1;
+        hit.allsolid = u8::from(!ends_out);
+        hit.fraction = 0.0;
+        hit.endpos = input.start;
+        return hit;
+    }
+    if enter < leave && enter > -1.0 {
+        let fraction = enter.max(0.0);
+        hit.fraction = fraction;
+        hit.normal = normal;
+        hit.walkable = u8::from(normal[2] >= 0.7);
+        hit.endpos = std::array::from_fn(|a| input.start[a] + fraction * (input.end[a] - input.start[a]));
+    }
+    hit
+}
+
 fn clip_move_to_players(
     mut hit: Trace,
     bodies: &[PlayerBodyClip],
@@ -2065,17 +2425,25 @@ fn clip_move_to_players(
         if body.entnum == self_entnum {
             continue;
         }
-        let other = clipmap_iw4::transformed_temp_capsule_trace(
-            input.start,
-            input.end,
-            input.mins,
-            input.maxs,
-            body.origin,
-            PLAYER_MINS,
-            PLAYER_MAXS,
-            crate::world::CONTENTS_BODY,
-            input.tracemask,
-        );
+        let other = match body.box_height {
+            Some(height) => trace_box_through_body(
+                input,
+                body.origin,
+                PLAYER_MINS,
+                [PLAYER_MAXS[0], PLAYER_MAXS[1], height],
+            ),
+            None => clipmap_iw4::transformed_temp_capsule_trace(
+                input.start,
+                input.end,
+                input.mins,
+                input.maxs,
+                body.origin,
+                PLAYER_MINS,
+                PLAYER_MAXS,
+                crate::world::CONTENTS_BODY,
+                input.tracemask,
+            ),
+        };
         if other.fraction >= hit.fraction && other.startsolid == 0 && other.allsolid == 0 {
             continue;
         }

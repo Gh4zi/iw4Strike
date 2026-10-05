@@ -28,6 +28,8 @@ pub const ITEM_MINS: [f32; 3] = [0.0, 0.0, 0.0];
 pub const ITEM_MAXS: [f32; 3] = [1.0, 1.0, 1.0];
 
 pub const PLAYER_DROP_Z: f32 = (PLAYER_MAXS[2] - PLAYER_MINS[2]) * 0.5;
+/// CS throws a dropped gun at `v_forward * 300 + v_forward * 100`.
+const CS_DROP_SPEED: f32 = 400.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DroppedItem {
@@ -341,6 +343,97 @@ pub(crate) fn drop_weapon(
     Some(number)
 }
 
+/// The CS slot of a CS gun (1 rifle, 2 pistol); `None` for anything else, the knife included.
+fn cs_gun_slot(world: &FrameWorld, weapon: u32) -> Option<u8> {
+    let facts = world.combat_facts_for(weapon)?;
+    weapon_iw4::cs::cs_weapon(facts.cs_weapon)?;
+    Some(weapon_iw4::cs::slot_of(&facts))
+}
+
+/// The weapon `ps` owns in CS slot `slot`, other than `except`.
+fn owned_in_cs_slot(world: &FrameWorld, ps: &PlayerState, slot: u8, except: u32) -> Option<u32> {
+    ps.weapons
+        .iter()
+        .filter_map(|&w| u32::try_from(w).ok().filter(|&w| w != 0 && w != except))
+        .find(|&w| {
+            world
+                .combat_facts_for(w)
+                .is_some_and(|facts| weapon_iw4::cs::slot_of(&facts) == slot)
+        })
+}
+
+/// Raise the best weapon `player` still owns (rifle, pistol, knife), as CS does when the held one
+/// goes (`GetNextBestWeapon`).
+pub(crate) fn raise_best_cs_weapon(world: &mut FrameWorld, player: ClientId) -> Option<u32> {
+    let ps = world.player(player).copied()?;
+    let next = (1..=4).find_map(|slot| owned_in_cs_slot(world, &ps, slot, 0))?;
+    let _ = crate::script_player::set_spawn_weapon(world, player, next);
+    Some(next)
+}
+
+/// CS `drop` (`DropPlayerItem`): the held gun is thrown forward at 400 u/s along the body's
+/// facing (a third of the view pitch), and the best weapon left comes up: rifle, pistol, knife.
+/// The knife cannot be dropped.
+pub(crate) fn drop_cs_weapon(world: &mut FrameWorld, tick: Tick, player: ClientId) {
+    let Some(ps) = world.player(player).copied() else {
+        return;
+    };
+    if !walker_can_touch(world, player, &ps) {
+        return;
+    }
+    let weapon = ps.weapon;
+    if cs_gun_slot(world, weapon).is_none() || !ps.weapons.contains(&(weapon as i32)) {
+        return;
+    }
+    let (clip_r, clip_l, stock) = ammo_from_ps(world, &ps, weapon);
+    let (forward, _, _) = angle_vectors([ps.viewangles[0] / 3.0, ps.viewangles[1], 0.0]);
+    let origin = [
+        ps.origin[0] + forward[0] * 10.0,
+        ps.origin[1] + forward[1] * 10.0,
+        ps.origin[2] + PLAYER_DROP_Z,
+    ];
+    let time_ms = crate::corpse::level_time_ms(tick);
+    let pos = Trajectory {
+        tr_type: TR_GRAVITY,
+        tr_time: time_ms,
+        tr_duration: 0,
+        tr_delta: forward.map(|v| v * CS_DROP_SPEED),
+        tr_base: origin,
+    };
+    let apos = Trajectory {
+        tr_type: TR_STATIONARY,
+        tr_time: 0,
+        tr_duration: 0,
+        tr_delta: [0.0; 3],
+        tr_base: [0.0, ps.viewangles[1], 0.0],
+    };
+    let number = push_dropped_item(
+        world,
+        weapon,
+        origin,
+        pos,
+        apos,
+        player.0 as i32,
+        clip_r,
+        clip_l,
+        stock,
+        true,
+        false,
+    );
+    if number == ENTITYNUM_NONE {
+        return;
+    }
+    crate::script_player::take_weapon(world, player, weapon);
+    let next = raise_best_cs_weapon(world, player);
+    diag::debug!(
+        Sim,
+        "cs drop: client {} threw {} (item {number}), now holding {}",
+        player.0,
+        world.weapon_script_name(weapon),
+        next.map_or("nothing".to_owned(), |w| world.weapon_script_name(w).to_owned())
+    );
+}
+
 pub(crate) fn drop_scavenger_item(
     world: &mut FrameWorld,
     tick: Tick,
@@ -437,10 +530,16 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
             continue;
         }
 
-        if !item.scavenger && !ps.weapons.contains(&item.state.index) {
+        // Counter-Strike: a landed gun whose slot is empty is picked up by walking over it.
+        let cs_takes = !item.scavenger
+            && !item.falling
+            && !ps.weapons.contains(&item.state.index)
+            && cs_gun_slot(world, item.state.index as u32)
+                .is_some_and(|slot| owned_in_cs_slot(world, &ps, slot, 0).is_none());
+        if !item.scavenger && !ps.weapons.contains(&item.state.index) && !cs_takes {
             continue;
         }
-        if !item.scavenger {
+        if !item.scavenger && !cs_takes {
             let weapon = item.state.index as u32;
             let Some(facts) = world.combat_facts_for(weapon) else {
                 continue;
@@ -505,20 +604,41 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
             *slot = next;
         }
     } else {
-        let current = current_primary_weapon(world, &ps);
-        if current != 0 && primary_count(world, &ps) >= 2 {
-            swapped_entnum = drop_current_primary_at(
-                world,
-                walker,
-                current,
-                item.origin,
-                item.state.apos_tr_base,
-            );
+        let cs_slot = cs_gun_slot(world, weapon);
+        let switch_to = match (cs_slot, world.combat_facts_for(ps.weapon)) {
+            // CS raises the new gun only when it ranks above the held one (`FShouldSwitchWeapon`).
+            (Some(slot), Some(held)) => slot <= weapon_iw4::cs::slot_of(&held),
+            _ => true,
+        };
+        if let Some(slot) = cs_slot {
+            // Counter-Strike: the gun takes its own slot, dropping the one already there.
+            if let Some(owned) = owned_in_cs_slot(world, &ps, slot, weapon) {
+                swapped_entnum = drop_current_primary_at(
+                    world,
+                    walker,
+                    owned,
+                    item.origin,
+                    item.state.apos_tr_base,
+                );
+            }
+        } else {
+            let current = current_primary_weapon(world, &ps);
+            if current != 0 && primary_count(world, &ps) >= 2 {
+                swapped_entnum = drop_current_primary_at(
+                    world,
+                    walker,
+                    current,
+                    item.origin,
+                    item.state.apos_tr_base,
+                );
+            }
         }
         if let Some(mut next) = world.player(walker).copied() {
+            let held = (next.weapon, next.weapon_primary, next.last_weapon_hand);
             give_weapon_to_ps_akimbo(&mut next, weapon, akimbo);
-
-            if let Some(facts) = world.combat_facts_for(weapon) {
+            if !switch_to && held.0 != 0 {
+                (next.weapon, next.weapon_primary, next.last_weapon_hand) = held;
+            } else if let Some(facts) = world.combat_facts_for(weapon) {
                 let hand = weapon_iw4::spawn_weapon_hand(weapon, &facts);
                 next.weaponstate_primary = hand.weaponstate;
                 next.weapon_time = hand.weapon_time;
@@ -572,7 +692,7 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
         swapped_entnum,
         picker_pm_type,
     });
-    let tick = Tick((world.entity_kernel().level_time_ms() / 50) as u32);
+    let tick = Tick((world.entity_kernel().level_time_ms() / crate::MATCH_TICK_MS as i32) as u32);
     world.push_entity_event(
         tick,
         crate::EventAudience::All,

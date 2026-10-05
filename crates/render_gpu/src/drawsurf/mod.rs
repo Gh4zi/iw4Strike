@@ -1,6 +1,8 @@
 mod admitted;
 mod backend;
 mod colour_submit;
+mod cs_scope;
+mod cs_viewmodel;
 mod depth_range;
 mod draw;
 mod exact_pipeline;
@@ -28,6 +30,11 @@ mod sun_effects;
 mod texture_table;
 
 pub use admitted::AdmittedExactPort;
+pub use cs_scope::CsScopeFrame;
+pub use cs_viewmodel::{
+    CS_VIEWMODEL_MAX_BONES, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelModel, CsViewmodelShading,
+    CsViewmodelVertex,
+};
 pub use products::ExtractedRenderFrameProducts;
 pub use render_backend::overlay::{
     CODE_BASE_LIGHTING_COORDS, CODE_SHADOWMAP_POLYGON_OFFSET, CODE_TEXTURE_OUTDOOR,

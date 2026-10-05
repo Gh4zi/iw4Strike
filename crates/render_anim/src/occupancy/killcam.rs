@@ -276,7 +276,7 @@ impl KillcamCamera {
                     .map(|p| (trajectory_time - p.launch_time).max(0))
                     .unwrap_or(now - self.entered_at) as f32
                     / 1000.0;
-                let origin = if projectile.is_some_and(|p| p.pos.tr_type == entity_iw4::TR_GRAVITY)
+                let origin = if projectile.is_some_and(|p| entity_iw4::is_gravity(p.pos.tr_type))
                 {
                     anchor
                 } else if forward.z > 0.0 {
@@ -288,7 +288,7 @@ impl KillcamCamera {
                     anchor + Vec3::Z * (175.0 + 25.0 * forward.z)
                 };
                 let blend = (1.0 - (anchor.z - self.target.z) / 3000.0).clamp(0.0, 1.0);
-                let gravity = projectile.is_some_and(|p| p.pos.tr_type == entity_iw4::TR_GRAVITY);
+                let gravity = projectile.is_some_and(|p| entity_iw4::is_gravity(p.pos.tr_type));
                 let axis_forward = if gravity {
                     forward
                 } else {
@@ -309,7 +309,7 @@ impl KillcamCamera {
                     );
                     rotation = rotation.slerp(Quat::from_mat3(&target_axis), blend);
                 }
-                let angles = if projectile.is_some_and(|p| p.pos.tr_type == entity_iw4::TR_GRAVITY)
+                let angles = if projectile.is_some_and(|p| entity_iw4::is_gravity(p.pos.tr_type))
                 {
                     self.angles
                 } else {

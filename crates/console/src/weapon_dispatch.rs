@@ -74,6 +74,20 @@ pub(crate) fn register_weapon_commands(
                 .arg(GiveCompleter(completions.clone())),
         );
     }
+    if registry.resolve("buy").is_none() {
+        registry.register(
+            crate::CommandSpec::new("buy")
+                .usage("buy <ak47|m4a1|awp|deagle|usp|glock|hegrenade|flashbang|smokegrenade> — CS gun or grenade (free for now)")
+                .arg(StaticCompleter::new(
+                    weapon_iw4::cs::cs_buy_list().map(|(name, _, _)| name),
+                )),
+        );
+    }
+    if registry.resolve("menuresponse").is_none() {
+        registry.register(crate::CommandSpec::new("menuresponse").usage(
+            "menuresponse <menu> <response> — send a script menu answer, as clicking it would (e.g. team_marinesopfor spectator)",
+        ));
+    }
     if registry.resolve("bot").is_none() {
         let mut spec = crate::CommandSpec::new("bot").usage(super::feature_dispatch::BOT_USAGE);
         for _ in 0..4 {
@@ -162,7 +176,7 @@ pub(crate) fn route_weapon_commands(
     };
 
     for cmd in events.read() {
-        if matches!(cmd.name.as_str(), "give" | "attach")
+        if matches!(cmd.name.as_str(), "give" | "attach" | "buy")
             && authority.as_ref().is_some_and(|a| !a.0.cheats_enabled())
         {
             echo(
@@ -173,6 +187,82 @@ pub(crate) fn route_weapon_commands(
             continue;
         }
         match cmd.name.as_str() {
+            "menuresponse" => {
+                let [menu, response] = cmd.args.as_slice() else {
+                    echo("usage: menuresponse <menu> <response>".into(), &mut console, &mut line);
+                    continue;
+                };
+                let (Some(menu_field), Some(response_field)) = (
+                    sim::menu_response_field(menu),
+                    sim::menu_response_field(response),
+                ) else {
+                    echo("menuresponse: too long for the wire".into(), &mut console, &mut line);
+                    continue;
+                };
+                let request_id = seq.allocate();
+                let message = match inbox.push(
+                    local.0,
+                    ClientAction::MenuResponse {
+                        request_id,
+                        menu: menu_field,
+                        response: response_field,
+                    },
+                ) {
+                    Ok(()) => format!("menuresponse: {menu} {response}"),
+                    Err(error) => format!("menuresponse: {error}"),
+                };
+                echo(message, &mut console, &mut line);
+            }
+            "buy" if matches!(cmd.args.first().map(String::as_str), Some("vest" | "vesthelm")) => {
+                let helmet = cmd.args.first().is_some_and(|a| a == "vesthelm");
+                if !alive(&presented, local.0) {
+                    echo("buy: not Alive".into(), &mut console, &mut line);
+                    continue;
+                }
+                let request_id = seq.allocate();
+                let price = if helmet {
+                    weapon_iw4::cs::CS_KEVLAR_HELMET_PRICE
+                } else {
+                    weapon_iw4::cs::CS_KEVLAR_PRICE
+                };
+                let message = match inbox.push(local.0, ClientAction::BuyArmor { request_id, helmet }) {
+                    Ok(()) => format!("buy: {} (${price})", if helmet { "kevlar + helmet" } else { "kevlar" }),
+                    Err(error) => format!("buy: {error}"),
+                };
+                echo(message, &mut console, &mut line);
+            }
+            "buy" => {
+                let Some((name, mw2_name, price)) = cmd
+                    .args
+                    .first()
+                    .and_then(|name| weapon_iw4::cs::cs_buyable(name))
+                else {
+                    let names: Vec<_> = weapon_iw4::cs::cs_buy_list().map(|(n, _, _)| n).collect();
+                    echo(format!("buy: one of {}", names.join(" ")), &mut console, &mut line);
+                    continue;
+                };
+                let Some(weapons) = weapons.as_ref() else {
+                    echo("buy: weapon catalog not loaded".into(), &mut console, &mut line);
+                    continue;
+                };
+                if !alive(&presented, local.0) {
+                    echo("buy: not Alive".into(), &mut console, &mut line);
+                    continue;
+                }
+                match resolve_give_id(&weapons.0, mw2_name, &[]) {
+                    Ok(weapon) => {
+                        let request_id = seq.allocate();
+                        let message = match inbox
+                            .push(local.0, ClientAction::GiveWeapon { request_id, weapon })
+                        {
+                            Ok(()) => format!("buy: {name} (${price})"),
+                            Err(error) => format!("buy: {error}"),
+                        };
+                        echo(message, &mut console, &mut line);
+                    }
+                    Err(msg) => echo(format!("buy: {msg}"), &mut console, &mut line),
+                }
+            }
             "give" => {
                 let target = match parse_give_target(&cmd.args) {
                     Ok(target) => target,

@@ -45,7 +45,8 @@ pub fn check_for_change_admits(weaponstate: i32, weapon_time: i32, weapon_delay:
 
 #[inline]
 pub fn traversal_forces_holster(cmd: &WeaponCmd) -> bool {
-    cmd.mantle_weapon_inactive || (cmd.pm_flags & pm_flags::LADDER) != 0
+    cmd.mantle_weapon_inactive
+        || (!cmd.ladder_keeps_weapon && (cmd.pm_flags & pm_flags::LADDER) != 0)
 }
 
 fn is_dropping(ws: i32) -> bool {

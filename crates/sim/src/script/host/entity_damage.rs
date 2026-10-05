@@ -226,6 +226,18 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
     else {
         return false;
     };
+    if !crate::cs_settings::destructibles_enabled() {
+        let mut runtime = world.resource_mut::<Runtime>();
+        if let Value::String(name) = runtime.object_field(object, "targetname")
+            && crate::cs_settings::DESTRUCTIBLE_TARGETNAMES
+                .iter()
+                .any(|t| name.eq_ignore_ascii_case(t))
+        {
+            // Destructibles off: the car or barrel stops the hit but takes no damage.
+            diag::debug!(Sim, "destructibles off: {} took no {} damage", name, hit.amount);
+            return true;
+        }
+    }
     let frame = FrameWorld::from_world(world);
     let tag = hit
         .bone
@@ -258,6 +270,7 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
         _ => 0,
     };
     let after = before.saturating_sub(hit.amount);
+    diag::debug!(Sim, "entity {model} took {} damage ({before} -> {after})", hit.amount);
     runtime.set_object_field(object, "health", Value::Int(after));
     drop(runtime);
     let receiver = Value::Object(object);
@@ -282,6 +295,34 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
         raise(world, receiver, "death", vec![attacker]);
     }
     true
+}
+
+/// MW2 map destructibles the scripts drive (cars, barrels): targetname, model and origin.
+pub(crate) fn destructible_spots(world: &mut World) -> Vec<(String, String, [f32; 3])> {
+    let mut runtime = world.resource_mut::<Runtime>();
+    let ids: Vec<u64> = runtime.entities.keys().copied().collect();
+    let mut out = Vec::new();
+    for id in ids {
+        let Value::String(name) = runtime.object_field(id, "targetname") else {
+            continue;
+        };
+        if !crate::cs_settings::DESTRUCTIBLE_TARGETNAMES
+            .iter()
+            .any(|t| name.eq_ignore_ascii_case(t))
+        {
+            continue;
+        }
+        let model = match runtime.object_field(id, "model") {
+            Value::String(model) => model.to_string(),
+            _ => String::new(),
+        };
+        let origin = match runtime.object_field(id, "origin") {
+            Value::Vector(origin) => origin,
+            _ => [0.0; 3],
+        };
+        out.push((name.to_string(), model, origin));
+    }
+    out
 }
 
 pub(crate) fn destructible_callback(

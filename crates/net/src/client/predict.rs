@@ -198,7 +198,8 @@ pub struct ReconcileOutcome {
     pub report: AdoptReport,
 }
 
-pub const MAX_UNACKED_SNAPSHOTS: u32 = 20;
+/// One second of authority snapshots, whatever the tick rate.
+pub const MAX_UNACKED_SNAPSHOTS: u32 = sim::ticks_for_ms(1000);
 
 #[derive(Debug)]
 pub struct ClientPrediction {
@@ -215,6 +216,11 @@ pub struct ClientPrediction {
     metrics: PredictionMetrics,
 
     predicted_local: Option<PlayerState>,
+
+    /// The local player one tick before `predicted_local`, and the command time that produced
+    /// `predicted_local`: presentation blends between them until the next tick.
+    interp_from: Option<PlayerState>,
+    interp_time: Option<i32>,
 
     last_cmd: Option<UserCmd>,
     acknowledged_cmd: Option<UserCmd>,
@@ -245,6 +251,8 @@ impl ClientPrediction {
             predicted_error: PredictedError::default(),
             metrics: PredictionMetrics::default(),
             predicted_local: None,
+            interp_from: None,
+            interp_time: None,
             last_cmd: None,
             acknowledged_cmd: None,
             replay_floor: None,
@@ -295,6 +303,33 @@ impl ClientPrediction {
 
     pub fn predicted_local(&self) -> Option<&PlayerState> {
         self.predicted_local.as_ref()
+    }
+
+    /// `predicted_local` drawn between ticks: its origin, velocity and eye height blend from the
+    /// tick before by how far `now_ms` is past the newest command, so a frame rate above the tick
+    /// rate still moves the view every frame. Teleports and big corrections are not blended.
+    pub fn presented_local(&self, now_ms: f32, tick_ms: f32) -> Option<PlayerState> {
+        const SNAP_DISTANCE: f32 = 128.0;
+        let current = self.predicted_local?;
+        let (Some(from), Some(time)) = (self.interp_from, self.interp_time) else {
+            return Some(current);
+        };
+        let teleported = (from.e_flags ^ current.e_flags) & eflags::TELEPORT != 0;
+        let gap = [0, 1, 2].map(|axis| current.origin[axis] - from.origin[axis]);
+        let distance = (gap[0] * gap[0] + gap[1] * gap[1] + gap[2] * gap[2]).sqrt();
+        if teleported || distance > SNAP_DISTANCE || tick_ms <= 0.0 {
+            return Some(current);
+        }
+        let alpha = ((now_ms - time as f32) / tick_ms).clamp(0.0, 1.0);
+        let mut blended = current;
+        for axis in 0..3 {
+            blended.origin[axis] = from.origin[axis] + gap[axis] * alpha;
+            blended.velocity[axis] =
+                from.velocity[axis] + (current.velocity[axis] - from.velocity[axis]) * alpha;
+        }
+        blended.view_height_current = from.view_height_current
+            + (current.view_height_current - from.view_height_current) * alpha;
+        Some(blended)
     }
 
     pub fn last_cmd(&self) -> Option<&UserCmd> {
@@ -367,6 +402,8 @@ impl ClientPrediction {
         }
         self.metrics.predicted_moves += 1;
         self.metrics.deepest_history = self.metrics.deepest_history.max(self.history.len());
+        self.interp_from = Some(self.predicted_local.unwrap_or(input));
+        self.interp_time = Some(server_time);
         self.predicted_local = Some(output);
         self.last_cmd = Some(cmd);
 

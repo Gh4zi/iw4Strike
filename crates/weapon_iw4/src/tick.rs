@@ -288,6 +288,9 @@ pub struct WeaponCombatFacts {
     pub location_damage: [f32; crate::HITLOC_COUNT],
 
     pub dual_mag: Option<crate::reload::DualMagTimes>,
+
+    /// CS 1.6 rules this weapon plays by: `crate::cs::cs_weapon` index, 0 = MW2 rules.
+    pub cs_weapon: u8,
 }
 
 impl Default for WeaponCombatFacts {
@@ -382,6 +385,7 @@ impl WeaponCombatFacts {
             hip_gun_kick_reduced_kick_bullets: 0,
             location_damage: crate::LOCATION_DAMAGE_IDENTITY,
             dual_mag: None,
+            cs_weapon: 0,
         }
     }
 
@@ -495,6 +499,7 @@ impl WeaponCombatFacts {
             hip_gun_kick_reduced_kick_bullets: input.hip_gun_kick_reduced_kick_bullets,
             location_damage: input.location_damage,
             dual_mag: input.dual_mag,
+            cs_weapon: 0,
         })
     }
 
@@ -660,6 +665,9 @@ pub struct WeaponCmd {
 
     pub mantle_weapon_inactive: bool,
 
+    /// Counter-Strike keeps the gun up (and firing) on ladders; IW4 holsters it.
+    pub ladder_keeps_weapon: bool,
+
     pub mantle_quick_raise: bool,
 
     pub cmd_weapon_owned: bool,
@@ -701,6 +709,7 @@ impl Default for WeaponCmd {
             melee_charge: crate::MeleeChargeState::default(),
             melee_started: None,
             mantle_weapon_inactive: false,
+            ladder_keeps_weapon: false,
             mantle_quick_raise: false,
             cmd_weapon_owned: false,
             cmd_weapon_pistol_quick: false,

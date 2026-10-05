@@ -12,6 +12,7 @@ asset_core.workspace = true
 asset_game.workspace = true
 asset_material.workspace = true
 asset_transport.workspace = true
+mdl_source.workspace = true
 assets.workspace = true
 hud_iw4 = { path = "../hud_iw4" }
 weapon_iw4 = { path = "../weapon_iw4" }

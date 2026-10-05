@@ -884,7 +884,7 @@ fn instruction(
                     "wait is too long".into()
                 });
             }
-            let until = now + i64::from(frames) * i64::from(crate::MATCH_TICK_MS);
+            let until = now + i64::from(frames) * i64::from(crate::SCRIPT_FRAME_MS);
             thread.state = ThreadState::Queued;
             world
                 .resource_mut::<Runtime>()
@@ -1236,6 +1236,14 @@ pub(crate) fn advance_scheduler(world: &mut World) {
     }
     let tick = request.tick;
     let runtime = world.resource::<Runtime>();
+    // Every wait resumes on a 50 ms script frame, so between frames only newly started threads
+    // (level init, engine callbacks) can be ready. Skipping the rest spares the thread sweep and
+    // heap collection on four of five authority ticks.
+    let now_ms = u64::from(tick.0) * u64::from(crate::MATCH_TICK_MS);
+    let script_frame = now_ms.is_multiple_of(u64::from(crate::SCRIPT_FRAME_MS));
+    if !script_frame && runtime.last_tick.is_some() && runtime.spawned.is_empty() {
+        return;
+    }
     if runtime.fault.is_some() {
         return;
     }
@@ -1301,8 +1309,18 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         runtime.buckets.remove(&now);
     }
     runtime.loading = false;
-    collect_heap(world);
+    // A full mark and sweep every script frame cost more than the scripts it ran; garbage only
+    // needs reclaiming, not reclaiming promptly.
+    if now_ms.is_multiple_of(HEAP_COLLECT_PERIOD_MS) {
+        collect_heap(world);
+    }
 }
+
+/// Game time between script heap collections. A multiple of `SCRIPT_FRAME_MS`, so a collection
+/// lands on a script frame.
+const HEAP_COLLECT_PERIOD_MS: u64 = 1000;
+
+const _: () = assert!(HEAP_COLLECT_PERIOD_MS.is_multiple_of(crate::SCRIPT_FRAME_MS as u64));
 
 fn run_ready(world: &mut World, program: &Program, now: i64) {
     loop {

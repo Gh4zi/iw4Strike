@@ -187,6 +187,67 @@ pub fn from_registry(
     rows
 }
 
+/// Give the MW2 weapons that wear a CS 1.6 gun (`weapon_iw4::cs::CS_WEAPONS`) its rules: combat
+/// facts and run speed. Runs on every peer, so prediction and the content digest agree.
+pub fn apply_cs_rules(
+    weapons: &WeaponRegistry,
+    combat: &mut [WeaponCombatFacts],
+    scales: &mut [(f32, f32, f32)],
+) {
+    let mut applied = Vec::new();
+    for (index, facts) in combat.iter_mut().enumerate().skip(1) {
+        if facts.is_none() {
+            continue;
+        }
+        let name = weapons.script_name_of(index as u32);
+        let Some(cs) = weapon_iw4::cs::cs_weapon_index_for(&name) else {
+            continue;
+        };
+        if let Some((hip, zoomed)) = weapon_iw4::cs::apply_overrides(facts, cs)
+            && let Some(scale) = scales.get_mut(index)
+        {
+            scale.0 = hip;
+            scale.1 = zoomed;
+        }
+        applied.push(name);
+    }
+    diag::info!(Sim, "CS 1.6 rules on: {}", applied.join(" "));
+}
+
+/// The MW2 grenades CS grenades throw get CS's fuse, and the frag CS's HE blast. Runs on every
+/// peer, like [`apply_cs_rules`].
+pub fn apply_cs_grenade_rules(weapons: &WeaponRegistry, equipment: &mut [sim::EquipmentRuntimeFacts]) {
+    for grenade in &weapon_iw4::cs::CS_GRENADES {
+        let Some(facts) = (1..equipment.len())
+            .find(|&index| weapons.script_name_of(index as u32) == grenade.projectile)
+            .and_then(|index| equipment.get_mut(index))
+        else {
+            diag::warn!(Sim, "CS grenade: no MW2 `{}` to throw", grenade.projectile);
+            continue;
+        };
+        facts.fuse_time_ms = weapon_iw4::cs::CS_GRENADE_FUSE_MS;
+        // CS bounces (`MOVETYPE_BOUNCE`, backoff 2 - friction, then x0.8 on the ground): a
+        // glancing hit keeps most of its speed, a head-on one only what the friction leaves
+        // (HE friction 0.7, flash and smoke 0.8).
+        let head_on = if grenade.name == "hegrenade" { 0.3 } else { 0.2 };
+        facts.parallel_bounce = Some([0.8; 31]);
+        facts.perpendicular_bounce = Some([head_on; 31]);
+        // A CS grenade that hits someone just bounces off.
+        facts.impact_damage = 0;
+        if grenade.name == "flashbang" {
+            // A CS flashbang blinds and nothing else (MW2's does 1 damage).
+            facts.explosion_inner_damage = 0;
+            facts.explosion_outer_damage = 0;
+        }
+        if grenade.name == "hegrenade" {
+            facts.explosion_radius = weapon_iw4::cs::CS_HE_RADIUS;
+            facts.explosion_radius_min = 0;
+            facts.explosion_inner_damage = weapon_iw4::cs::CS_HE_DAMAGE;
+            facts.explosion_outer_damage = 0;
+        }
+    }
+}
+
 const T5_WEAPTYPE_MELEE: i32 = 7;
 
 pub fn melee_only_from_registry(weapons: &WeaponRegistry) -> Vec<bool> {

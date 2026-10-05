@@ -1,4 +1,4 @@
-pub const INPUT_COMMAND_NAMES: [&str; 78] = [
+pub const INPUT_COMMAND_NAMES: [&str; 84] = [
     "",
     "+attack",
     "-attack",
@@ -77,6 +77,14 @@ pub const INPUT_COMMAND_NAMES: [&str; 78] = [
     "gocrouch",
     "toggleads",
     "leaveads",
+    // Counter-Strike weapon slots: 1 primary, 2 pistol, 3 knife, 4 grenades, 5 C4.
+    "slot1",
+    "slot2",
+    "slot3",
+    "slot4",
+    "slot5",
+    // Counter-Strike: throw the held gun.
+    "drop",
 ];
 
 pub const HOLD_PAIR_LIMIT: u32 = 0x41;

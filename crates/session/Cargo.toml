@@ -25,6 +25,7 @@ sim.workspace = true
 gamemode_iw4.workspace = true
 clipmap_iw4.workspace = true
 weapon_iw4.workspace = true
+movement_iw4.workspace = true
 xmodel_runtime.workspace = true
 hud_iw4.workspace = true
 perf.workspace = true

@@ -17,7 +17,7 @@ use sim::{
 
 use crate::transport::wire::{WireError, WireReader, WireWriter};
 
-pub const WORLD_SYNC_PERIOD_TICKS: u32 = 200;
+pub const WORLD_SYNC_PERIOD_TICKS: u32 = sim::ticks_for_ms(10_000);
 
 #[derive(Debug, Default)]
 pub struct WorldObjectSyncEncoder {
@@ -521,6 +521,15 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u8(13);
             out.put_u32(request_id);
         }
+        ClientAction::DropWeapon { request_id } => {
+            out.put_u8(23);
+            out.put_u32(request_id);
+        }
+        ClientAction::BuyArmor { request_id, helmet } => {
+            out.put_u8(24);
+            out.put_u32(request_id);
+            out.put_u8(u8::from(helmet));
+        }
         ClientAction::ActionSlot { request_id, slot } => {
             out.put_u8(19);
             out.put_u32(request_id);
@@ -627,6 +636,13 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
         }),
         13 => Ok(ClientAction::UseCopycat {
             request_id: input.get_u32()?,
+        }),
+        23 => Ok(ClientAction::DropWeapon {
+            request_id: input.get_u32()?,
+        }),
+        24 => Ok(ClientAction::BuyArmor {
+            request_id: input.get_u32()?,
+            helmet: input.get_u8()? != 0,
         }),
         19 => Ok(ClientAction::ActionSlot {
             request_id: input.get_u32()?,

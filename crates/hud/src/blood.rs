@@ -83,7 +83,8 @@ pub(crate) fn update_blood_overlay(
     let in_killcam = view.in_killcam();
     let in_killcam_hud_gate = in_killcam && ps.kill_cam_entity != playerstate_iw4::ENTITYNUM_NONE;
 
-    if !in_game {
+    // CS has no regeneration: MW2's low-health blood would never clear, so CS rules go without.
+    if !in_game || crate::cs_hud::replaces_mw2_hud() {
         latch.intensity = 0.0;
         gaps.clear(HudGap::BloodOverlay);
         request_hide(&mut job, latch.packed.is_empty());

@@ -1,5 +1,6 @@
 mod artifact_cache;
 mod asset_graph;
+mod cs_script_patches;
 mod gltf_export;
 mod iwd;
 mod lane;

@@ -299,6 +299,10 @@ pub(crate) fn update_scorebar(
     if !surface.is_ready() {
         return;
     }
+    if crate::cs_hud::replaces_mw2_hud() {
+        hide(&mut pass);
+        return;
+    }
     if view.is_some_and(|v| v.in_killcam()) {
         hide(&mut pass);
         return;

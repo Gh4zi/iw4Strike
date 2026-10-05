@@ -50,6 +50,10 @@ pub struct AcceptedShot {
     pub combat_seed: u32,
     pub owner_velocity: [f32; 3],
     pub spread_degrees: f32,
+    /// CS 1.6 weapons: `FireBullets3` spread, replacing `spread_degrees`.
+    pub cs_spread: Option<f32>,
+    /// Fired with its silencer on (CS damage and range of the silenced gun).
+    pub cs_silenced: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -65,6 +69,7 @@ pub struct Emission {
     pub direction: [f32; 3],
     pub max_range: f32,
     pub base_damage: i32,
+    pub cs_silenced: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,6 +203,9 @@ pub(crate) fn advance_weapon_command(
             .find(|(c, _)| c == id)
             .map_or(cmd.angles, |(_, a)| *a);
 
+        if let Some(ps) = world.player_mut(*id) {
+            weapon_iw4::cs::drop_punch(&mut ps.cs_punch, frametime);
+        }
         let Some(ps) = world.player(*id).copied() else {
             return accepted;
         };
@@ -212,6 +220,9 @@ pub(crate) fn advance_weapon_command(
         let Some(facts) = world.combat_facts_for(facts_weapon) else {
             return accepted;
         };
+        if let Some(ps) = world.player_mut(*id) {
+            cs_weapon_frame(ps, &facts, facts_weapon, cmd);
+        }
 
         {
             let mut state = AimSpreadState {
@@ -318,6 +329,25 @@ pub(crate) fn advance_weapon_command(
         } else {
             cmd.buttons & !playerstate_iw4::buttons::ATTACK
         };
+        let knife_held = weapon_iw4::cs::is_knife(facts.cs_weapon);
+        // CS guns have no melee of their own (the knife is slot 3).
+        let grenade_held = weapon_iw4::cs::is_grenade(facts.cs_weapon);
+        // Screwing a silencer on or off: no shooting or reloading until it is done.
+        let adjusting = facts.cs_weapon != 0
+            && ps.cs_gun_weapon == ps.weapon
+            && cmd.server_time < ps.cs_adjust_ms;
+        let taken = if knife_held || grenade_held {
+            CS_KNIFE_BUTTONS
+        } else if adjusting {
+            playerstate_iw4::buttons::MELEE_CHARGE
+                | playerstate_iw4::buttons::ATTACK
+                | playerstate_iw4::buttons::RELOAD
+        } else if facts.cs_weapon != 0 {
+            playerstate_iw4::buttons::MELEE_CHARGE
+        } else {
+            0
+        };
+        let (fire_buttons, old_buttons) = (fire_buttons & !taken, old_buttons & !taken);
         let selected_airdrop_marker =
             world.weapon_script_name(ps.weapon) == crate::equipment::AIRDROP_MARKER_WEAPON;
         let marker_offhand_class = i32::MAX;
@@ -386,6 +416,7 @@ pub(crate) fn advance_weapon_command(
             melee_started: None,
 
             mantle_weapon_inactive: is_weapon_inactive(&ps, true),
+            ladder_keeps_weapon: movement_iw4::rules::CS_RULES,
             mantle_quick_raise: (ps.mantle_flags & mantle_flags::QUICK) != 0,
             cmd_weapon_owned: {
                 let w = if cmd.weapon != 0 {
@@ -604,6 +635,27 @@ pub(crate) fn advance_weapon_command(
             }
         }
 
+        // CS knife and grenades act after the MW2 machine's ammo is written back, so their own
+        // counts (a thrown grenade) stick.
+        if knife_held
+            && hand0.weapon == facts_weapon
+            && hand0.weaponstate == weapon_iw4::WeaponState::Ready as i32
+        {
+            cs_knife_frame(world, tick, *id, facts_weapon, cmd);
+        }
+        if grenade_held
+            && hand0.weapon == facts_weapon
+            && hand0.weaponstate == weapon_iw4::WeaponState::Ready as i32
+        {
+            cs_grenade_frame(world, tick, *id, facts_weapon, cmd);
+        } else if world.player(*id).is_some_and(|ps| ps.cs_grenade != 0)
+            && (!grenade_held || hand0.weapon != facts_weapon)
+        {
+            // Switching away drops a pulled pin back in (CS `Holster`).
+            if let Some(ps) = world.player_mut(*id) {
+                ps.cs_grenade = 0;
+            }
+        }
         if hands[0].delayed_rechamber {
             if let Some(ps) = world.player_mut(*id) {
                 movement_iw4::add_predictable_event(
@@ -684,10 +736,23 @@ pub(crate) fn advance_weapon_command(
                             |view| view.origin,
                         );
 
+                    let cs_silenced = ps.cs_silencers
+                        & weapon_iw4::cs::silencer_bit(facts.cs_weapon)
+                        != 0;
+                    let cs_gun = weapon_iw4::cs::cs_weapon(facts.cs_weapon)
+                        .map(|cs| cs.with_silencer(cs_silenced));
+                    let cs = cs_gun.as_ref();
                     let mut shot_angles = ps.viewangles;
-                    for (angle, offset) in shot_angles.iter_mut().zip(cmd.gun_angle_offset) {
-                        if offset.is_finite() {
-                            *angle += offset.clamp(-45.0, 45.0);
+                    if cs.is_some() {
+                        // CS fires along the view plus the recoil punch; MW2 gun sway is ignored.
+                        for (angle, punch) in shot_angles.iter_mut().zip(ps.cs_punch) {
+                            *angle += punch;
+                        }
+                    } else {
+                        for (angle, offset) in shot_angles.iter_mut().zip(cmd.gun_angle_offset) {
+                            if offset.is_finite() {
+                                *angle += offset.clamp(-45.0, 45.0);
+                            }
                         }
                     }
                     let last_shot = hand.clip == 0 && facts.fire_type != 5;
@@ -734,6 +799,9 @@ pub(crate) fn advance_weapon_command(
                         ads_frac,
                         aim_spread_scale,
                     );
+                    let cs_spread = cs
+                        .zip(world.player_mut(*id))
+                        .map(|(cs, ps_mut)| cs_weapon_fire(cs, ps_mut, *id, cmd.server_time));
                     accepted.push(AcceptedShot {
                         shot_id,
                         attacker: *id,
@@ -750,6 +818,8 @@ pub(crate) fn advance_weapon_command(
                         combat_seed,
                         owner_velocity: ps.velocity,
                         spread_degrees,
+                        cs_spread,
+                        cs_silenced,
                     });
                 }
                 WeaponTickEvent::OffhandPrepare { weapon } => {
@@ -1009,6 +1079,584 @@ fn apply_player_anim_event_inner(
     world.set_anim_event_seed(seed);
 }
 
+fn cs_gun_state(ps: &PlayerState) -> weapon_iw4::cs::CsGunState {
+    weapon_iw4::cs::CsGunState {
+        shots_fired: ps.cs_shots_fired,
+        accuracy: ps.cs_accuracy,
+        last_fire_ms: ps.cs_last_fire_ms,
+        direction: ps.cs_recoil_dir,
+    }
+}
+
+fn store_cs_gun_state(ps: &mut PlayerState, state: weapon_iw4::cs::CsGunState) {
+    ps.cs_shots_fired = state.shots_fired;
+    ps.cs_accuracy = state.accuracy;
+    ps.cs_last_fire_ms = state.last_fire_ms;
+    ps.cs_recoil_dir = state.direction;
+}
+
+fn cs_shooter(ps: &PlayerState) -> weapon_iw4::cs::CsShooter {
+    weapon_iw4::cs::CsShooter {
+        on_ground: ps.ground_entity_num != ENTITYNUM_NONE,
+        ducked: ps.pm_flags & playerstate_iw4::pm_flags::CROUCH != 0,
+        speed: ps.velocity[0].hypot(ps.velocity[1]),
+        zoomed: ps.cs_zoom != 0 || ps.f_weapon_pos_frac >= 1.0,
+    }
+}
+
+/// CS 1.6 weapon state between shots, once per command: a weapon switch or reload starts a
+/// fresh spray and releasing the trigger lets the spray count fall.
+fn cs_weapon_frame(
+    ps: &mut PlayerState,
+    facts: &weapon_iw4::WeaponCombatFacts,
+    weapon: u32,
+    cmd: &playerstate_iw4::UserCmd,
+) {
+    let Some(cs) = weapon_iw4::cs::cs_weapon(facts.cs_weapon) else {
+        // Only a scoped CS gun stays zoomed.
+        ps.cs_zoom = 0;
+        ps.cs_last_zoom = 0;
+        return;
+    };
+    let reloading = weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
+        .is_ok_and(weapon_iw4::WeaponState::is_reload_family);
+    if reloading {
+        // `Reload`: a fresh magazine starts a fresh spray, unzoomed.
+        ps.cs_shots_fired = 0;
+        ps.cs_accuracy = weapon_iw4::cs::initial_accuracy(cs);
+        ps.cs_delay_fire = 0;
+        ps.cs_zoom = 0;
+        ps.cs_last_zoom = 0;
+    }
+    if ps.cs_gun_weapon != weapon {
+        ps.cs_gun_weapon = weapon;
+        ps.cs_shots_fired = 0;
+        ps.cs_accuracy = weapon_iw4::cs::initial_accuracy(cs);
+        ps.cs_last_fire_ms = 0;
+        ps.cs_decrease_shots_ms = 0;
+        ps.cs_delay_fire = 0;
+        // `DefaultDeploy`: drawn unzoomed; the scope waits a second.
+        ps.cs_zoom = 0;
+        ps.cs_last_zoom = 0;
+        ps.cs_next_attack2_ms = cmd.server_time + weapon_iw4::cs::CS_DEPLOY_ZOOM_DELAY_MS;
+    }
+    cs_zoom_frame(cs, ps, cmd, reloading);
+    cs_silencer_frame(cs, facts.cs_weapon, ps, cmd, reloading);
+    let mut state = cs_gun_state(ps);
+    let mut delay_fire = ps.cs_delay_fire != 0;
+    weapon_iw4::cs::post_frame(
+        cs,
+        &mut state,
+        cmd.buttons & playerstate_iw4::buttons::ATTACK != 0,
+        cmd.server_time,
+        &mut ps.cs_decrease_shots_ms,
+        &mut delay_fire,
+    );
+    ps.cs_delay_fire = u32::from(delay_fire);
+    store_cs_gun_state(ps, state);
+}
+
+/// CS scope, once per command: the zoom a shot dropped returns once the gun is ready to fire
+/// again (`ItemPostFrame`), and holding right click steps through the zoom levels every 0.3 s
+/// (`SecondaryAttack`).
+fn cs_zoom_frame(
+    cs: &weapon_iw4::cs::CsWeapon,
+    ps: &mut PlayerState,
+    cmd: &playerstate_iw4::UserCmd,
+    reloading: bool,
+) {
+    if cs.zoom.is_empty() {
+        ps.cs_zoom = 0;
+        ps.cs_last_zoom = 0;
+        return;
+    }
+    let ready = ps.weaponstate_primary == weapon_iw4::WeaponState::Ready as i32;
+    if ps.cs_last_zoom != 0 && ready {
+        ps.cs_zoom = ps.cs_last_zoom;
+        ps.cs_last_zoom = 0;
+    }
+    if cmd.buttons & playerstate_iw4::buttons::ADS != 0
+        && ready
+        && !reloading
+        && cmd.server_time >= ps.cs_next_attack2_ms
+    {
+        ps.cs_zoom = weapon_iw4::cs::next_zoom(cs, ps.cs_zoom);
+        ps.cs_next_attack2_ms = cmd.server_time + weapon_iw4::cs::CS_ZOOM_DELAY_MS;
+    }
+}
+
+/// CS silencer, once per command (`SecondaryAttack` on the M4A1 and USP): right click on a ready
+/// gun screws it on or off; nothing fires until that is done, and holding right click toggles
+/// again only after it.
+fn cs_silencer_frame(
+    cs: &weapon_iw4::cs::CsWeapon,
+    index: u8,
+    ps: &mut PlayerState,
+    cmd: &playerstate_iw4::UserCmd,
+    reloading: bool,
+) {
+    let Some(silencer) = cs.silencer else {
+        return;
+    };
+    let ready = ps.weaponstate_primary == weapon_iw4::WeaponState::Ready as i32;
+    if cmd.buttons & playerstate_iw4::buttons::ADS != 0
+        && ready
+        && !reloading
+        && cmd.server_time >= ps.cs_adjust_ms
+    {
+        ps.cs_silencers ^= weapon_iw4::cs::silencer_bit(index);
+        ps.cs_adjust_ms = cmd.server_time + (silencer.adjust * 1000.0).round() as i32;
+    }
+}
+
+/// A CS 1.6 shot leaves: accuracy and spread for it, then the recoil punch for the next one.
+/// Returns the spread. The kick side flip is hashed from the shot so prediction agrees with it.
+/// A scoped gun drops its zoom for the bolt (`AWPFire`) and takes it back when ready.
+fn cs_weapon_fire(
+    cs: &weapon_iw4::cs::CsWeapon,
+    ps: &mut PlayerState,
+    id: ClientId,
+    server_time: i32,
+) -> f32 {
+    let shooter = cs_shooter(ps);
+    let mut state = cs_gun_state(ps);
+    let spread = weapon_iw4::cs::fire(cs, &mut state, shooter, server_time);
+    if !cs.zoom.is_empty() {
+        if ps.cs_zoom != 0 {
+            ps.cs_last_zoom = ps.cs_zoom;
+            ps.cs_zoom = 0;
+        }
+        ps.cs_next_attack2_ms = server_time + (cs.cycle * 1000.0).round() as i32;
+    }
+    let mut roll = (id.0 as u32)
+        .wrapping_mul(0x9e37_79b9)
+        .wrapping_add(server_time as u32)
+        .wrapping_mul(0x85eb_ca6b)
+        ^ (state.shots_fired as u32).wrapping_mul(0xc2b2_ae35);
+    roll ^= roll >> 15;
+    weapon_iw4::cs::recoil(cs, &mut state, shooter, &mut ps.cs_punch, roll);
+    ps.cs_delay_fire = 1;
+    store_cs_gun_state(ps, state);
+    spread
+}
+
+/// A CS grenade in hand, once per command (`CHEGrenade::PrimaryAttack` / `WeaponIdle`): attack
+/// pulls the pin, letting go throws (no sooner than half a second after the pull), then the next
+/// grenade comes up, or the empty hand retires to the best weapon left. Prediction tracks the
+/// pin and the count; only the authority launches the grenade.
+fn cs_grenade_frame(
+    world: &mut FrameWorld,
+    tick: Tick,
+    id: ClientId,
+    weapon: u32,
+    cmd: &playerstate_iw4::UserCmd,
+) {
+    use playerstate_iw4::cs_grenade::{IDLE, PULLED, THROWN};
+    use weapon_iw4::cs::{
+        CS_GRENADE_PULL_MS, CS_GRENADE_REDEPLOY_MS, CS_GRENADE_RETIRE_MS, cs_grenade,
+    };
+    let (Some(ps), Some(facts)) = (world.player(id).copied(), world.combat_facts_for(weapon))
+    else {
+        return;
+    };
+    let Some(grenade) = cs_grenade(facts.cs_weapon) else {
+        return;
+    };
+    let now = cmd.server_time;
+    let attack = cmd.buttons & playerstate_iw4::buttons::ATTACK != 0;
+    let clip_key = clip_table_key(facts.clip_index, weapon);
+    let count = get_clip_for_hand(&ps.ammoclip, clip_key, 0);
+    match ps.cs_grenade {
+        IDLE => {
+            if attack && count > 0 && now >= ps.cs_next_attack_ms {
+                let ps = world.player_mut(id).expect("present player");
+                ps.cs_grenade = PULLED;
+                ps.cs_next_attack2_ms = now;
+                ps.cs_next_attack_ms = now + CS_GRENADE_PULL_MS;
+            }
+        }
+        PULLED => {
+            if attack || now < ps.cs_next_attack_ms {
+                return;
+            }
+            let left = (count - 1).max(0);
+            {
+                let ps = world.player_mut(id).expect("present player");
+                ps.cs_grenade = THROWN;
+                ps.cs_last_fire_ms = now;
+                ps.cs_next_attack_ms = now
+                    + if left > 0 {
+                        CS_GRENADE_REDEPLOY_MS
+                    } else {
+                        CS_GRENADE_RETIRE_MS
+                    };
+                set_clip_for_hand(&mut ps.ammoclip, clip_key, 0, left);
+            }
+            world.client_meta_mut(id).set_ammo(weapon, left, 0);
+            apply_player_anim_event(world, id, ANIM_ET_FIREWEAPON);
+            if world.publishes_snapshot() {
+                throw_cs_grenade(world, tick, id, &ps, grenade);
+            }
+        }
+        _ => {
+            if now < ps.cs_next_attack_ms {
+                return;
+            }
+            if let Some(ps) = world.player_mut(id) {
+                ps.cs_grenade = IDLE;
+            }
+            if count <= 0 {
+                crate::script_player::take_weapon(world, id, weapon);
+                crate::item::raise_best_cs_weapon(world, id);
+            }
+        }
+    }
+}
+
+/// Launch `grenade`'s MW2 projectile along CS's throw: from 16 units in front of the eye, at the
+/// lifted pitch and its speed, plus the thrower's own velocity.
+fn throw_cs_grenade(
+    world: &mut FrameWorld,
+    tick: Tick,
+    id: ClientId,
+    ps: &PlayerState,
+    grenade: &weapon_iw4::cs::CsGrenade,
+) {
+    let Some(projectile) = world.weapon_index_by_script_name(grenade.projectile) else {
+        diag::warn!(Sim, "cs grenade: no MW2 `{}` to throw", grenade.projectile);
+        return;
+    };
+    let (pitch, speed) = weapon_iw4::cs::grenade_throw(ps.viewangles[0] + ps.cs_punch[0]);
+    let angles = [pitch, ps.viewangles[1] + ps.cs_punch[1], 0.0];
+    let (direction, _, _) = math_iw4::angle_vectors(angles);
+    let origin: [f32; 3] = core::array::from_fn(|i| {
+        ps.origin[i]
+            + direction[i] * 16.0
+            + if i == 2 { ps.view_height_current } else { 0.0 }
+    });
+    let velocity: [f32; 3] = core::array::from_fn(|i| direction[i] * speed + ps.velocity[i]);
+    let thrown = crate::equipment::spawn_grenade_projectile_with_velocity(
+        world,
+        id,
+        projectile,
+        tick,
+        origin,
+        angles,
+        velocity,
+        crate::equipment::GrenadeLaunchKind::Thrown {
+            remaining_fuse_ms: None,
+        },
+    );
+    diag::debug!(
+        Sim,
+        "cs grenade: client {} threw {} at {speed:.0} u/s (pitch {pitch:.1}) {}",
+        id.0,
+        grenade.name,
+        if thrown { "" } else { "— not launched" }
+    );
+}
+
+/// Buttons the CS knife takes from the MW2 weapon it wears: it never fires, aims, reloads or
+/// melees; [`cs_knife_frame`] reads attack and aim as slash and stab instead.
+const CS_KNIFE_BUTTONS: u32 = playerstate_iw4::buttons::ATTACK
+    | playerstate_iw4::buttons::ADS
+    | playerstate_iw4::buttons::MELEE_CHARGE
+    | playerstate_iw4::buttons::RELOAD;
+
+/// The CS 1.6 knife, once per command (`CKnife::ItemPostFrame`): the stab button wins over the
+/// slash, each attack restarts both timers, and only the authority deals damage. Prediction runs
+/// the same trace so the slash/stab animation and hit sound agree with the authority.
+fn cs_knife_frame(
+    world: &mut FrameWorld,
+    tick: Tick,
+    id: ClientId,
+    weapon: u32,
+    cmd: &playerstate_iw4::UserCmd,
+) {
+    use playerstate_iw4::{buttons, cs_knife};
+    use weapon_iw4::cs::{CS_KNIFE, KnifeAttack};
+    let Some(ps) = world.player(id).copied() else {
+        return;
+    };
+    let now = cmd.server_time;
+    let Some(attack) = weapon_iw4::cs::knife_attack(
+        now,
+        ps.cs_next_attack_ms,
+        ps.cs_next_attack2_ms,
+        cmd.buttons & buttons::ATTACK != 0,
+        cmd.buttons & buttons::ADS != 0,
+    ) else {
+        return;
+    };
+    let origin = [
+        ps.origin[0],
+        ps.origin[1],
+        ps.origin[2] + ps.view_height_current,
+    ];
+    let range = weapon_iw4::cs::knife_range(&CS_KNIFE, attack);
+    let hit = cs_knife_trace(world, tick, id, origin, ps.viewangles, range);
+    let (slash_delay, stab_delay) = weapon_iw4::cs::knife_delays(&CS_KNIFE, attack, hit.is_some());
+    let ms = |seconds: f32| (seconds * 1000.0).round() as i32;
+    let swing = ps.cs_knife >> cs_knife::SWING_SHIFT;
+    let (anim, swing) = match attack {
+        KnifeAttack::Slash if swing % 2 == 0 => (cs_knife::ANIM_SLASH1, swing.wrapping_add(1)),
+        KnifeAttack::Slash => (cs_knife::ANIM_SLASH2, swing.wrapping_add(1)),
+        KnifeAttack::Stab if hit.is_some() => (cs_knife::ANIM_STAB, swing),
+        KnifeAttack::Stab => (cs_knife::ANIM_STAB_MISS, swing),
+    };
+    let met = match hit.as_ref().map(|(segment, _)| segment.collider) {
+        Some(Some(ColliderId::Player { .. })) => cs_knife::HIT_PLAYER,
+        Some(_) => cs_knife::HIT_WORLD,
+        None => cs_knife::HIT_NOTHING,
+    };
+    if let Some(ps) = world.player_mut(id) {
+        ps.cs_next_attack_ms = now + ms(slash_delay);
+        ps.cs_next_attack2_ms = now + ms(stab_delay);
+        ps.cs_last_fire_ms = now;
+        ps.cs_knife =
+            anim | (met << cs_knife::HIT_SHIFT) | ((swing & 0xff_ffff) << cs_knife::SWING_SHIFT);
+    }
+    apply_player_anim_event(world, id, ANIM_ET_KNIFE_MELEE);
+    if !world.publishes_snapshot() {
+        return;
+    }
+    let Some((segment, line)) = hit else {
+        return;
+    };
+    let (forward, _, _) = math_iw4::angle_vectors(ps.viewangles);
+    match segment.collider {
+        Some(ColliderId::Player {
+            client: victim,
+            life: victim_life,
+            hitloc,
+        }) => {
+            if !world
+                .client_meta(victim)
+                .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+            {
+                return;
+            }
+            let backstab = attack == KnifeAttack::Stab
+                && world.player(victim).is_some_and(|v| {
+                    weapon_iw4::cs::is_backstab(ps.origin, v.origin, v.viewangles[1])
+                });
+            // Only the centre line finds a hitgroup; a hull hit is a generic body hit.
+            let (hitloc, scale) = if line {
+                let scale = weapon_iw4::cs::CS_LOCATION_DAMAGE
+                    .get(usize::from(hitloc))
+                    .copied()
+                    .unwrap_or(1.0);
+                (hitloc, scale)
+            } else {
+                (0, 1.0)
+            };
+            let amount = (weapon_iw4::cs::knife_damage(&CS_KNIFE, attack, backstab) * scale) as i32;
+            let attacker_life = world
+                .client_meta(id)
+                .map(|m| m.life_sequence)
+                .unwrap_or_default();
+            diag::debug!(
+                Sim,
+                "cs knife: client {} {:?} hit client {} hitloc {hitloc} backstab {backstab} for {amount}",
+                id.0,
+                attack,
+                victim.0
+            );
+            let attempt = crate::DamageAttempt {
+                splash: false,
+                source: DamageSource::Melee,
+                pellet: PelletId(0),
+                attacker: id,
+                attacker_life,
+                target: victim,
+                target_life: victim_life,
+                weapon,
+                amount,
+                killcam_entity_start_time: 0,
+                inflictor_origin: Some(origin),
+                hitloc,
+            };
+            let _ = crate::damage::apply_damage_attempt(world, tick, &attempt);
+            world.push_entity_event(
+                tick,
+                EventAudience::All,
+                entity_iw4::EntityEventKind::MELEE_BLOOD,
+                crate::EntityEventPayload {
+                    number: id.0 as i32,
+                    attacker_entity_num: id.0 as i32,
+                    other_entity_num: victim.0 as i32,
+                    weapon,
+                    origin: segment.end,
+                    direction: forward,
+                    surf_type: segment.surf_type,
+                    surface_flags: segment.surface_flags,
+                    ..Default::default()
+                },
+            );
+        }
+        Some(ColliderId::World { .. }) => {
+            if let Some(piece) = glass_piece_from_hit(segment.hit_type, segment.hit_id) {
+                let at_time_ms =
+                    i32::try_from(tick.0.saturating_mul(crate::MATCH_TICK_MS)).unwrap_or(i32::MAX);
+                let mut holdrand = *world.stuck_holdrand_mut();
+                world.world_objects_mut().apply_glass_hit(
+                    piece,
+                    u32::from(crate::world_objects::GLASS_MELEE_DAMAGE),
+                    at_time_ms,
+                    segment.end,
+                    forward,
+                    &mut || crate::item::random_unit(&mut holdrand),
+                );
+                *world.stuck_holdrand_mut() = holdrand;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The CS knife's reach (`CKnife::Swing` / `Stab`): a line from the eye, then, when it meets
+/// nothing, a fan of lines spanning the `head_hull` the original sweeps. Returns what the
+/// nearest line met and whether it was the centre line.
+fn cs_knife_trace(
+    world: &mut FrameWorld,
+    tick: Tick,
+    attacker: ClientId,
+    origin: [f32; 3],
+    angles: [f32; 3],
+    range: f32,
+) -> Option<(crate::bullet_collision::BulletTraceSegment, bool)> {
+    let (forward, right, up) = math_iw4::angle_vectors(angles);
+    let (width, height) = weapon_iw4::cs::CS_KNIFE.hull;
+    let query = world.lagcomp_query_for(attacker, tick);
+    let glass_pairs = world.world_objects().glass_damage_pairs();
+    let is_solid = |piece| {
+        crate::world_objects::glass_piece_is_solid(
+            glass_pairs
+                .iter()
+                .find(|(id, _)| *id == u32::from(piece))
+                .map(|(_, d)| *d)
+                .unwrap_or(0),
+        )
+    };
+    let distance = |a: [f32; 3], b: [f32; 3]| {
+        ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+    };
+    let mut best: Option<(f32, crate::bullet_collision::BulletTraceSegment)> = None;
+    for (index, offset) in MELEE_TRACE_OFFSETS.iter().enumerate() {
+        let end = melee_trace_end(origin, forward, right, up, range, width, height, *offset);
+        let (segments, _) = bullet_trace_segments_filtered(
+            world.clip_brushes(),
+            world.clip_bsp(),
+            world.clip_cmodels(),
+            world.clip_mesh(),
+            &query.players.poses,
+            &query.entities.rows,
+            &BulletTraceQuery {
+                start: origin,
+                end,
+                mask: MASK_BULLET_WORLD,
+                ignore: Some(attacker),
+                ignore_hit: None,
+                ignore_model: None,
+            },
+            weapon_iw4::BulletPenFacts::default(),
+            world.penetration_table(),
+            &is_solid,
+            None,
+        );
+        let Some(segment) = segments.iter().find(|s| s.collider.is_some()) else {
+            continue;
+        };
+        if segment.surface_flags & 0x10 != 0 {
+            continue;
+        }
+        let reach = distance(origin, segment.end);
+        if reach > distance(origin, end) + 0.01 {
+            continue;
+        }
+        if index == 0 {
+            return Some((*segment, true));
+        }
+        if best.as_ref().is_none_or(|(nearest, _)| reach < *nearest) {
+            best = Some((reach, *segment));
+        }
+    }
+    // CS sweeps `head_hull` against players' bounding boxes, not their hitboxes: MW2's bone
+    // volumes sit well inside the body, so without this a stab (32 units) only connects when
+    // pressed against the victim. The nearer of a box and anything the lines met wins.
+    if let Some((reach, segment)) = knife_box_hit(&query.players.poses, attacker, origin, forward, range)
+        && best.as_ref().is_none_or(|(nearest, _)| reach < *nearest)
+    {
+        best = Some((reach, segment));
+    }
+    best.map(|(_, segment)| (segment, false))
+}
+
+/// The nearest player box the knife's hull (`head_hull`: ±16 sideways, ±18 up and down) runs
+/// into along `forward` within `range`, with how far along it met it.
+fn knife_box_hit(
+    poses: &[crate::bullet_collision::PlayerCollisionPose],
+    attacker: ClientId,
+    origin: [f32; 3],
+    forward: [f32; 3],
+    range: f32,
+) -> Option<(f32, crate::bullet_collision::BulletTraceSegment)> {
+    let (width, height) = weapon_iw4::cs::CS_KNIFE.hull;
+    let half = [width, width, height];
+    let mut best: Option<(f32, crate::bullet_collision::BulletTraceSegment)> = None;
+    for pose in poses.iter().filter(|p| p.client != attacker) {
+        let (mut enter, mut leave) = (0.0_f32, 1.0_f32);
+        let mut inside = true;
+        for axis in 0..3 {
+            let lo = pose.origin[axis] + pose.mins[axis] - half[axis];
+            let hi = pose.origin[axis] + pose.maxs[axis] + half[axis];
+            let d = forward[axis] * range;
+            if d.abs() < 1e-6 {
+                if origin[axis] < lo || origin[axis] > hi {
+                    inside = false;
+                    break;
+                }
+                continue;
+            }
+            let (t0, t1) = ((lo - origin[axis]) / d, (hi - origin[axis]) / d);
+            enter = enter.max(t0.min(t1));
+            leave = leave.min(t0.max(t1));
+        }
+        if !inside || enter > leave {
+            continue;
+        }
+        let reach = enter * range;
+        if best.as_ref().is_some_and(|(nearest, _)| *nearest <= reach) {
+            continue;
+        }
+        let end: [f32; 3] = core::array::from_fn(|i| origin[i] + forward[i] * reach);
+        best = Some((
+            reach,
+            crate::bullet_collision::BulletTraceSegment {
+                start: origin,
+                end,
+                normal: forward.map(|v| -v),
+                surf_type: weapon_iw4::SURF_TYPE_FLESH as u8,
+                surface_flags: 0,
+                penetrated: false,
+                thickness: 0.0,
+                damage_mult: 1.0,
+                path: crate::bullet_collision::BulletPath::Extended,
+                collider: Some(ColliderId::Player {
+                    client: pose.client,
+                    life: pose.life_sequence,
+                    hitloc: 0,
+                }),
+                startsolid: false,
+                glass_encoded: 0,
+                hit_type: trace_iw4::HITTYPE_ENTITY,
+                hit_id: pose.client.0 as u16,
+            },
+        ));
+    }
+    best
+}
+
 pub fn spread_pellet_direction(
     angles: [f32; 3],
     spread_degrees: f32,
@@ -1044,6 +1692,18 @@ pub fn spread_direction_on_plane(
     }
 }
 
+fn cs_bullet_direction(angles: [f32; 3], spread: f32, rng: &mut MatchRng) -> [f32; 3] {
+    let (forward, right, up) = math_iw4::angle_vectors(angles);
+    let unit = |draw: u32| draw as f32 / u32::MAX as f32;
+    let rolls = [
+        unit(rng.next_u32()),
+        unit(rng.next_u32()),
+        unit(rng.next_u32()),
+        unit(rng.next_u32()),
+    ];
+    weapon_iw4::cs::bullet_direction(forward, right, up, spread, rolls)
+}
+
 pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emission> {
     let mut out = Vec::new();
     for shot in shots {
@@ -1076,9 +1736,14 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
                 hand: shot.hand,
                 weapon: shot.weapon,
                 origin: shot.origin,
-                direction: spread_pellet_direction(shot.angles, shot.spread_degrees, &mut rng),
-                max_range: facts.bullet_range(),
+                direction: match shot.cs_spread {
+                    Some(spread) => cs_bullet_direction(shot.angles, spread, &mut rng),
+                    None => spread_pellet_direction(shot.angles, shot.spread_degrees, &mut rng),
+                },
+                max_range: weapon_iw4::cs::cs_weapon(facts.cs_weapon)
+                    .map_or(facts.bullet_range(), |cs| cs.distance),
                 base_damage: facts.damage,
+                cs_silenced: shot.cs_silenced,
             });
         }
     }
@@ -1134,7 +1799,7 @@ pub(crate) fn phase_trace(
                 let dz = end[2] - em.origin[2];
                 (dx * dx + dy * dy + dz * dz).sqrt()
             };
-            let scaled = bullet_damage_at_distance(&facts, dist).max(0) as u32;
+            let scaled = bullet_damage_at_distance(&facts, dist, em.cs_silenced).max(0) as u32;
             let mut map = glass_damage.borrow_mut();
             let cur = map.entry(pane).or_insert(0);
             *cur = glass_add_damage(*cur, scaled);
@@ -1238,6 +1903,40 @@ pub(crate) fn phase_trace(
             impact_n,
             event_n,
         });
+        if facts.cs_weapon != 0 && world.publishes_snapshot() {
+            let end = segments.last().map_or(end, |s| s.end);
+            diag::debug!(
+                Sim,
+                "cs shot: weapon {} from [{:.0}, {:.0}, {:.0}] to [{:.0}, {:.0}, {:.0}] dist {:.0} hit {:?} segments {} lagcomp {:?}",
+                em.weapon,
+                em.origin[0],
+                em.origin[1],
+                em.origin[2],
+                end[0],
+                end[1],
+                end[2],
+                (0..3)
+                    .map(|a| (end[a] - em.origin[a]).powi(2))
+                    .sum::<f32>()
+                    .sqrt(),
+                segments.last().and_then(|s| s.collider),
+                segments.len(),
+                query.players.verdict
+            );
+            for s in &segments {
+                diag::debug!(
+                    Sim,
+                    "cs shot segment: end [{:.0}, {:.0}, {:.0}] mult {:.3} flags {:#x} startsolid {} collider {:?}",
+                    s.end[0],
+                    s.end[1],
+                    s.end[2],
+                    s.damage_mult,
+                    s.surface_flags,
+                    s.startsolid,
+                    s.collider
+                );
+            }
+        }
         if segments.is_empty() {
             continue;
         }
@@ -1251,7 +1950,8 @@ pub(crate) fn phase_trace(
                 (dx * dx + dy * dy + dz * dz).sqrt()
             };
             let scaled =
-                ((bullet_damage_at_distance(&facts, dist) as f32) * segment.damage_mult) as i32;
+                ((bullet_damage_at_distance(&facts, dist, em.cs_silenced) as f32) * segment.damage_mult)
+                    as i32;
             if !exit && world.publishes_snapshot() {
                 let means = crate::script_player::means(
                     world,

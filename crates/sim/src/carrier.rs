@@ -190,6 +190,11 @@ impl SimWorld {
             .program_fingerprint()
     }
 
+    /// MW2 map destructibles (cars, barrels): targetname, model and origin.
+    pub fn destructible_spots(&mut self) -> Vec<(String, String, [f32; 3])> {
+        crate::script::destructible_spots(&mut self.ecs)
+    }
+
     pub fn script_seats(&self) -> Vec<(ClientId, crate::ScriptSeat)> {
         crate::script::script_seats(&self.ecs)
     }

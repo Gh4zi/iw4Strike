@@ -7,6 +7,7 @@ description = "Presented DObj, FPV, body, item, missile, and script-model produc
 
 [dependencies]
 anim_iw4.workspace = true
+movement_iw4.workspace = true
 asset_anim.workspace = true
 asset_game.workspace = true
 asset_iw4.workspace = true
@@ -17,6 +18,7 @@ asset_world.workspace = true
 asset_transport.workspace = true
 assets.workspace = true
 audio.workspace = true
+asset_audio.workspace = true
 diag.workspace = true
 dpvs_iw4.workspace = true
 entity_iw4.workspace = true
@@ -34,6 +36,9 @@ render_material.workspace = true
 render_scene.workspace = true
 sim.workspace = true
 weapon_iw4.workspace = true
+render_gpu.workspace = true
+mdl_goldsrc.workspace = true
+mdl_source.workspace = true
 xmodel_runtime.workspace = true
 bevy.workspace = true
 bytemuck = { version = "1", features = ["derive"] }

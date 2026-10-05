@@ -34,9 +34,9 @@ pub fn contents_match_mask(contents: Option<u32>, mask: u32) -> bool {
 pub const PLAYER_MINS: [f32; 3] = [-15.0, -15.0, 0.0];
 pub const PLAYER_MAXS: [f32; 3] = [15.0, 15.0, 70.0];
 
-pub const COLLISION_HISTORY_TICKS: usize = 32;
+pub const COLLISION_HISTORY_TICKS: usize = crate::ticks_for_ms(1600) as usize;
 
-pub const LAGCOMP_MAX_REWIND_TICKS: u32 = 4;
+pub const LAGCOMP_MAX_REWIND_TICKS: u32 = crate::ticks_for_ms(200);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ShotSampleProvenance {

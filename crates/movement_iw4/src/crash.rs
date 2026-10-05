@@ -69,9 +69,12 @@ fn crash_land_apply_sfx(ps: &mut PlayerState, fall_height: f32, surface: i32) {
         }
         return;
     }
-    ps.velocity[0] *= HARD_LAND_VEL_SCALE;
-    ps.velocity[1] *= HARD_LAND_VEL_SCALE;
-    ps.velocity[2] *= HARD_LAND_VEL_SCALE;
+    // CS landings keep their speed; jump stamina is what slows a CS player down.
+    if crate::rules::active_for(ps).is_none() {
+        ps.velocity[0] *= HARD_LAND_VEL_SCALE;
+        ps.velocity[1] *= HARD_LAND_VEL_SCALE;
+        ps.velocity[2] *= HARD_LAND_VEL_SCALE;
+    }
     if surface != 0 {
         add_predictable_event(ps, EV_LANDING_FIRST + surface, 0);
     }

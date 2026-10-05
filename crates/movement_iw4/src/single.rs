@@ -36,6 +36,10 @@ pub struct PmoveResult {
     pub bounds: MoveBounds,
     pub stance_event: Option<u8>,
     pub reset_torso: bool,
+    /// Downward speed of a landing this command, `0.0` when there was none. CS fall damage reads it.
+    pub landing_speed: f32,
+    /// CS movement started this command inside geometry and freed itself (crouched or nudged).
+    pub unstuck: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -65,7 +69,6 @@ pub struct PmoveSingleContext {
     pub can_hold_breath: bool,
 }
 
-#[allow(clippy::too_many_lines)]
 pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
     ps: &mut PlayerState,
     cmd: &mut UserCmd,
@@ -73,6 +76,21 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
     collision: &C,
     lengths: &L,
     root: &R,
+) -> PmoveResult {
+    let rules = crate::rules::active_for(ps);
+    pmove_with_rules(ps, cmd, context, collision, lengths, root, rules)
+}
+
+/// `pmove` under an explicit ruleset; `None` runs retail IW4 movement.
+#[allow(clippy::too_many_lines)]
+pub fn pmove_with_rules<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
+    ps: &mut PlayerState,
+    cmd: &mut UserCmd,
+    context: PmoveSingleContext,
+    collision: &C,
+    lengths: &L,
+    root: &R,
+    rules: Option<crate::rules::Ruleset>,
 ) -> PmoveResult {
     let msec = clamped_msec(cmd.server_time.wrapping_sub(ps.command_time));
     ps.command_time = cmd.server_time;
@@ -94,6 +112,18 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
         mantle_movetype: None,
         landing_animation: false,
     };
+
+    match rules.filter(|_| ps.pm_type == 0) {
+        Some(crate::rules::Ruleset::GoldSrc(profile)) => {
+            return crate::cs::pmove(ps, cmd, context, collision, profile, pml);
+        }
+        Some(crate::rules::Ruleset::Source(profile)) => {
+            return crate::source::pmove(ps, cmd, context, collision, profile, pml);
+        }
+        None => {}
+    }
+    // The CS fork has neither sprint nor prone, whatever moves the player.
+    cmd.buttons &= !(playerstate_iw4::buttons::SPRINT | playerstate_iw4::buttons::PRONE);
 
     update_view_angles(ps, cmd, context.view_angles);
 
@@ -168,6 +198,8 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
             bounds,
             stance_event,
             reset_torso,
+            landing_speed: 0.0,
+            unstuck: false,
         };
     }
 
@@ -200,6 +232,8 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
             bounds,
             stance_event,
             reset_torso,
+            landing_speed: 0.0,
+            unstuck: false,
         };
     }
 
@@ -282,6 +316,8 @@ pub fn pmove<C: CollisionBackend, L: MantleXAnimLength, R: MantleRootDelta>(
         bounds,
         stance_event,
         reset_torso,
+        landing_speed: 0.0,
+        unstuck: false,
     }
 }
 

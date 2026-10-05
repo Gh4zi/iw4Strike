@@ -69,7 +69,10 @@ pub struct ClientActionInput {
 impl Default for ClientActionInput {
     fn default() -> Self {
         Self {
-            client: ClientInput::default(),
+            client: ClientInput {
+                hold_crouch: movement_iw4::rules::CS_RULES,
+                ..ClientInput::default()
+            },
             stance_life: None,
             stance_event_sequence: 0,
             scripted_ids: BTreeSet::new(),

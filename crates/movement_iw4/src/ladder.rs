@@ -159,6 +159,37 @@ pub fn check_ladder_move(
     }
 }
 
+/// The ladder check as Counter-Strike makes it (`LadderMove`): toward where the player is
+/// moving — forward/back and strafe together — rather than where they look, so strafing
+/// into a ladder at your side grabs it. Standing still, it looks along the view.
+#[must_use]
+pub fn cs_ladder_context(
+    cmd: &UserCmd,
+    walking: bool,
+    forward: [f32; 3],
+    right: [f32; 3],
+) -> CheckLadderContext {
+    let (fm, rm) = (f32::from(cmd.forwardmove), f32::from(cmd.rightmove));
+    let (forward_xy, forwardmove) = if fm != 0.0 || rm != 0.0 {
+        (
+            [
+                forward[0] * fm + right[0] * rm,
+                forward[1] * fm + right[1] * rm,
+            ],
+            // Any move toward the ladder counts as pressing into it.
+            i8::MAX,
+        )
+    } else {
+        ([forward[0], forward[1]], cmd.forwardmove)
+    };
+    CheckLadderContext {
+        server_time: cmd.server_time,
+        walking,
+        forward_xy,
+        forwardmove,
+    }
+}
+
 pub fn ladder_attract_velocity(ps: &mut PlayerState) {
     let f_side = ps.velocity[0] * ps.v_ladder_vec[0] + ps.velocity[1] * ps.v_ladder_vec[1];
     ps.velocity[0] += -f_side * ps.v_ladder_vec[0];

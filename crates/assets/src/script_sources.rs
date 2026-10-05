@@ -119,6 +119,18 @@ impl ScriptSources {
             }
             bytes
         });
+        // Debug aid: `IW4L_GSC_DUMP=<dir>` writes every packaged script source as it loads.
+        if let (Some(dir), Ok(bytes)) = (std::env::var_os("IW4L_GSC_DUMP"), source.as_ref()) {
+            let path = std::path::Path::new(&dir).join(format!("{module}.gsc"));
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(path, bytes);
+        }
+        let source = source.map(|mut bytes| {
+            crate::cs_script_patches::apply(module, &mut bytes);
+            bytes
+        });
         self.sources.insert(
             module.to_owned(),
             ScriptSource {

@@ -30,7 +30,7 @@ use crate::targetmap::{TargetmapRaster, spawn_targetmap, update_targetmap};
 use crate::weaponbar::{WeaponbarRaster, spawn_weaponbar, update_weaponbar};
 
 #[derive(Component)]
-struct HudRoot;
+pub(crate) struct HudRoot;
 
 pub struct HudPlugin;
 
@@ -42,6 +42,9 @@ impl Plugin for HudPlugin {
             .init_resource::<HudImages>()
             .init_resource::<HudPresentationGaps>()
             .init_resource::<ReticleAdsLatch>()
+            .init_resource::<crate::cs_crosshair::CsCrosshairState>()
+            .init_resource::<crate::cs_hud::CsHudAssets>()
+            .init_resource::<crate::cs_hud::CsKillFeed>()
             .init_resource::<IrisLetterboxFill>()
             .init_resource::<BloodOverlayLatch>()
             .init_resource::<BloodGpuJob>()
@@ -67,6 +70,7 @@ impl Plugin for HudPlugin {
         crate::overhead_names::register(app);
         app.add_message::<LifeStarted>()
             .add_observer(crate::killfeed::obituary)
+            .add_observer(crate::cs_hud::obituary)
             .add_systems(
                 Update,
                 (
@@ -77,6 +81,7 @@ impl Plugin for HudPlugin {
                     sync_zone_atlases,
                     warm_hud_images,
                     ensure_hud_root,
+                    crate::cs_hud::spawn_cs_hud,
                     sync_frontend_camera,
                     hud_stamp_setup,
                     ApplyDeferred,
@@ -95,6 +100,8 @@ impl Plugin for HudPlugin {
                             hud_surfaces_open,
                             crate::surface::update_hud_surface,
                             update_reticle,
+                            crate::cs_crosshair::update_cs_crosshair,
+                            crate::cs_hud::update_cs_hud,
                             hud_stage_close::<0>,
                             update_iris,
                             hud_stage_close::<1>,
@@ -325,6 +332,7 @@ fn ensure_hud_root(mut commands: Commands, existing: Query<Entity, With<HudRoot>
         .with_children(|root| {
             crate::font_overlay::spawn_overlay(root, crate::overhead_names::OverheadNamesRaster);
             spawn_reticle(root);
+            crate::cs_crosshair::spawn_cs_crosshair(root);
             spawn_iris(root);
             spawn_hud_elems_back(root);
             spawn_compass(root);
@@ -768,11 +776,13 @@ fn reset_match_hud_on_torn_down(
     mut pings: ResMut<crate::compass::CompassPingLatch>,
     mut cache: ResMut<PlayerCardCache>,
     mut local_vars: ResMut<UiLocalVars>,
+    mut cs_feed: ResMut<crate::cs_hud::CsKillFeed>,
 ) {
     if torn.read().len() == 0 {
         return;
     }
     *killfeed = KillfeedWindow::default();
+    *cs_feed = crate::cs_hud::CsKillFeed::default();
     *splash = SplashSlots::default();
     *pings = crate::compass::CompassPingLatch::default();
     *cache = PlayerCardCache::default();

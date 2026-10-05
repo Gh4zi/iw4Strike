@@ -315,8 +315,10 @@ pub fn apply_prepared_match(
                 .unwrap_or(sim::LocalPlayerProfile::default());
             sim.set_local_player_profile(profile);
         }
-        content.set_weapon_def_scales(weapons.0.scales_table());
-        let combat = combat_table::from_registry(&weapons.0, lochit_table);
+        let mut scales = weapons.0.scales_table();
+        let mut combat = combat_table::from_registry(&weapons.0, lochit_table);
+        combat_table::apply_cs_rules(&weapons.0, &mut combat, &mut scales);
+        content.set_weapon_def_scales(scales);
         content.set_weapon_combat_table(combat.clone());
         content.set_weapon_runnable_table(weapons.0.runnable_table());
         content.set_weapon_transition_groups(weapons.0.configuration_transition_groups());
@@ -425,7 +427,8 @@ pub fn apply_prepared_match(
         content.set_weapon_script_sounds(combat_table::script_sounds_from_registry(&weapons.0));
         install_team_voice_prefixes(&mut content, catalog.as_deref(), identity.as_deref(), &zone);
         install_shocks(&mut content, catalog.as_deref(), &map_shocks);
-        let equipment = combat_table::equipment_from_registry(&weapons.0);
+        let mut equipment = combat_table::equipment_from_registry(&weapons.0);
+        combat_table::apply_cs_grenade_rules(&weapons.0, &mut equipment);
         content.set_equipment_runtime_table(equipment.clone());
         let mut primary = Vec::new();
         let mut secondary = Vec::new();
@@ -1099,6 +1102,25 @@ fn preflight_match_install(
             "gsc: {} host rule dvars over {MATCH_CONFIG}",
             rules.0.len()
         );
+    }
+    if movement_iw4::rules::CS_RULES {
+        // CS rules: damage stays until death. `_healthoverlay` reads its regen delay from this
+        // through `_tweakables`; 0 turns regeneration off (the match config sets 5).
+        // An unranked (private) match: `level.rankedMatch` is false, so `_rank` gives no XP,
+        // no "+50" popups or rank-ups, and `_missions` runs no challenges.
+        const CS_DVARS: [(&str, &str); 2] = [
+            ("scr_player_healthregentime", "0"),
+            ("xblive_privatematch", "1"),
+        ];
+        for (name, value) in CS_DVARS {
+            match script_dvars
+                .iter_mut()
+                .find(|(set, _)| set.eq_ignore_ascii_case(name))
+            {
+                Some((_, set)) => value.clone_into(set),
+                None => script_dvars.push((name.into(), value.into())),
+            }
+        }
     }
     script_dvars.extend(script_dvar_overrides());
     let script_entries = startup.entries;

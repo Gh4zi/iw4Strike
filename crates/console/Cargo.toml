@@ -26,8 +26,11 @@ session = { path = "../session" }
 render_fx.workspace = true
 replay = { path = "../replay" }
 sim = { path = "../sim" }
+movement_iw4 = { path = "../movement_iw4" }
+weapon_iw4.workspace = true
 bots = { path = "../bots" }
 hud = { path = "../hud" }
+render_anim = { path = "../render_anim" }
 entity_iw4.workspace = true
 perf.workspace = true
 

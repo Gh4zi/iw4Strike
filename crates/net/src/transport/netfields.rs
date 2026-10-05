@@ -366,6 +366,32 @@ ps_netfields! {
     recoil_scale: i32 = Replication::Replicated, Validation::Exact;
     hold_breath_timer: i32 = Replication::Replicated, Validation::Exact;
     hold_breath_scale: f32 = Replication::Replicated, Validation::Exact;
+    cs_stamina: f32 = Replication::Replicated, Validation::Exact;
+    cs_duck_time: f32 = Replication::Replicated, Validation::Exact;
+    cs_duck_state: u32 = Replication::Replicated, Validation::Exact;
+    cs_fall_velocity: f32 = Replication::Replicated, Validation::Exact;
+    cs_punch: vec3 = Replication::Replicated, Validation::Exact;
+    cs_shots_fired: i32 = Replication::Replicated, Validation::Exact;
+    cs_accuracy: f32 = Replication::Replicated, Validation::Exact;
+    cs_last_fire_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_recoil_dir: i32 = Replication::Replicated, Validation::Exact;
+    cs_decrease_shots_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_delay_fire: u32 = Replication::Replicated, Validation::Exact;
+    cs_gun_weapon: u32 = Replication::Replicated, Validation::Exact;
+    cs_next_attack_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_next_attack2_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_knife: u32 = Replication::Replicated, Validation::Exact;
+    cs_zoom: u32 = Replication::Replicated, Validation::Exact;
+    cs_last_zoom: u32 = Replication::Replicated, Validation::Exact;
+    cs_grenade: u32 = Replication::Replicated, Validation::Exact;
+    cs_armor: u32 = Replication::Replicated, Validation::Exact;
+    cs_flash_start_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_flash_hold_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_flash_fade_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_flash_alpha: u32 = Replication::Replicated, Validation::Exact;
+    cs_silencers: u32 = Replication::Replicated, Validation::Exact;
+    cs_adjust_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_helmet: u32 = Replication::Replicated, Validation::Exact;
 }
 
 pub const PS_FIELD_COUNT: usize = PS_NETFIELDS.len();

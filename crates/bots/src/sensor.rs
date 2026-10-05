@@ -127,7 +127,7 @@ pub fn observe_focused(
     let objectives = public_objectives(snapshot, bot, team);
     Some(BotObservation {
         tick: snapshot.tick.0,
-        time_ms: snapshot.tick.0 as i32 * 50,
+        time_ms: snapshot.tick.0 as i32 * sim::MATCH_TICK_MS as i32,
         self_state,
         inventory,
         seen,

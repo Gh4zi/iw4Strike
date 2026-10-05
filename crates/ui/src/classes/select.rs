@@ -15,7 +15,8 @@ pub(crate) fn overlay_open_after_screen(
     failed: bool,
     currently_open: bool,
 ) -> bool {
-    if failed || replay {
+    // Counter-Strike has no classes: the server answers the scripts' class choice itself.
+    if failed || replay || movement_iw4::rules::CS_RULES {
         return false;
     }
     if matches!(now, AppScreen::ClassSelect) {

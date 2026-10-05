@@ -6,6 +6,7 @@ pub mod bullet_collision;
 mod carrier;
 pub mod collision_census;
 pub mod combat;
+pub mod cs_settings;
 pub mod content;
 mod corpse;
 mod damage;
@@ -117,7 +118,7 @@ pub use player_anim_script::{
     anim_conditions_from_pmove, pmove_anim_weapon_ids,
 };
 pub use rules::{FFA, FreeForAllRules};
-pub use score::{MATCH_TICK_MS, bootstrap_score_defaults};
+pub use score::{MATCH_TICK_MS, SCRIPT_FRAME_MS, bootstrap_score_defaults, ticks_for_ms};
 pub use script_gaps::ScriptGaps;
 pub use snapshot::{
     AreaEntityLinkSnapshot, AreaEntityWorldSnapshot, AreaEntityWorldSnapshotError,

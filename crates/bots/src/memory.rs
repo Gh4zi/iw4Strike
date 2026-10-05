@@ -1,10 +1,10 @@
 use crate::observation::{BotEvent, BotObservation, Contact, KnowledgeSource, Visibility};
 
-const MEMORY_TTL_TICKS: u32 = 80;
+const MEMORY_TTL_TICKS: u32 = sim::ticks_for_ms(4000);
 /// How long a contact stays current across ticks where perception never got to
 /// it. A completed negative observation ends it at once; this bound only covers
 /// "not evaluated", and it never refreshes the remembered position.
-const UNSENSED_HOLD_TICKS: u32 = 12;
+const UNSENSED_HOLD_TICKS: u32 = sim::ticks_for_ms(600);
 
 #[derive(Clone, Debug, Default)]
 pub struct Memory {

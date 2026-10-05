@@ -401,6 +401,10 @@ pub(crate) fn update_playercard(
         &mut exprs,
         now_ms,
     );
+    if crate::cs_hud::replaces_mw2_hud() {
+        hide(&mut pass);
+        return;
+    }
 
     for cmd in messages.splashes.read().filter(|cmd| cmd.slot == 1) {
         let Some(table) = catalog

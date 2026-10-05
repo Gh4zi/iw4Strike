@@ -263,7 +263,12 @@ pub(crate) fn install_sound_bank(
                 let pool = AsyncComputeTaskPool::get_or_init(TaskPool::default);
                 compose.bank = Some(pool.spawn(async move {
                     kept.unwrap_or_else(|| ComposedBank {
-                        loaded: map.map(|catalog| (Arc::new(catalog), gaps)),
+                        loaded: map.map(|mut catalog| {
+                            // Counter-Strike's own weapon sounds, read from the local install.
+                            asset_audio::append_cs_weapon_sounds(&mut catalog);
+                            asset_audio::append_css_weapon_sounds(&mut catalog);
+                            (Arc::new(catalog), gaps)
+                        }),
                         namespace,
                         reused: false,
                     })

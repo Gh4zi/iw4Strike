@@ -4,8 +4,8 @@ use std::sync::Mutex;
 use crate::CueFailure;
 
 const EVENT_CAPACITY: usize = 8192;
-const EVENT_WINDOW_TICKS: u32 = 100;
-const FUTURE_TICKS: u32 = 2;
+const EVENT_WINDOW_TICKS: u32 = sim::ticks_for_ms(5000);
+const FUTURE_TICKS: u32 = sim::ticks_for_ms(100);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AudioEventId {

@@ -35,4 +35,8 @@ pub use drawsurf::{
     split_bind_layout, texture_table_bind_entries, vertex_layouts_from_contract,
     write_buffer_padded, write_buffer_range,
 };
+pub use drawsurf::{
+    CS_VIEWMODEL_MAX_BONES, CsScopeFrame, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelModel,
+    CsViewmodelShading, CsViewmodelVertex,
+};
 pub use plugin::RenderGpuPlugin;

@@ -128,7 +128,7 @@ fn pick_kill_icon(
     }
 }
 
-fn snapshot_client_team(presented: &net::PresentedSnapshot, client: i32) -> i32 {
+pub(crate) fn snapshot_client_team(presented: &net::PresentedSnapshot, client: i32) -> i32 {
     if client < 0 {
         return 0;
     }
@@ -154,7 +154,7 @@ fn obituary_name_color(local_team: i32, team: i32) -> [f32; 4] {
     color
 }
 
-fn snapshot_client_name(presented: &net::PresentedSnapshot, client: i32) -> String {
+pub(crate) fn snapshot_client_name(presented: &net::PresentedSnapshot, client: i32) -> String {
     if client < 0 {
         return String::new();
     }
@@ -256,7 +256,7 @@ pub(crate) fn update_killfeed(
     mut notifies: MessageReader<net::SvcGameNotify>,
     view: Option<Res<frame::ViewSubject>>,
 ) {
-    if !surface.is_ready() {
+    if !surface.is_ready() || crate::cs_hud::replaces_mw2_hud() {
         hide(&mut pass);
         return;
     }

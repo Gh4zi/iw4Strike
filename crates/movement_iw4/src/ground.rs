@@ -114,7 +114,7 @@ fn clear_ground_state(ps: &mut PlayerState, pml: &mut Pml) {
     pml.walking = 0;
 }
 
-fn copy_ground_trace(pml: &mut Pml, trace: &Trace) {
+pub(crate) fn copy_ground_trace(pml: &mut Pml, trace: &Trace) {
     pml.ground_trace = [
         trace.fraction.to_bits(),
         trace.normal[0].to_bits(),
@@ -132,7 +132,7 @@ fn copy_ground_trace(pml: &mut Pml, trace: &Trace) {
     ];
 }
 
-fn trace_entity_id(trace: &Trace) -> i32 {
+pub(crate) fn trace_entity_id(trace: &Trace) -> i32 {
     i32::from(trace_iw4::trace_get_entity_hit_id(
         trace.hit_type,
         trace.hit_id,

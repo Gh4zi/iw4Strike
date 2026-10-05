@@ -302,6 +302,10 @@ pub(crate) fn update_splash(
     if !surface.is_ready() {
         return;
     }
+    if crate::cs_hud::replaces_mw2_hud() {
+        hide(&mut pass);
+        return;
+    }
     for cmd in received.read().filter(|cmd| cmd.slot == 0) {
         pending.queued.push_back((cmd.key.clone(), cmd.optional));
     }

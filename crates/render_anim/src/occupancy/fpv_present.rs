@@ -410,8 +410,13 @@ pub fn occupy_fpv_scene(
     session_vm: Option<Res<SessionViewmodel>>,
     tess: Option<Res<render_scene::TessMaterials>>,
     fpv_meshes: Option<Res<PreparedFpvMeshes>>,
+    cs_viewmodel: Option<Res<super::cs_viewmodel::CsViewmodelActive>>,
 ) {
     let (view, settings) = view_settings;
+    // A Counter-Strike model replaces the MW2 viewmodel for the CS guns.
+    if cs_viewmodel.is_some_and(|active| active.0) {
+        return;
+    }
     if presented.viewweapon_player(local.0).is_none()
         || presented_is_third_person(
             &presented,
@@ -930,6 +935,7 @@ pub fn apply_fpv_placement(
     >,
     view_settings: (Res<ViewSubject>, Res<frame::GameSettings>),
     mut gfx_scene: ResMut<HostGfxScene>,
+    weapons: Option<Res<assets::PreparedWeapons>>,
 ) {
     let (view, settings) = view_settings;
     *aim = ViewweaponAim::default();
@@ -1109,13 +1115,27 @@ pub fn apply_fpv_placement(
     } else {
         [0.0, 0.0]
     };
+    // CS guns fire at the view centre: the gun model may sway, but the aim it reports (and the
+    // scope overlay drawn from it) stays centred.
+    let cs_weapon =
+        weapons.as_ref().is_some_and(|weapons| {
+            weapon_iw4::cs::cs_weapon_index_for(&weapons.0.script_name_of(viewmodel)).is_some()
+        });
+    let (angle_offset, xhair) = if cs_weapon {
+        ([0.0; 2], [0.0; 2])
+    } else {
+        (
+            [
+                math_iw4::angle_subtract(gun_pitch, ps.viewangles[0]),
+                math_iw4::angle_subtract(gun_yaw, ps.viewangles[1]),
+            ],
+            xhair,
+        )
+    };
     *aim = ViewweaponAim {
         live: true,
         weapon: viewmodel,
-        angle_offset: [
-            math_iw4::angle_subtract(gun_pitch, ps.viewangles[0]),
-            math_iw4::angle_subtract(gun_yaw, ps.viewangles[1]),
-        ],
+        angle_offset,
         gun_pitch,
         gun_yaw,
         xhair_x: xhair[0],
@@ -1154,7 +1174,12 @@ fn flush_fpv_spawn(world: &mut World) {
 fn publish_fpv_notetracks(
     pending: Res<PendingFpvNotetracks>,
     mut notes: MessageWriter<audio::ViewmodelNotetracks>,
+    cs_viewmodel: Option<Res<super::cs_viewmodel::CsViewmodelActive>>,
 ) {
+    // The CS model plays its own sounds from its animation events.
+    if cs_viewmodel.is_some_and(|active| active.0) {
+        return;
+    }
     if let Some(batch) = &pending.batch {
         notes.write(batch.clone());
     }
@@ -1172,6 +1197,19 @@ pub fn register_fpv_present_systems(app: &mut App) {
         )
         .init_resource::<LocalSpawnArmed>()
         .init_resource::<SessionViewmodel>()
+        .init_resource::<super::cs_viewmodel::CsViewmodels>()
+        .init_resource::<super::cs_viewmodel::CsViewmodelActive>()
+        .init_resource::<super::cs_scope::CsScopeImages>()
+        .add_systems(
+            Update,
+            (
+                super::cs_viewmodel::update_cs_viewmodel
+                    .after(PresentedPublished)
+                    .before(occupy_fpv_scene),
+                super::cs_viewmodel::cs_zoom_sound.after(PresentedPublished),
+                super::cs_scope::update_cs_scope.after(PresentedPublished),
+            ),
+        )
         .init_resource::<PreparedFpv>()
         .init_resource::<crate::anim::model_materials::PreparedModelMaterials>()
         .init_resource::<SessionViewKick>()

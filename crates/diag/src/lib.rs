@@ -79,12 +79,67 @@ impl Level {
     }
 }
 
+enum WriterMsg {
+    Line(String),
+    Flush(std::sync::mpsc::SyncSender<()>),
+}
+
+/// A log file written by its own thread. Game threads only queue lines: a disk write that
+/// stalls (antivirus scanning a growing log is common on Windows) never stalls a frame.
+struct AsyncFile {
+    tx: std::sync::mpsc::Sender<WriterMsg>,
+}
+
+impl AsyncFile {
+    fn spawn(file: File, thread_name: &str) -> Option<Self> {
+        let (tx, rx) = std::sync::mpsc::channel::<WriterMsg>();
+        std::thread::Builder::new()
+            .name(thread_name.to_owned())
+            .spawn(move || {
+                let mut out = std::io::BufWriter::with_capacity(64 * 1024, file);
+                let mut acks = Vec::new();
+                while let Ok(first) = rx.recv() {
+                    let mut next = Some(first);
+                    while let Some(msg) = next {
+                        match msg {
+                            WriterMsg::Line(line) => {
+                                let _ = out.write_all(line.as_bytes());
+                                let _ = out.write_all(b"\n");
+                            }
+                            WriterMsg::Flush(ack) => acks.push(ack),
+                        }
+                        next = rx.try_recv().ok();
+                    }
+                    let _ = out.flush();
+                    for ack in acks.drain(..) {
+                        let _ = ack.send(());
+                    }
+                }
+                let _ = out.flush();
+            })
+            .ok()?;
+        Some(Self { tx })
+    }
+
+    fn line(&self, line: String) {
+        let _ = self.tx.send(WriterMsg::Line(line));
+    }
+
+    /// Block until every queued line is on disk, bounded so a wedged disk cannot hang exit.
+    fn flush_wait(&self) {
+        let (ack, done) = std::sync::mpsc::sync_channel(1);
+        if self.tx.send(WriterMsg::Flush(ack)).is_ok() {
+            let _ = done.recv_timeout(std::time::Duration::from_secs(2));
+        }
+    }
+}
+
 struct DiagState {
-    file: Option<File>,
+    file: Option<AsyncFile>,
     file_path: PathBuf,
 
     latest: Option<PathBuf>,
-    traces: Option<File>,
+    traces: Option<AsyncFile>,
     traces_path: Option<PathBuf>,
     stderr_threshold: Level,
     file_threshold: Level,
@@ -144,14 +199,20 @@ pub fn init_log(artifacts_root: &Path) -> PathBuf {
         .create(true)
         .append(true)
         .open(&path)
-        .ok();
+        .ok()
+        .and_then(|file| AsyncFile::spawn(file, "iw4l-log"));
 
     let (traces, traces_path) = match std::env::var_os("IW4L_TRACES_DIR") {
         Some(dir) => {
             let dir = PathBuf::from(dir);
             let _ = std::fs::create_dir_all(&dir);
             let tp = dir.join(format!("{stamp}.jsonl"));
-            let f = OpenOptions::new().create(true).append(true).open(&tp).ok();
+            let f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&tp)
+                .ok()
+                .and_then(|file| AsyncFile::spawn(file, "iw4l-traces"));
             (f, Some(tp))
         }
         None => (None, None),
@@ -164,7 +225,7 @@ pub fn init_log(artifacts_root: &Path) -> PathBuf {
     let file_threshold = bump.unwrap_or(Level::Info);
 
     let started = START.get().copied().unwrap_or_else(Instant::now);
-    let mut state = DiagState {
+    let state = DiagState {
         file,
         file_path: path.clone(),
         latest: link_latest(&path),
@@ -196,9 +257,8 @@ pub fn init_log(artifacts_root: &Path) -> PathBuf {
                 "git": git,
             }
         });
-        if let Some(f) = state.traces.as_mut() {
-            let _ = writeln!(f, "{header}");
-            let _ = f.flush();
+        if let Some(f) = state.traces.as_ref() {
+            f.line(header.to_string());
         }
     }
 
@@ -215,10 +275,10 @@ pub fn latest_log_path() -> Option<PathBuf> {
 pub fn exit_launch_error(message: &str) -> ! {
     write_event(Channel::Launch, Level::Error, message, None, None);
     if let Some(sink) = SINK.get()
-        && let Ok(mut state) = sink.lock()
+        && let Ok(state) = sink.lock()
     {
-        if let Some(file) = state.file.as_mut() {
-            let _ = file.flush();
+        if let Some(file) = state.file.as_ref() {
+            file.flush_wait();
             eprintln!("log: {}", state.file_path.display());
         } else {
             eprintln!("log unavailable: {}", state.file_path.display());
@@ -285,12 +345,15 @@ fn emit_raw(
         eprintln!("{text}");
     }
     if lvl <= state.file_threshold
-        && let Some(file) = state.file.as_mut()
+        && let Some(file) = state.file.as_ref()
     {
-        let _ = writeln!(file, "{text}");
-        let _ = file.flush();
+        file.line(text);
+        // An error may be the last thing the process says; get it on disk before going on.
+        if lvl == Level::Error {
+            file.flush_wait();
+        }
     }
-    if let Some(file) = state.traces.as_mut() {
+    if let Some(file) = state.traces.as_ref() {
         let t = now_ms(state.started);
         let mut obj = serde_json::json!({
             "t": t,
@@ -311,8 +374,7 @@ fn emit_raw(
         if !collapsed_banner {
             obj["msg"] = serde_json::Value::String(msg.to_owned());
         }
-        let _ = writeln!(file, "{obj}");
-        let _ = file.flush();
+        file.line(obj.to_string());
     }
 }
 
@@ -345,8 +407,8 @@ pub fn write_event(
                 "msg": msg,
                 "n": n,
             });
-            if let Some(file) = state.traces.as_mut() {
-                let _ = writeln!(file, "{obj}");
+            if let Some(file) = state.traces.as_ref() {
+                file.line(obj.to_string());
             }
         }
         return;
@@ -358,11 +420,18 @@ pub fn write_event(
     emit_raw(&mut state, ch, lvl, msg, None, ev, fields, false);
 }
 
+/// Write out any collapsed repeat and wait until every queued line is on disk.
 pub fn flush() {
     if let Some(sink) = SINK.get()
         && let Ok(mut state) = sink.lock()
     {
         flush_collapsed(&mut state);
+        for file in [state.file.as_ref(), state.traces.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            file.flush_wait();
+        }
     }
 }
 

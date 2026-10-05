@@ -5,9 +5,9 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::client::predict::CmdSeq;
 
-pub const AUTHORITY_HZ: f64 = 20.0;
+pub const AUTHORITY_HZ: f64 = 1000.0 / sim::MATCH_TICK_MS as f64;
 
-pub const AUTHORITY_MS: i32 = 50;
+pub const AUTHORITY_MS: i32 = sim::MATCH_TICK_MS as i32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerTime(i32);

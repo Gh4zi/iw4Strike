@@ -104,26 +104,37 @@ pub(crate) fn update_flash_whiteout(
             blend_ms,
         });
     }
-    let Some(shock) = shock.filter(|_| effects.flashed) else {
+    // Counter-Strike flashbangs: the server sets how long the screen holds white and fades
+    // (`PlayerState::cs_flash_*`); the same white and frozen-frame quads draw it.
+    let flash = if movement_iw4::rules::CS_RULES {
+        let cs = weapon_iw4::cs::CsFlash {
+            hold_ms: ps.cs_flash_hold_ms,
+            fade_ms: ps.cs_flash_fade_ms,
+            alpha: ps.cs_flash_alpha,
+        };
+        (ps.cs_flash_alpha > 0)
+            .then(|| weapon_iw4::cs::flash_screen(cs, cg_clock.time() - ps.cs_flash_start_ms))
+            .flatten()
+            .map(|(white, shot)| (white, shot, ps.cs_flash_start_ms))
+    } else {
+        shock.filter(|_| effects.flashed).and_then(|shock| {
+            let remaining = is_flashbanged(
+                cg_clock.time(),
+                ps.shellshock_time,
+                ps.shellshock_duration,
+                shock.screen_type,
+            );
+            shellshock_flash_blend(remaining, shock.white_fade_ms, shock.shot_fade_ms)
+                .map(|(white, shot)| (white, shot, ps.shellshock_time))
+        })
+    };
+    let Some((white, shot, flash_start)) = flash else {
         latch.last_start = None;
         request_hide(&mut job, latch.packed.is_empty());
         return;
     };
-    let remaining = is_flashbanged(
-        cg_clock.time(),
-        ps.shellshock_time,
-        ps.shellshock_duration,
-        shock.screen_type,
-    );
-    let Some((white, shot)) =
-        shellshock_flash_blend(remaining, shock.white_fade_ms, shock.shot_fade_ms)
-    else {
-        latch.last_start = None;
-        request_hide(&mut job, latch.packed.is_empty());
-        return;
-    };
-    if latch.last_start != Some(ps.shellshock_time) {
-        latch.last_start = Some(ps.shellshock_time);
+    if latch.last_start != Some(flash_start) {
+        latch.last_start = Some(flash_start);
         latch.save_sequence = latch.save_sequence.wrapping_add(1);
         latch.last_alpha = None;
     }

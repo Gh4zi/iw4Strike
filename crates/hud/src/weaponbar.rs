@@ -248,6 +248,10 @@ impl ExprHost for WeaponbarExprHost<'_> {
             return Ok(Operand::Str(SPECIALTY_NULL.to_owned()));
         };
         let code = self.perk_slots.get(slot).copied().unwrap_or(0);
+        // CS rules: no perks, so the spawn perk list draws nothing rather than "None" three times.
+        if code == 0 && movement_iw4::rules::CS_RULES {
+            return Ok(Operand::Str(String::new()));
+        }
         let Some(key) = perk_code_key(code) else {
             return Ok(Operand::Str(SPECIALTY_NULL.to_owned()));
         };
@@ -298,6 +302,8 @@ struct OwnerDrawState<'a> {
     north_yaw: f32,
     ticker_stretch: f32,
     hide_ammo: bool,
+    /// The held CS knife or grenade: no low-ammo warning.
+    low_ammo_off: bool,
 }
 
 fn paint_owner(
@@ -359,6 +365,9 @@ fn paint_low_ammo(
     args: &OwnerDrawArgs<'_>,
     frame: &mut ChromeFrame,
 ) -> OwnerDrawPaint {
+    if state.low_ammo_off {
+        return OwnerDrawPaint::Painted;
+    }
     let Some(ammo) = state.ammo.as_ref() else {
         return OwnerDrawPaint::Painted;
     };
@@ -685,6 +694,10 @@ pub(crate) fn update_weaponbar(
     if !surface.is_ready() {
         return;
     }
+    if crate::cs_hud::replaces_mw2_hud() {
+        hide(&mut pass);
+        return;
+    }
     let Some(ps) = presented.player(local.0) else {
         gaps.clear(HudGap::PerkDisplay);
         gaps.clear(HudGap::CompassRing);
@@ -710,16 +723,27 @@ pub(crate) fn update_weaponbar(
         .and_then(|s| s.meta.for_client(local.0));
     let ammo = weapons.as_ref().and_then(|w| weaponbar_ammo(ps, w, meta));
     let viewmodel = get_viewmodel_weapon_index(ps);
+    // CS weapons show CS names; the knife has no ammo and neither it nor a grenade warns of
+    // running low.
+    let cs_index = weapons
+        .as_ref()
+        .and_then(|w| weapon_iw4::cs::cs_weapon_index_for(&w.0.script_name_of(viewmodel)));
+    let ammo = ammo.filter(|_| !cs_index.is_some_and(weapon_iw4::cs::is_knife));
+    let low_ammo_off = cs_index
+        .is_some_and(|i| weapon_iw4::cs::is_knife(i) || weapon_iw4::cs::is_grenade(i));
     let weapon_script = weapons
         .as_ref()
         .map(|w| w.0.script_name_of(viewmodel))
         .unwrap_or_default();
-    let name = localized_weapon_name(
-        selected_weapon_index(ps, client_input.select.index),
-        weapons.as_deref(),
-        strings.as_deref(),
-        &mut gaps,
-    );
+    let selected = selected_weapon_index(ps, client_input.select.index);
+    let cs_name = weapons
+        .as_ref()
+        .and_then(|w| weapon_iw4::cs::cs_weapon_index_for(&w.0.script_name_of(selected)))
+        .and_then(weapon_iw4::cs::display_name);
+    let name = match cs_name {
+        Some(name) => Some(name.to_owned()),
+        None => localized_weapon_name(selected, weapons.as_deref(), strings.as_deref(), &mut gaps),
+    };
     let hide_ammo = ammo_hud_hidden(ps);
     let frag_ammo = weapons
         .as_ref()
@@ -794,6 +818,7 @@ pub(crate) fn update_weaponbar(
             .unwrap_or(0.5)
             .clamp(0.01, 1.0),
         hide_ammo,
+        low_ammo_off,
     };
 
     let mut list = crate::draw2d::Draw2dList::default();

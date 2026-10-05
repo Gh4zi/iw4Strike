@@ -10,8 +10,6 @@ use gamemode_iw4::{
 
 const AREA_ENTITY_CAPACITY: usize = 0x800;
 
-const _: () = assert!(crate::MATCH_TICK_MS == 50);
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DamageAttempt {
     pub splash: bool,
@@ -569,6 +567,10 @@ pub(crate) fn apply_flashbang_blast(
     radius_min: f32,
     attacker: ClientId,
 ) {
+    if movement_iw4::rules::CS_RULES {
+        apply_cs_flash(world, origin);
+        return;
+    }
     let min_r = radius_min.max(1.0);
     let max_r = if radius_max < min_r {
         min_r
@@ -632,6 +634,62 @@ pub(crate) fn apply_flashbang_blast(
             amount_angle,
             attacker,
         );
+    }
+}
+
+/// Counter-Strike's flashbang (`RadiusFlash`) instead of MW2's: everyone within 1500 units with
+/// a clear line from the flash to their eyes is blinded by distance and by where they look —
+/// looking away saves them. The client draws it from `PlayerState::cs_flash_*`; MW2's
+/// script flash (shellshock) is not used.
+fn apply_cs_flash(world: &mut FrameWorld, origin: [f32; 3]) {
+    use weapon_iw4::cs::{CS_FLASH_RADIUS, CsFlash, flash_for, stack_flash};
+    let now = crate::script::host::players::now_ms(world.ecs()) as i32;
+    let source = [origin[0], origin[1], origin[2] + 1.0];
+    let mut hits = Vec::new();
+    for target in radius_player_candidates(world, source, CS_FLASH_RADIUS) {
+        if !world
+            .client_meta(target)
+            .is_some_and(|meta| meta.lifecycle == ClientLifecycle::Alive)
+        {
+            continue;
+        }
+        if player_radius_vis_scale(world, source, target, None) <= 0.0 {
+            continue;
+        }
+        let Some(ps) = world.player(target) else {
+            continue;
+        };
+        let eye = [ps.origin[0], ps.origin[1], ps.origin[2] + ps.view_height_current];
+        let to_flash: [f32; 3] = core::array::from_fn(|i| source[i] - eye[i]);
+        let distance = to_flash.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let (forward, _, _) = math_iw4::angle_vectors(ps.viewangles);
+        let facing = if distance > 1e-3 {
+            to_flash.iter().zip(forward).map(|(a, b)| a * b).sum::<f32>() / distance
+        } else {
+            1.0
+        };
+        let Some(flash) = flash_for(distance, facing) else {
+            continue;
+        };
+        let old = (ps.cs_flash_alpha > 0).then(|| {
+            (
+                CsFlash {
+                    hold_ms: ps.cs_flash_hold_ms,
+                    fade_ms: ps.cs_flash_fade_ms,
+                    alpha: ps.cs_flash_alpha,
+                },
+                now - ps.cs_flash_start_ms,
+            )
+        });
+        hits.push((target, stack_flash(flash, old)));
+    }
+    for (target, flash) in hits {
+        if let Some(ps) = world.player_mut(target) {
+            ps.cs_flash_start_ms = now;
+            ps.cs_flash_hold_ms = flash.hold_ms;
+            ps.cs_flash_fade_ms = flash.fade_ms;
+            ps.cs_flash_alpha = flash.alpha;
+        }
     }
 }
 

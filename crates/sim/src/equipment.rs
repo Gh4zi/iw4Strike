@@ -298,6 +298,28 @@ pub(crate) fn spawn_grenade_projectile(
     if !facts.is_usable() {
         return false;
     }
+    let velocity = grenade_launch_velocity(forward(angles), &facts, owner_vel);
+    spawn_grenade_projectile_with_velocity(world, owner, weapon, tick, origin, angles, velocity, kind)
+}
+
+/// [`spawn_grenade_projectile`] with the launch velocity already worked out (CS throws).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_grenade_projectile_with_velocity(
+    world: &mut FrameWorld,
+    owner: ClientId,
+    weapon: u32,
+    tick: Tick,
+    origin: [f32; 3],
+    angles: [f32; 3],
+    velocity: [f32; 3],
+    kind: GrenadeLaunchKind,
+) -> bool {
+    let Some(facts) = world.equipment_facts_for(weapon) else {
+        return false;
+    };
+    if !facts.is_usable() {
+        return false;
+    }
     let owner_life = world.client_meta(owner).unwrap().life_sequence;
     let direction = forward(angles);
     let time_ms = level_time_ms(tick);
@@ -314,8 +336,16 @@ pub(crate) fn spawn_grenade_projectile(
     } else {
         init_grenade_apos(direction, time_ms, pitch_rate, roll_rate)
     };
-    let velocity = grenade_launch_velocity(direction, &facts, owner_vel);
-    let pos = init_grenade_pos(origin, velocity, time_ms);
+    let mut pos = init_grenade_pos(origin, velocity, time_ms);
+    // A thrown CS grenade flies at half gravity (`pev->gravity` 0.5), like CS.
+    if movement_iw4::rules::CS_RULES
+        && matches!(kind, GrenadeLaunchKind::Thrown { .. })
+        && weapon_iw4::cs::CS_GRENADES.iter().any(|g| {
+            crate::script_player::weapon_name(world, weapon).eq_ignore_ascii_case(g.projectile)
+        })
+    {
+        pos.tr_type = entity_iw4::TR_GRAVITY_HALF;
+    }
     let speed = vec3_length(velocity);
     let launch_time = time_ms + fire_grenade_no_draw_ms(speed);
     let (detonate_at_ms, cleanup_at_ms) = grenade_deadlines(&facts, kind, time_ms);
@@ -597,6 +627,37 @@ pub(crate) fn predict_projectile(
         time = next;
     }
     Some(projectile.origin)
+}
+
+/// A CS smoke grenade's cloud: MW2's smoke effect thins out about 9 s after it pops and is
+/// gone by 12 s, a CS:S smoke stays about 15 s and fades by 18 s, so the cloud is fired again
+/// at the same spot once.
+#[derive(Clone, Debug)]
+pub(crate) struct CsSmoke {
+    event: crate::EntityEventPayload,
+    at: Tick,
+}
+
+/// When the cloud is fired again after the smoke pops.
+const CS_SMOKE_REFIRE_MS: u32 = 6500;
+
+pub(crate) fn refire_cs_smokes(world: &mut FrameWorld, tick: Tick) {
+    let due: Vec<CsSmoke> = {
+        let (due, waiting) = std::mem::take(&mut world.cs_smokes)
+            .into_iter()
+            .partition(|smoke| smoke.at.0 <= tick.0);
+        world.cs_smokes = waiting;
+        due
+    };
+    for smoke in due {
+        diag::debug!(Sim, "cs smoke: refire at {:?}", smoke.event.origin);
+        world.push_entity_event(
+            tick,
+            EventAudience::All,
+            entity_iw4::EntityEventKind::GRENADE_EXPLODE,
+            smoke.event,
+        );
+    }
 }
 
 pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) {
@@ -1378,21 +1439,36 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
         } else {
             entity_iw4::EntityEventKind::GRENADE_EXPLODE
         };
-        world.push_entity_event(
-            tick,
-            EventAudience::All,
-            event_kind,
-            crate::EntityEventPayload {
-                number: info.projectile.entnum,
-                attacker_entity_num: info.projectile.owner.0 as i32,
-                weapon: info.projectile.weapon,
-                correlation: info.projectile.id.0,
-                origin: info.origin,
-                direction: info.normal,
-                surf_type: info.surf_type,
-                ..Default::default()
-            },
-        );
+        let event = crate::EntityEventPayload {
+            number: info.projectile.entnum,
+            attacker_entity_num: info.projectile.owner.0 as i32,
+            weapon: info.projectile.weapon,
+            correlation: info.projectile.id.0,
+            origin: info.origin,
+            direction: info.normal,
+            surf_type: info.surf_type,
+            ..Default::default()
+        };
+        world.push_entity_event(tick, EventAudience::All, event_kind, event);
+        if movement_iw4::rules::CS_RULES
+            && event_kind == entity_iw4::EntityEventKind::GRENADE_EXPLODE
+            && world.publishes_snapshot()
+            && weapon_iw4::cs::CS_GRENADES.iter().any(|g| {
+                g.name == "smokegrenade"
+                    && crate::script_player::weapon_name(world, info.projectile.weapon)
+                        .eq_ignore_ascii_case(g.projectile)
+            })
+        {
+            // The grenade is gone by then and clients drop events for entities they no longer
+            // have; the cloud is placed by `origin`, so the thrower carries the event.
+            world.cs_smokes.push(CsSmoke {
+                event: crate::EntityEventPayload {
+                    number: info.projectile.owner.0 as i32,
+                    ..event
+                },
+                at: Tick(tick.0 + crate::ticks_for_ms(CS_SMOKE_REFIRE_MS)),
+            });
+        }
         if !resolves_damage {
             continue;
         }

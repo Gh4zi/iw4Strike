@@ -626,8 +626,11 @@ fn deliver_answers(world: &mut World, client: u32) {
     {
         return;
     }
+    // Before the scripts first take an answer, one waits for its menu to open. After that every
+    // answer goes through, like MW2's own `menuresponse`: a spectator picking a team from the
+    // pause menu has no menu open and must still be heard (else they stay stuck spectating).
     let in_game = matches!(&*slot.sessionstate, "playing" | "dead");
-    if slot.menu.is_none() && !in_game {
+    if slot.menu.is_none() && !in_game && !slot.answered {
         return;
     }
     let object = slot.object;
@@ -639,6 +642,7 @@ fn deliver_answers(world: &mut World, client: u32) {
         .expect("checked above");
     let slot = runtime.players.get_mut(&client).expect("checked above");
     slot.menu = None;
+    slot.answered = true;
     if let Err(message) = super::natives::player::write_class_data(world, client, &answer.data) {
         world.resource_mut::<Runtime>().fault = Some(Fault::at(
             &Location {
@@ -666,6 +670,8 @@ fn deliver_answers(world: &mut World, client: u32) {
 pub(crate) struct PlayerSlot {
     pub object: u64,
     pub begun: bool,
+    /// The scripts have taken a menu answer from this player: they listen for more.
+    pub answered: bool,
     pub sessionstate: Arc<str>,
     pub dvars: BTreeMap<Arc<str>, Arc<str>>,
     pub menu: Option<Arc<str>>,
@@ -709,6 +715,7 @@ impl PlayerSlot {
         Self {
             object,
             begun: false,
+            answered: false,
             sessionstate: "spectator".into(),
             dvars: BTreeMap::new(),
             menu: None,

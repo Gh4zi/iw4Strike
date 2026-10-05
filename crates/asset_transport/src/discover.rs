@@ -19,28 +19,45 @@ pub struct ZoneFile {
 }
 
 pub fn load_dotenv() {
+    if let Some(path) = dotenv_path() {
+        let _ = dotenvy::from_path(&path);
+    }
+}
+
+/// The `.env` [`load_dotenv`] reads: beside the executable, else the nearest one up from the
+/// working directory.
+fn dotenv_path() -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
         let candidate = dir.join(".env");
         if candidate.is_file() {
-            let _ = dotenvy::from_path(&candidate);
-            return;
+            return Some(candidate);
         }
     }
-    let Ok(mut dir) = std::env::current_dir() else {
-        return;
-    };
+    let mut dir = std::env::current_dir().ok()?;
     loop {
         let candidate = dir.join(".env");
         if candidate.is_file() {
-            let _ = dotenvy::from_path(&candidate);
-            return;
+            return Some(candidate);
         }
         if !dir.pop() {
-            return;
+            return None;
         }
     }
+}
+
+/// `key` from the environment, else its own line in `.env` — read directly, so a line the
+/// dotenv parser stops at (an unquoted Windows path with spaces or brackets) can't hide it.
+fn env_or_dotenv(key: &str) -> Option<String> {
+    if let Ok(value) = std::env::var(key) {
+        return Some(value);
+    }
+    let text = std::fs::read_to_string(dotenv_path()?).ok()?;
+    text.lines().find_map(|line| {
+        let (name, value) = line.trim().split_once('=')?;
+        (name.trim() == key).then(|| value.trim().trim_matches('"').to_owned())
+    })
 }
 
 pub fn games_root_from_env() -> Result<GamesRoot, String> {
@@ -70,6 +87,34 @@ fn default_games_root() -> Result<PathBuf, String> {
     Err("IW4L_GAMES is not set — copy .env.example to .env and set the games root".to_owned())
 }
 
+/// `IW4L_ONLY_MW2=1` (environment or `.env`): play with MW2 alone. Game shortcuts to other
+/// titles' installs (MW3, Black Ops) are ignored and never created, so none of their zones —
+/// MW3's weapon bundle, the donor sound banks — are opened.
+pub const ONLY_MW2_ENV: &str = "IW4L_ONLY_MW2";
+
+pub fn only_mw2() -> bool {
+    static ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ONLY.get_or_init(|| {
+        let on = env_or_dotenv(ONLY_MW2_ENV)
+            .is_some_and(|value| !matches!(value.trim(), "" | "0" | "false" | "no" | "off"));
+        if on {
+            diag::info!(Zone, "{ONLY_MW2_ENV}: MW2 only — MW3/Black Ops installs are ignored");
+        }
+        on
+    })
+}
+
+/// Whether `root` holds MW2 multiplayer data (`zone/<language>/common_mp.ff` of IW4's version).
+#[cfg(windows)]
+fn holds_mw2(root: &Path) -> bool {
+    let Ok(languages) = std::fs::read_dir(root.join("zone")) else {
+        return false;
+    };
+    languages.flatten().any(|language| {
+        zone_game_for_path(&language.path().join("common_mp.ff")) == Some(crate::ZoneGame::Iw4)
+    })
+}
+
 pub fn search_roots(root: &Path) -> Vec<PathBuf> {
     #[cfg_attr(not(windows), allow(unused_mut))]
     let mut roots = vec![root.to_path_buf()];
@@ -89,6 +134,7 @@ pub fn search_roots(root: &Path) -> Vec<PathBuf> {
         links.sort();
         for link_path in links {
             match shortcut_target_root(&link_path) {
+                Ok(target) if only_mw2() && !holds_mw2(&target) => {}
                 Ok(target) if !roots.contains(&target) => roots.push(target),
                 Ok(_) => {}
                 Err(error) => diag::warn!(

@@ -35,6 +35,7 @@ net.workspace = true
 perf.workspace = true
 playerstate_iw4.workspace = true
 render_anim.workspace = true
+render_gpu.workspace = true
 render_frame.workspace = true
 render_fx.workspace = true
 render_material.workspace = true
