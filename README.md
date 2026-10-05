@@ -143,16 +143,125 @@ Your keys still the old MW2 ones? Run `binddefaults` in the console.
 
 ## Console commands
 
+Press **`** (the key under **Esc**) to open the console. Type a command and press
+**Enter**.
+
+> Commands marked 🔧 need cheats. Cheats are **on by default** in your own matches. A lobby
+> host can turn them off in the game setup, or you can start the game with `--no-cheats`.
+
+### 🛒 Buy weapons and armor
+
+Use `buy <name>`. There's no money yet, so buying is free. The price is what it will cost
+once money is added.
+
+| Type | Name | Weapon | Price |
+|---|---|---|---|
+| Rifle | `ak47` | AK-47 | $2500 |
+| Rifle | `m4a1` | M4A1 | $3100 |
+| Sniper | `awp` | AWP | $4750 |
+| Pistol | `deagle` | Desert Eagle | $650 |
+| Pistol | `usp` | USP | $500 |
+| Pistol | `glock` | Glock-18 | $400 |
+| Grenade | `hegrenade` | HE grenade (carry 1) | $300 |
+| Grenade | `flashbang` | Flashbang (carry 2) | $200 |
+| Grenade | `smokegrenade` | Smoke grenade (carry 1) | $300 |
+| Armor | `vest` | Kevlar | $650 |
+| Armor | `vesthelm` | Kevlar + helmet | $1000 |
+
+```
+buy ak47
+buy deagle
+buy vesthelm
+buy flashbang
+```
+
+All `buy` commands are 🔧 for now.
+
+### 🏃 Movement
+
 | Command | What it does |
 |---|---|
-| `buy <weapon>` | `ak47` `m4a1` `awp` `deagle` `usp` `glock` `hegrenade` `flashbang` `smokegrenade` `vest` `vesthelm` |
-| `mv_mode <mode>` | Movement style: `csgo` (default), `surf`, `mmod` (Momentum bhop), `cs16` |
-| `viewmodel_fov <54-90>` | How far away your gun is drawn (default 68) |
-| `cl_wpn_sway 0\|1` | Gun bob and sway on or off |
-| `sv_destructibles 0\|1` | Let cars and barrels explode again (off by default) |
-| `binddefaults` | Reset all keys to the iw4Strike defaults |
+| `mv_mode csgo` | CS:GO competitive movement, the default (stamina, no auto-hop) |
+| `mv_mode cs16` | Counter-Strike 1.6 movement (smaller player, lower jump) |
+| `mv_mode surf` | Surf settings (very high air control, auto-hop) |
+| `mv_mode mmod` | Momentum Mod bhop (auto-hop, no stamina, 260 speed) |
+| `mv_stamina <0-1>` | How much jumping slows you down: `1` normal, `0.5` half, `0` off |
 
-There's no money system yet, so `buy` is free for now.
+Your movement mode is saved, so you only set it once.
+
+### 🔫 Gun and crosshair
+
+| Command | What it does |
+|---|---|
+| `viewmodel_fov <54-90>` | Gun position: bigger moves the gun further away (default `68`) |
+| `cl_wpn_sway 0` / `1` | Turn gun bob and sway off or on |
+| `cl_dynamiccrosshair 0` / `1` | Static crosshair, or one that opens when you move and shoot |
+| `thirdperson 1` / `0` | Third-person view on or off |
+
+### 🗺️ Maps and bots
+
+| Command | What it does |
+|---|---|
+| `map <name>` | Load a map, for example `map mp_rust` |
+| `map_restart` | Restart the match on the same map |
+| `bot add <count>` | Add bots that move and fight, for example `bot add 5` |
+| `bot dummy <count>` | Add bots that stand still (for aim practice) |
+| `force_match_start` | 🔧 Skip the pre-match countdown |
+| `disconnect` | Leave the match and go back to the main menu |
+| `quit` | Close the game |
+
+<details>
+<summary><b>MW2 map names</b></summary>
+
+| Map | Name | Map | Name |
+|---|---|---|---|
+| Afghan | `mp_afghan` | Rundown | `mp_rundown` |
+| Derail | `mp_derail` | Rust | `mp_rust` |
+| Estate | `mp_estate` | Scrapyard | `mp_boneyard` |
+| Favela | `mp_favela` | Skidrow | `mp_nightshift` |
+| Highrise | `mp_highrise` | Sub Base | `mp_subbase` |
+| Invasion | `mp_invasion` | Terminal | `mp_terminal` |
+| Karachi | `mp_checkpoint` | Underpass | `mp_underpass` |
+| Quarry | `mp_quarry` | Wasteland | `mp_brecourt` |
+
+</details>
+
+### 🎯 Practice
+
+| Command | What it does |
+|---|---|
+| `god` | 🔧 Toggle invincibility |
+| `kill` | 🔧 Kill yourself (respawn) |
+| `showpos` | Show your position on screen |
+| `destructibles` | List the map's cars, barrels and breakable walls |
+| `sv_destructibles 0` / `1` | Cars and barrels can't explode (default) / can explode |
+
+A quick aim-practice setup:
+
+```
+bot dummy 3
+buy ak47
+buy vesthelm
+god
+```
+
+### ⌨️ Keys
+
+| Command | What it does |
+|---|---|
+| `bind <key> <command>` | Bind a key, for example `bind Q slot3` (knife on Q) |
+| `unbind <key>` | Remove a key's bind |
+| `binddefaults` | Reset every key to the iw4Strike defaults |
+
+### 🎬 Demos and clips
+
+| Command | What it does |
+|---|---|
+| `record <name>` | Start recording a demo |
+| `demo <name>` | Play a recorded demo |
+| `clip` | Save the last 45 seconds as a clip |
+
+Demos and clips are saved in the `iw4l-artifacts` folder.
 
 ---
 
