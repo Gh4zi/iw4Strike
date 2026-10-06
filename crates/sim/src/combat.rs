@@ -1399,7 +1399,12 @@ fn cs_grenade_frame(
     let count = get_clip_for_hand(&ps.ammoclip, clip_key, 0);
     match ps.cs_grenade {
         IDLE => {
-            if attack && count > 0 && now >= ps.cs_next_attack_ms {
+            if count <= 0 {
+                // An empty grenade is not kept: pressing 4 (or switching back) before the retire
+                // timer ran left it in the hand with 0 left.
+                crate::script_player::take_weapon(world, id, weapon);
+                crate::item::raise_best_cs_weapon(world, id);
+            } else if attack && now >= ps.cs_next_attack_ms {
                 let ps = world.player_mut(id).expect("present player");
                 ps.cs_grenade = PULLED;
                 ps.cs_next_attack2_ms = now;

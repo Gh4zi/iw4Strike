@@ -341,8 +341,6 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   timer properly.
 - Flashbangs and smoke grenades don't bounce like CS grenades yet. Their bouncing will be
   reworked.
-- After you throw your flashbang and press **4**, the grenade is still in your hand while the
-  ammo count shows 0.
 - Walking over a weapon doesn't pick it up automatically; you have to press **F**.
 - Dropping and throwing a weapon (**G**) will be reworked.
 
