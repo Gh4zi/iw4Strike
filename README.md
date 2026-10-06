@@ -309,8 +309,32 @@ IW4L's engine docs are in [`docs/`](docs/INDEX.md), and its README is
 
 ## Credits and license
 
-- Built on [IW4L](https://github.com/vladtrc/iw4L) by vladtrc and its contributors.
-- IW4L is licensed under Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+### Engine
+
+- **[IW4L](https://github.com/vladtrc/iw4L)** by vladtrc and contributors: the MW2 engine
+  iw4Strike is built on. IW4L's own credits (OpenAssetTools, IW4x, KisakCOD and others) are
+  in its [README](https://github.com/vladtrc/iw4L#acknowledgements-and-license) and in
+  [NOTICE](NOTICE).
+
+### Gameplay references
+
+iw4Strike's Counter-Strike gameplay is written from scratch in Rust. These projects were
+read to get the behaviour and numbers right. None of their source code is included here.
+
+| Project | What it was used for |
+|---|---|
+| **[Momentum Mod](https://github.com/momentum-mod/game)** | Source / CS:GO movement (`mom_gamemovement.cpp`): move order, jumping, friction, air acceleration, step-up, ramp and slope fixes, ducking. The bhop, surf and KZ stamina settings behind `mv_mode`. The dynamic crosshair (`hud_crosshair.cpp`). |
+| **[ReGameDLL_CS](https://github.com/s1lentq/ReGameDLL_CS)** | Counter-Strike 1.6 rules: weapon stats (`wpn_*.cpp`, `weapons.h`), damage, range and hitgroups, spread and recoil, kevlar and helmet, knife, grenades, flashbang blinding (`RadiusFlash`), AWP zoom, dropping and picking up weapons, CS 1.6 movement numbers and fall damage. |
+| **[hlsdk-portable](https://github.com/FWGS/hlsdk-portable)** | GoldSrc player movement (`pm_shared`) and the Half-Life model format (`studio.h`), used by the CS 1.6 movement mode and the CS 1.6 model fallback. |
+| **[Source SDK 2013](https://github.com/ValveSoftware/source-sdk-2013)** | Source engine movement (`gamemovement.cpp`) and the public headers for Source model files, used to load Counter-Strike: Source models. |
+
+### Games
+
 - Call of Duty: Modern Warfare 2 belongs to Activision. Counter-Strike and
-  Counter-Strike: Source belong to Valve. iw4Strike isn't affiliated with either, and you
-  need your own copies of both games.
+  Counter-Strike: Source belong to Valve. iw4Strike isn't affiliated with any of them.
+  You need your own copies of the games, and their files are read from your install,
+  never copied.
+
+### License
+
+IW4L is licensed under Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
