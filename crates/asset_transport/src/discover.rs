@@ -87,20 +87,21 @@ fn default_games_root() -> Result<PathBuf, String> {
     Err("IW4L_GAMES is not set — copy .env.example to .env and set the games root".to_owned())
 }
 
-/// `IW4L_ONLY_MW2=1` (environment or `.env`): play with MW2 alone. Game shortcuts to other
-/// titles' installs (MW3, Black Ops) are ignored and never created, so none of their zones —
-/// MW3's weapon bundle, the donor sound banks — are opened.
+/// iw4Strike plays with MW2 alone, always: game shortcuts to other titles' installs (MW3, Black
+/// Ops) are ignored and never created, so none of their zones — MW3's weapon bundle, the donor
+/// sound banks, minutes of loading — are opened. Players have no setting for it; developers can
+/// turn it off with `IW4L_ONLY_MW2=0` (environment or `.env`).
 pub const ONLY_MW2_ENV: &str = "IW4L_ONLY_MW2";
 
 pub fn only_mw2() -> bool {
     static ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ONLY.get_or_init(|| {
-        let on = env_or_dotenv(ONLY_MW2_ENV)
-            .is_some_and(|value| !matches!(value.trim(), "" | "0" | "false" | "no" | "off"));
-        if on {
-            diag::info!(Zone, "{ONLY_MW2_ENV}: MW2 only — MW3/Black Ops installs are ignored");
+        let off = env_or_dotenv(ONLY_MW2_ENV)
+            .is_some_and(|value| matches!(value.trim(), "0" | "false" | "no" | "off"));
+        if off {
+            diag::info!(Zone, "{ONLY_MW2_ENV}=0: MW3/Black Ops installs are searched too");
         }
-        on
+        !off
     })
 }
 

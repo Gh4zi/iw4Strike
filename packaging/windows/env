@@ -1,6 +1,3 @@
-# Load only Modern Warfare 2 (skips MW3 / Black Ops, much faster map loading)
-IW4L_ONLY_MW2=1
-
 # Only needed if Counter-Strike: Source is not found automatically through Steam.
 # Remove the # and point it at the cstrike folder inside Counter-Strike Source.
 # IW4L_CSS="D:/SteamLibrary/steamapps/common/Counter-Strike Source/cstrike"

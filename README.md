@@ -91,9 +91,6 @@ Open `.env` and set these:
 ```ini
 # The folder that contains your Modern Warfare 2 folder
 IW4L_GAMES="C:\Program Files (x86)\Steam\steamapps\common"
-
-# Load only MW2 (skips MW3 / Black Ops; much faster map loading)
-IW4L_ONLY_MW2=1
 ```
 
 **Put quotes around paths.** A path with spaces or brackets and no quotes stops `.env` from
