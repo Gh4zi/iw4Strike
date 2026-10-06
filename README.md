@@ -328,6 +328,10 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [ ] Other players holding the CS weapon models in third person
 - [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
   player moves the same way
+- [ ] Valve-style menus (CS:S look, read from your install), step by step: the panel system,
+  main and pause menu, loading screen, scoreboard, a "Start Server" dialog with gamemode and
+  map dropdowns (where the server-side settings like `mv_mode` and `sv_tickrate` live), then
+  options and the multiplayer screens
 - [ ] Rounds, money and buy menu
 - [ ] C4 bomb plant and defuse
 - [ ] Shooting through walls (CS penetration)
