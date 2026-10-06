@@ -332,6 +332,9 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   main and pause menu, loading screen, scoreboard, a "Start Server" dialog with gamemode and
   map dropdowns (where the server-side settings like `mv_mode` and `sv_tickrate` live), then
   options and the multiplayer screens
+- [ ] Settings for the game paths (MW2, CS:S, CS 1.6) inside the game instead of `.env`, a
+  first-launch message box that says what was found, a version display, and a per-player choice
+  of CS:S or CS 1.6 for the HUD, weapon models and sounds when both are installed
 - [ ] Rounds, money and buy menu
 - [ ] C4 bomb plant and defuse
 - [ ] Shooting through walls (CS penetration)
