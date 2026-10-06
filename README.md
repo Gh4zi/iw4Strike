@@ -336,6 +336,15 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - Other players see MW2 weapon models in your hands, not the CS ones.
 - The movement mode (`mv_mode`) isn't sent to other players yet, so use the same mode on
   every client.
+- Smoke grenades go off twice: the explosion is fired a second time about 6.5 seconds later so
+  the cloud lasts about 18 seconds, like CS:S. This will be reworked to match the CS:S smoke
+  timer properly.
+- Flashbangs and smoke grenades don't bounce like CS grenades yet. Their bouncing will be
+  reworked.
+- After you throw your flashbang and press **4**, the grenade is still in your hand while the
+  ammo count shows 0.
+- Walking over a weapon doesn't pick it up automatically; you have to press **F**.
+- Dropping and throwing a weapon (**G**) will be reworked.
 
 ---
 

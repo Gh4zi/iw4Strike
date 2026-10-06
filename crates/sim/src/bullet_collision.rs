@@ -1431,6 +1431,13 @@ fn bullet_trace_filtered(
             DObjGeometryVerdict::Unavailable => {}
         }
         for bone in &dobj_geom.bones {
+            // A model with no collision surfaces and no contents of its own (an animated tree,
+            // a prop) is not something bullets hit: its bone boxes are loose bounds that can
+            // reach far past what you see (a jungle tree's crown boxes are ~190x140x350 units and
+            // swallowed every shot in a boneyard tunnel). Only real hit parts count.
+            if geom.dobj_contents.unwrap_or(0) == 0 && bone.part_classification == 0 {
+                continue;
+            }
             let collider = ColliderId::EntityDObjBone {
                 owner: geom.owner,
                 bone: bone.bone,

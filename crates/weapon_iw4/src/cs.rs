@@ -664,7 +664,7 @@ pub const CS_WEAPONS: [CsWeapon; 24] = [
             follow_spread: Some(0.05),
             follow_range_modifier: Some(0.9),
             fire_sounds: &["glock18-1", "glock18-2"],
-            css_fire_sound: "Weapon_Glock.Burst",
+            css_fire_sound: "Weapon_Glock.Single",
         }),
         ..BASE
     },
@@ -1140,7 +1140,7 @@ pub const CS_WEAPONS: [CsWeapon; 24] = [
             follow_spread: None,
             follow_range_modifier: None,
             fire_sounds: &["famas-burst"],
-            css_fire_sound: "Weapon_FAMAS.Burst",
+            css_fire_sound: "Weapon_FAMAS.Single",
         }),
         ..BASE
     },
@@ -1918,8 +1918,13 @@ pub fn apply_overrides(facts: &mut WeaponCombatFacts, index: u8) -> Option<(f32,
     facts.clip_size = weapon.clip;
     facts.start_ammo = weapon.clip + weapon.reserve;
     facts.max_ammo = weapon.reserve;
-    facts.reload_time_ms = ms(weapon.reload);
-    facts.reload_empty_time_ms = ms(weapon.reload);
+    // Each pass of a shotgun's reload loop is one shell and lasts the per-shell time, not the
+    // whole reload (which would make every shell take seconds).
+    let loop_seconds = weapon
+        .shell_reload
+        .map_or(weapon.reload, |(_, per_shell, _)| per_shell);
+    facts.reload_time_ms = ms(loop_seconds);
+    facts.reload_empty_time_ms = ms(loop_seconds);
     facts.damage = weapon.damage as i32;
     facts.min_damage = weapon.damage as i32;
     facts.max_damage_range = weapon.distance;
@@ -2712,6 +2717,31 @@ mod tests {
         assert_eq!(awp.fire_time_ms, 450);
         assert!(!awp.aim_down_sight);
         assert!((zoomed - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn shotgun_reloads_a_shell_per_pass_and_gated_guns_get_a_short_fire_time() {
+        // Every pass of the reload loop is one shell, so it lasts the per-shell time (it once
+        // took the whole 3 s reload per shell).
+        for (twin, start, per_shell, finish) in [("spas12_mp", 550, 450, 450), ("m1014_mp", 550, 300, 400)] {
+            let mut facts = WeaponCombatFacts::none();
+            let index = cs_weapon_index_for(twin).expect("shotgun");
+            apply_overrides(&mut facts, index).expect("applied");
+            assert_eq!(facts.reload_time_ms, per_shell, "{twin}");
+            assert_eq!(facts.reload_empty_time_ms, per_shell, "{twin}");
+            assert_eq!(facts.reload_add_time_ms, per_shell, "{twin}");
+            assert_eq!(facts.reload_start_time_ms, start, "{twin}");
+            assert_eq!(facts.reload_end_time_ms, finish, "{twin}");
+            assert!(facts.shots_per_fire >= 6);
+        }
+        // Burst guns are timed by the CS layer; the MW2 machine only has to be ready each tick.
+        for twin in ["glock_mp", "famas_mp", "aug_mp", "fn2000_mp"] {
+            let mut facts = WeaponCombatFacts::none();
+            apply_overrides(&mut facts, cs_weapon_index_for(twin).expect("gun")).expect("applied");
+            assert_eq!(facts.fire_time_ms, 40, "{twin}");
+        }
+        // A normal gun keeps its real cycle, and the burst gunshots are CS:S entries that exist.
+        assert!(CS_WEAPONS.iter().flat_map(|w| w.burst).all(|b| b.css_fire_sound.ends_with(".Single")));
     }
 
     #[test]

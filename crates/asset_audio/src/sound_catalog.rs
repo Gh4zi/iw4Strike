@@ -794,13 +794,28 @@ impl SoundCatalog {
     /// from outside the zones (Counter-Strike's own wave files). False when the template is missing
     /// or no clip could be added.
     pub fn add_loose_alias(&mut self, name: &str, template: &str, clips: Vec<LooseClip>) -> bool {
-        let Some(row) = self
+        let Some(mut row) = self
             .sound_in(AssetNamespace::Iw4, template)
             .and_then(|sound| sound.aliases.first())
             .cloned()
         else {
             return false;
         };
+        // The template's channel is a restricted one (`local`, `weapon`): one sound at a time per
+        // entity, so a gunshot would be cut off by the next sound on it (the AWP's bolt, the next
+        // bullet of a burst). Counter-Strike's sounds overlap, so they go on the unrestricted
+        // `auto`/`auto2d` channel instead.
+        self.resolve_ent_channels();
+        if let Some(flags) = row.flags {
+            let shift = asset_iw4::snd_alias::SND_ALIAS_FLAG_CHANNEL_SHIFT;
+            let mask = asset_iw4::snd_alias::SND_ALIAS_FLAG_CHANNEL_MASK;
+            let own = ((flags >> shift) & mask) as usize;
+            let flat = self.ent_channels.get(own).is_some_and(|channel| !channel.is_3d);
+            let wanted = if flat { "auto2d" } else { "auto" };
+            if let Some(index) = self.ent_channels.iter().position(|c| c.name == wanted) {
+                row.flags = Some((flags & !(mask << shift)) | ((index as u32) << shift));
+            }
+        }
         let mut aliases = Vec::with_capacity(clips.len());
         for clip in clips {
             let lanes = clip.channels.max(1) as usize;

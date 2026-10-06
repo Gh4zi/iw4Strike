@@ -270,8 +270,8 @@ struct Playing {
     grenade_state: u32,
     /// When the last shot's muzzle flash started, and its random spin.
     flash: Option<(f64, u32)>,
-    /// When the next shell of a shotgun reload goes in.
-    shell_next: f64,
+    /// The clip last frame (a shotgun reload plays a shell going in as it grows).
+    clip: i32,
 }
 
 #[derive(Resource, Default)]
@@ -941,6 +941,14 @@ pub fn update_cs_viewmodel(
     let now = time.elapsed_secs_f64();
     let reloading = weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
         .is_ok_and(weapon_iw4::WeaponState::is_reload_family);
+    let clip = weapons.0.facts_of(weapon_index).map_or(0, |facts| {
+        let key = weapon_iw4::clip_table_key(facts.clip_index, weapon_index);
+        if weapon_iw4::clip_row_present(&ps.ammoclip, key) {
+            weapon_iw4::get_clip_for_hand(&ps.ammoclip, key, 0)
+        } else {
+            0
+        }
+    });
     let roles = &model.roles;
     // A gun with a silencer plays its silenced or plain set by the replicated bit.
     let silenced = weapon.silencer_bit != 0 && ps.cs_silencers & weapon.silencer_bit != 0;
@@ -1019,7 +1027,7 @@ pub fn update_cs_viewmodel(
                 && let Some((start_time, _, _)) = weapon.shell_reload
                 && let Some(begin) = roles.shell_start
             {
-                // A shotgun's reload starts by opening, then takes a shell at a time.
+                // A shotgun's reload starts by opening; a shell goes in each time the clip grows.
                 let duration = model.sequences[begin].duration;
                 let rate = if start_time > 0.0 && duration > 0.0 {
                     duration / start_time
@@ -1027,11 +1035,10 @@ pub fn update_cs_viewmodel(
                     1.0
                 };
                 start(playing, Some(begin), rate);
-                playing.shell_next = now + f64::from(start_time);
             } else if reloading
                 && playing.reloading
+                && clip > playing.clip
                 && let Some((_, per_shell, _)) = weapon.shell_reload
-                && now >= playing.shell_next
                 && let Some(insert) = gun_reload
             {
                 let duration = model.sequences[insert].duration;
@@ -1041,13 +1048,18 @@ pub fn update_cs_viewmodel(
                     1.0
                 };
                 start(playing, Some(insert), rate);
-                playing.shell_next += f64::from(per_shell);
             } else if !reloading
                 && playing.reloading
-                && weapon.shell_reload.is_some()
+                && let Some((_, _, finish_time)) = weapon.shell_reload
                 && let Some(finish) = roles.shell_finish
             {
-                start(playing, Some(finish), 1.0);
+                let duration = model.sequences[finish].duration;
+                let rate = if finish_time > 0.0 && duration > 0.0 {
+                    duration / finish_time
+                } else {
+                    1.0
+                };
+                start(playing, Some(finish), rate);
             } else if reloading
                 && !playing.reloading
                 && let Some(reload) = gun_reload
@@ -1063,6 +1075,7 @@ pub fn update_cs_viewmodel(
             }
             playing.last_fire_ms = ps.cs_last_fire_ms;
             playing.reloading = reloading;
+            playing.clip = clip;
             playing.silenced = silenced;
             playing
         }
@@ -1081,7 +1094,7 @@ pub fn update_cs_viewmodel(
                 silenced,
                 grenade_state: ps.cs_grenade,
                 flash: None,
-                shell_next: 0.0,
+                clip,
             }
         }),
     };
