@@ -236,3 +236,12 @@ strip = "symbols"
 inherits = "play"
 debug = 1
 strip = "none"
+
+# `cargo test` / `cargo check` builds. Full debug info for every dependency
+# made target/debug ~50 GB; tests only need file:line in panics and backtraces,
+# so our crates keep line tables and dependencies drop debug info.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
