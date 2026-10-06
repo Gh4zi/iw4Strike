@@ -306,8 +306,11 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   map dropdowns (where the server-side settings like `mv_mode` and `sv_tickrate` live), then
   options and the multiplayer screens
 - [x] Game folders window (MW2, CS:S, CS 1.6) instead of `.env`, with a version display
-- [ ] A per-player choice of CS:S or CS 1.6 for the HUD, weapon models and sounds when both
-  are installed
+- [ ] Counter-Strike: Condition Zero as a supported install (GoldSrc models and sounds, read
+  from your own copy like CS 1.6)
+- [ ] A per-player mix-and-match in the game options for every installed game (CS:S, CS 1.6,
+  CS:CZ): pick weapon models, HUD, player hands and sounds separately, for example CZ weapons
+  with the CS 1.6 HUD and CS:S hands
 - [ ] Rounds, money and buy menu
 - [ ] C4 bomb plant and defuse
 - [ ] Shooting through walls (CS penetration)
