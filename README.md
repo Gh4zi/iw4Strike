@@ -326,6 +326,8 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [x] M4A1 and USP silencers, Glock and FAMAS burst fire
 - [x] The rest of the CS weapons (pistols, shotguns, SMGs, rifles, snipers, M249)
 - [ ] Other players holding the CS weapon models in third person
+- [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
+  player moves the same way
 - [ ] Rounds, money and buy menu
 - [ ] C4 bomb plant and defuse
 - [ ] Shooting through walls (CS penetration)
@@ -333,8 +335,6 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [ ] CoD4 maps (Crossfire, Citystreets)
 
 **Known issues**
-- The movement mode (`mv_mode`) isn't sent to other players yet, so use the same mode on
-  every client.
 - Smoke grenades go off twice: the explosion is fired a second time about 6.5 seconds later so
   the cloud lasts about 18 seconds, like CS:S. This will be reworked to match the CS:S smoke
   timer properly.
