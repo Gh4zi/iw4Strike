@@ -333,7 +333,6 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [ ] CoD4 maps (Crossfire, Citystreets)
 
 **Known issues**
-- Other players see MW2 weapon models in your hands, not the CS ones.
 - The movement mode (`mv_mode`) isn't sent to other players yet, so use the same mode on
   every client.
 - Smoke grenades go off twice: the explosion is fired a second time about 6.5 seconds later so
