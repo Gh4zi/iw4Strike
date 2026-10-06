@@ -79,6 +79,7 @@ pub(crate) fn magic_bullet(
         owner_velocity: [0.0; 3],
         spread_degrees: 0.0,
         cs_spread: None,
+        cs_silenced: false,
     };
     let launched = match fire_weapon_kind(combat.weap_type, combat.weap_class) {
         Some(FireWeaponKind::Missile) => fire_missile(world, tick, &shot),
