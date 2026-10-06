@@ -1,0 +1,85 @@
+# Builds the Windows game (iw4l.exe) with MSVC and packages it with its README, .env,
+# LICENSE and NOTICE.
+#
+# - Publish a release on GitHub: the zip is built and attached to that release.
+# - Push code to main: the zip is built and kept under the run's Artifacts for 14 days.
+# - Actions > Windows build > Run workflow: build by hand; give a release tag to attach
+#   the zip to that existing release.
+name: Windows build
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "packaging/windows/**"
+      - ".github/workflows/windows-build.yml"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Attach the build to this existing release (for example v0.1.0). Leave empty to only build."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-build-${{ github.ref }}-${{ inputs.release_tag || github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Install Rust (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-play
+
+      - name: Build iw4l.exe
+        run: cargo build --profile play --locked -p launcher
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse --short HEAD).Trim()
+          $label = if ($env:RELEASE_TAG) { $env:RELEASE_TAG } else { $sha }
+          $name = "iw4Strike-$label-windows"
+          $dir = "out/$name"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item target/play/iw4l.exe $dir/
+          Copy-Item LICENSE, NOTICE $dir/
+          Copy-Item packaging/windows/README.txt $dir/
+          Copy-Item packaging/windows/env $dir/.env
+          Add-Content $dir/README.txt "`r`nBuilt from commit $sha ($label)."
+          Compress-Archive -Path $dir -DestinationPath "out/$name.zip"
+          "PACKAGE=$name" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: out/${{ env.PACKAGE }}/
+          include-hidden-files: true
+          retention-days: 14
+
+      - name: Attach to release
+        if: env.RELEASE_TAG != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$env:RELEASE_TAG" "out/$env:PACKAGE.zip" --clobber --repo "${{ github.repository }}"

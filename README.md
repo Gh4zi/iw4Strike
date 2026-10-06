@@ -14,6 +14,13 @@ files are included in this repository.
 > **Work in progress.** Rounds, money, the buy menu and the bomb are not in yet. See
 > [Roadmap](#roadmap).
 
+## Download
+
+**Just want to play?** Get the Windows build from
+[**Releases**](https://github.com/Gh4zi/iw4Strike/releases). Extract the zip, run `iw4l.exe`,
+and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on Steam (see
+[What you need](#what-you-need)). To build it yourself, see [Setup](#setup).
+
 ---
 
 ## Features
@@ -118,6 +125,19 @@ cargo run --profile play -p launcher -- map mp_boneyard --cmds "wait world; spaw
 
 This builds the game and starts a match on Boneyard with three bots. The first build takes
 a while. With GNU Make installed, `make map mp_boneyard CMDS='...'` does the same.
+
+### Automatic Windows builds
+
+GitHub builds `iw4l.exe` for you with the
+[Windows build](.github/workflows/windows-build.yml) workflow:
+
+- **Publish a release** (Releases → *Draft a new release* → new tag such as `v0.2.0` →
+  *Publish release*). About 30–60 minutes later the zip is attached to that release.
+- **Push code to `main`.** The zip is built and kept for 14 days under
+  [Actions](https://github.com/Gh4zi/iw4Strike/actions/workflows/windows-build.yml) → the
+  run → *Artifacts*.
+- **Build by hand:** Actions → *Windows build* → *Run workflow*. Fill in a release tag to
+  attach the zip to that release.
 
 ---
 
