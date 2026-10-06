@@ -346,7 +346,9 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - Fall damage is inconsistent: sometimes a fall kills you, sometimes it doesn't register any hit.
 - There is no fall damage sound yet (to come from CS 1.6 or CS:S).
 - The flashbang explosion has no sound yet.
-- The map ambient sound is too loud. It may be related to the 100 Hz tick rate (not confirmed).
+- The map ambient sound is too loud on every map. For example, the airplane sound on Terminal is
+  too high and Highrise is very loud and windy. It may be related to the 100 Hz tick rate (not
+  confirmed).
 - Walking with **Shift** isn't silent yet. In CS, walking makes no footstep sounds.
 - Walking over a weapon doesn't pick it up automatically; you have to press **F**.
 - Dropping and throwing a weapon (**G**) will be reworked.
