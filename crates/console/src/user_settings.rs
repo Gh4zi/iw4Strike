@@ -297,16 +297,7 @@ fn write_settings_file(path: &std::path::Path, payload: &str) {
 }
 
 pub(crate) fn settings_path(artifacts: &std::path::Path) -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("IW4L_SETTINGS_PATH") {
-        return Some(PathBuf::from(path));
-    }
-    if cfg!(windows) {
-        return Some(artifacts.join("settings.cfg"));
-    }
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".config")))
-        .map(|path| path.join("iw4l/settings.cfg"))
+    asset_transport::settings_file(artifacts)
 }
 
 pub(crate) fn apply_pad_layout_setting(
@@ -370,8 +361,13 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("pad_vibration={}", settings.pad_vibration),
         format!("pad_deadzone_left={:.2}", settings.pad_deadzone_left),
         format!("pad_deadzone_right={:.2}", settings.pad_deadzone_right),
-        "unbindall".to_owned(),
     ];
+    if let Some(paths) = &settings.game_paths {
+        for folder in asset_transport::GameFolder::ALL {
+            lines.push(format!("{}={}", folder.key(), paths[folder.index()]));
+        }
+    }
+    lines.push("unbindall".to_owned());
     lines.extend(binds.list_lines());
     lines.push(String::new());
     lines.join("\n")
@@ -393,6 +389,13 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             warn!("ignored malformed setting line: {line}");
             continue;
         };
+        if let Some(folder) = asset_transport::GameFolder::ALL
+            .into_iter()
+            .find(|folder| folder.key() == key)
+        {
+            settings.game_paths.get_or_insert_default()[folder.index()] = value.trim().to_owned();
+            continue;
+        }
         match key {
             "resolution" => {
                 if let Some((w, h)) = value.split_once('x')

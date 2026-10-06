@@ -59,6 +59,10 @@ pub struct GameSettings {
     pub pad_deadzone_left: f32,
     pub pad_deadzone_right: f32,
 
+    /// Game folders from the game folders window (`game_path_mw2/css/cs16`), kept as read so a
+    /// save writes them back; `None` until that window first saved them.
+    pub game_paths: Option<[String; 3]>,
+
     pub revision: u64,
 }
 
@@ -94,6 +98,7 @@ impl Default for GameSettings {
             pad_vibration: true,
             pad_deadzone_left: 0.12,
             pad_deadzone_right: 0.12,
+            game_paths: None,
             revision: 0,
         }
     }

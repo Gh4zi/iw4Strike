@@ -65,7 +65,8 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 | **Visual Studio Build Tools** | Pick the *Desktop development with C++* workload |
 
 If Counter-Strike: Source isn't installed, the models and sounds fall back to a
-Counter-Strike 1.6 install, which you select yourself (see below). The CS:S HUD needs CS:S.
+Counter-Strike 1.6 install, which you select yourself in the game folders window (see below).
+The CS:S HUD needs CS:S.
 
 ---
 
@@ -78,56 +79,31 @@ git clone https://github.com/Gh4zi/iw4Strike.git
 cd iw4Strike
 ```
 
-### 2. Point it at your games
+### 2. Game folders
 
-Copy `.env.example` to `.env`:
+MW2 and Counter-Strike: Source are found in your Steam libraries automatically. The first time
+you start the game menu (`iw4l.exe` with no arguments), a small **game folders** window shows
+what was found:
 
-```bat
-copy .env.example .env
-```
+| | |
+|---|---|
+| **Call of Duty: Modern Warfare 2** (required) | The folder with the `zone` folder inside |
+| **Counter-Strike: Source** (recommended) | Weapon models, sounds and HUD |
+| **Counter-Strike 1.6** (optional) | Your `Half-Life` folder. Only used when CS:S is missing, and never searched for |
 
-Open `.env` and set these:
+Press **Browse...** to select a folder yourself, then **Play**. The folders are saved in
+`iw4l-artifacts\settings.cfg`. The game also shows this window whenever it can't find MW2.
+To open it again, use **Options > Game Folders**, the `game_paths` console command, or run
+`iw4l.exe paths`. `map ...` launches skip the window and use the saved folders.
 
-```ini
-# The folder that contains your Modern Warfare 2 folder
-IW4L_GAMES="C:\Program Files (x86)\Steam\steamapps\common"
-```
+iw4Strike only reads from these folders. It never changes or copies their files.
 
-**Put quotes around paths.** A path with spaces or brackets and no quotes stops `.env` from
-loading the lines after it.
+**Developers:** a `.env` file (copy `.env.example`) still works and overrides the window:
+`IW4L_GAMES` (the folder that holds your MW2 folder), `IW4L_CSS` (the CS:S `cstrike` folder)
+and `IW4L_CSTRIKE` (the CS 1.6 `cstrike` folder). Put quotes around paths: a path with spaces
+or brackets and no quotes stops `.env` from loading the lines after it.
 
-### 3. Counter-Strike: Source folder
-
-The game looks for Counter-Strike: Source in all your Steam libraries:
-
-```
-<Steam library>\steamapps\common\Counter-Strike Source\cstrike
-```
-
-That `cstrike` folder must contain `cstrike_pak_dir.vpk`.
-
-If it isn't found (for example, it's installed outside Steam), add its `cstrike` folder to
-`.env`:
-
-```ini
-IW4L_CSS="D:/SteamLibrary/steamapps/common/Counter-Strike Source/cstrike"
-```
-
-Point `IW4L_CSS` at the **`cstrike` folder inside** `Counter-Strike Source`, not at
-`Counter-Strike Source` itself. iw4Strike only reads from this folder and never changes or
-copies its files.
-
-**No Counter-Strike: Source?** Select your Counter-Strike 1.6 `cstrike` folder (the one with a
-`models` folder inside, usually `<Steam library>\steamapps\common\Half-Life\cstrike`) in
-`.env`:
-
-```ini
-IW4L_CSTRIKE="C:/Program Files (x86)/Steam/steamapps/common/Half-Life/cstrike"
-```
-
-It is never searched for, and it is ignored whenever Counter-Strike: Source is found.
-
-### 4. Build and play
+### 3. Build and play
 
 ```bash
 cargo run --profile play -p launcher -- map mp_boneyard --cmds "wait world; spawn 0; force_match_start; bot add 3"
@@ -329,9 +305,9 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   main and pause menu, loading screen, scoreboard, a "Start Server" dialog with gamemode and
   map dropdowns (where the server-side settings like `mv_mode` and `sv_tickrate` live), then
   options and the multiplayer screens
-- [ ] Settings for the game paths (MW2, CS:S, CS 1.6) inside the game instead of `.env`, a
-  first-launch message box that says what was found, a version display, and a per-player choice
-  of CS:S or CS 1.6 for the HUD, weapon models and sounds when both are installed
+- [x] Game folders window (MW2, CS:S, CS 1.6) instead of `.env`, with a version display
+- [ ] A per-player choice of CS:S or CS 1.6 for the HUD, weapon models and sounds when both
+  are installed
 - [ ] Rounds, money and buy menu
 - [ ] C4 bomb plant and defuse
 - [ ] Shooting through walls (CS penetration)

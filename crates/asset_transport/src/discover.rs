@@ -106,8 +106,7 @@ pub fn only_mw2() -> bool {
 }
 
 /// Whether `root` holds MW2 multiplayer data (`zone/<language>/common_mp.ff` of IW4's version).
-#[cfg(windows)]
-fn holds_mw2(root: &Path) -> bool {
+pub(crate) fn holds_mw2(root: &Path) -> bool {
     let Ok(languages) = std::fs::read_dir(root.join("zone")) else {
         return false;
     };
@@ -116,13 +115,51 @@ fn holds_mw2(root: &Path) -> bool {
     })
 }
 
+/// `root`, the MW2 folder the player saved in the game folders window, and the game shortcuts
+/// in `root` (a saved MW2 folder replaces the MW2 shortcuts).
 pub fn search_roots(root: &Path) -> Vec<PathBuf> {
-    #[cfg_attr(not(windows), allow(unused_mut))]
+    let saved_mw2 = crate::game_paths::saved(crate::game_paths::GameFolder::Mw2);
     let mut roots = vec![root.to_path_buf()];
+    if let Some(mw2) = &saved_mw2
+        && !roots.contains(mw2)
+    {
+        roots.push(mw2.clone());
+    }
+    for target in shortcut_targets(root) {
+        if !(saved_mw2.is_some() && holds_mw2(&target)) && !roots.contains(&target) {
+            roots.push(target);
+        }
+    }
+    roots
+}
+
+/// The MW2 folder found without the game folders window: `root` itself, a game shortcut's
+/// target in it, or the first MW2 install under them.
+pub fn auto_mw2_folder(root: &Path) -> Option<PathBuf> {
+    let roots = std::iter::once(root.to_path_buf())
+        .chain(shortcut_targets(root))
+        .collect::<Vec<_>>();
+    if let Some(dir) = roots.iter().find(|dir| holds_mw2(dir)) {
+        return Some(dir.clone());
+    }
+    files_under(roots)
+        .flatten()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case("common_mp.ff"))
+                && zone_game_for_path(path) == Some(crate::ZoneGame::Iw4)
+        })
+        .and_then(|path| game_root_for_zone(&path).ok())
+}
+
+/// The targets of the game shortcuts (`.lnk`) in `root`, MW2's alone unless [`only_mw2`] is off.
+fn shortcut_targets(root: &Path) -> Vec<PathBuf> {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut targets = Vec::new();
     #[cfg(windows)]
     {
         let Ok(entries) = std::fs::read_dir(root) else {
-            return roots;
+            return targets;
         };
         let mut links = entries
             .flatten()
@@ -136,8 +173,7 @@ pub fn search_roots(root: &Path) -> Vec<PathBuf> {
         for link_path in links {
             match shortcut_target_root(&link_path) {
                 Ok(target) if only_mw2() && !holds_mw2(&target) => {}
-                Ok(target) if !roots.contains(&target) => roots.push(target),
-                Ok(_) => {}
+                Ok(target) => targets.push(target),
                 Err(error) => diag::warn!(
                     Zone,
                     "game shortcut {} ignored: {error}",
@@ -146,7 +182,9 @@ pub fn search_roots(root: &Path) -> Vec<PathBuf> {
             }
         }
     }
-    roots
+    #[cfg(not(windows))]
+    let _ = root;
+    targets
 }
 
 #[cfg(windows)]
@@ -748,10 +786,14 @@ fn map_pack_folder(zone_ff: &Path) -> String {
         .unwrap_or_else(|| "BASE".to_owned())
 }
 
-pub fn ensure_artifacts_dir() -> Result<PathBuf, String> {
-    let dir = std::env::var_os("IW4L_ARTIFACTS_DIR")
+pub(crate) fn artifacts_dir() -> PathBuf {
+    std::env::var_os("IW4L_ARTIFACTS_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("iw4l-artifacts"));
+        .unwrap_or_else(|| PathBuf::from("iw4l-artifacts"))
+}
+
+pub fn ensure_artifacts_dir() -> Result<PathBuf, String> {
+    let dir = artifacts_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     Ok(dir)
 }

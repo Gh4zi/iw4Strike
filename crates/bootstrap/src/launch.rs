@@ -147,7 +147,15 @@ pub fn launch(
                     render::diag::acceptance::ACCEPTANCE_MAPS.join(", ")
                 ));
             }
+            if let Some(opened) = crate::game_folders::wanted(&games) {
+                diag::info!(Launch, "game folders window: {opened:?}");
+                crate::game_folders::run(&games, &artifacts, opened, cheats);
+                return;
+            }
             run_menu(games, artifacts, cheats, &steam);
+        }
+        LaunchMode::Paths => {
+            crate::game_folders::run(&games, &artifacts, crate::game_folders::Opened::Asked, cheats)
         }
         LaunchMode::Map(zone) => run_map(
             games,

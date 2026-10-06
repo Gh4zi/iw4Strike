@@ -1,5 +1,5 @@
-# Builds the Windows game (iw4l.exe) with MSVC and packages it with its README, .env,
-# LICENSE and NOTICE.
+# Builds the Windows game (iw4l.exe) with MSVC and packages it with its README, LICENSE and
+# NOTICE. Players pick their game folders in the game's own window, so no .env is shipped.
 #
 # - Publish a release on GitHub: the zip is built and attached to that release.
 # - Push code to main: the zip is built and kept under the run's Artifacts for 14 days.
@@ -52,6 +52,9 @@ jobs:
           shared-key: windows-play
 
       - name: Build iw4l.exe
+        env:
+          # Shown in the game folders window; empty for a plain push build.
+          IW4STRIKE_VERSION: ${{ env.RELEASE_TAG }}
         run: cargo build --profile play --locked -p launcher
 
       - name: Package
@@ -65,7 +68,6 @@ jobs:
           Copy-Item target/play/iw4l.exe $dir/
           Copy-Item LICENSE, NOTICE $dir/
           Copy-Item packaging/windows/README.txt $dir/
-          Copy-Item packaging/windows/env $dir/.env
           Add-Content $dir/README.txt "`r`nBuilt from commit $sha ($label)."
           Compress-Archive -Path $dir -DestinationPath "out/$name.zip"
           "PACKAGE=$name" >> $env:GITHUB_ENV

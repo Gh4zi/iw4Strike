@@ -1,5 +1,6 @@
 pub mod artifact_cache;
 pub mod discover;
+pub mod game_paths;
 pub mod iwd;
 pub mod load_jobs;
 pub mod namespace_trees;
@@ -29,9 +30,10 @@ pub use progress::{
     StageOutcome, StageScope, StageSnapshot, WorkCount, peak_resident_bytes,
     process_resident_bytes,
 };
+pub use game_paths::{GameFolder, pick_folder, settings_file};
 pub use steam::{
-    CSS_ENV, CSTRIKE_ENV, MW2_SHORTCUT, SteamCandidate, SteamProbe, find_css_pak, find_cstrike,
-    link_steam_games,
+    CSS_ENV, CSTRIKE_ENV, MW2_SHORTCUT, SteamCandidate, SteamProbe, css_env_override,
+    cstrike_env_override, find_css_pak, find_cstrike, link_steam_games, steam_css_pak,
 };
 pub use zone::{
     Iw4WireFormat, Iw5ZoneMemory, T5ZoneMemory, ZoneImage, ZoneMemory, ZoneOpenError, open_zone,

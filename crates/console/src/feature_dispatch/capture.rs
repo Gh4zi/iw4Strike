@@ -104,6 +104,23 @@ pub(crate) fn route_capture_commands(
                 exit.write(AppExit::Success);
             }
 
+            "game_paths" => {
+                let reopened = std::env::current_exe().and_then(|exe| {
+                    std::process::Command::new(exe).arg("paths").spawn()
+                });
+                match reopened {
+                    Ok(_) => {
+                        diag::lifecycle_boundary("quit_requested", " via=game_paths");
+                        exit.write(AppExit::Success);
+                    }
+                    Err(error) => echo(
+                        format!("game_paths: cannot reopen the launcher: {error}"),
+                        console,
+                        line,
+                    ),
+                }
+            }
+
             "finish_run" => {
                 diag::lifecycle_boundary("quit_requested", " via=finish_run");
                 let owed_shots = capture

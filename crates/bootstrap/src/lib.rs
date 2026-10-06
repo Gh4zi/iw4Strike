@@ -1,6 +1,7 @@
 pub mod args;
 pub mod bench;
 mod frame_owner;
+mod game_folders;
 mod launch;
 mod plugins;
 #[cfg(feature = "bevy-profile")]

@@ -1,11 +1,10 @@
 #[cfg(windows)]
 use std::collections::HashSet;
-#[cfg(windows)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::ZoneGame;
 use crate::discover::{GamesRoot, env_or_dotenv};
+use crate::game_paths::{CSS_PAK, GameFolder, saved};
 #[cfg(windows)]
 use crate::discover::{search_roots, zone_game_for_path};
 
@@ -105,17 +104,32 @@ pub fn link_steam_games(_root: &GamesRoot) -> SteamProbe {
 pub const CSS_ENV: &str = "IW4L_CSS";
 
 /// Counter-Strike: Source's main pack (`cstrike/cstrike_pak_dir.vpk`): `IW4L_CSS` (its `cstrike`
-/// folder, from the environment or `.env`) when set, else
-/// `steamapps/common/Counter-Strike Source/cstrike` in any Steam library.
+/// folder, from the environment or `.env`) when set, else the folder saved in the game folders
+/// window, else `steamapps/common/Counter-Strike Source/cstrike` in any Steam library.
 #[must_use]
 pub fn find_css_pak() -> Option<PathBuf> {
-    let pak = |dir: PathBuf| {
-        let file = dir.join("cstrike_pak_dir.vpk");
-        file.is_file().then_some(file)
-    };
-    if let Some(dir) = env_or_dotenv(CSS_ENV).filter(|dir| !dir.trim().is_empty()) {
-        return pak(PathBuf::from(dir));
+    if let Some(dir) = css_env_override() {
+        return css_pak_in(Path::new(&dir));
     }
+    saved(GameFolder::Css)
+        .and_then(|dir| css_pak_in(&dir))
+        .or_else(steam_css_pak)
+}
+
+/// `IW4L_CSS` from the environment or `.env`, when set.
+#[must_use]
+pub fn css_env_override() -> Option<String> {
+    env_or_dotenv(CSS_ENV).filter(|dir| !dir.trim().is_empty())
+}
+
+fn css_pak_in(dir: &Path) -> Option<PathBuf> {
+    let file = dir.join(CSS_PAK);
+    file.is_file().then_some(file)
+}
+
+/// Counter-Strike: Source's pack in a Steam library.
+#[must_use]
+pub fn steam_css_pak() -> Option<PathBuf> {
     #[cfg(windows)]
     for library in steam_libraries() {
         let dir = library
@@ -123,7 +137,7 @@ pub fn find_css_pak() -> Option<PathBuf> {
             .join("common")
             .join("Counter-Strike Source")
             .join("cstrike");
-        if let Some(found) = pak(dir) {
+        if let Some(found) = css_pak_in(&dir) {
             return Some(found);
         }
     }
@@ -133,17 +147,26 @@ pub fn find_css_pak() -> Option<PathBuf> {
 /// Environment override naming a Counter-Strike 1.6 `cstrike` folder.
 pub const CSTRIKE_ENV: &str = "IW4L_CSTRIKE";
 
+/// `IW4L_CSTRIKE` from the environment or `.env`, when set.
+#[must_use]
+pub fn cstrike_env_override() -> Option<String> {
+    env_or_dotenv(CSTRIKE_ENV).filter(|dir| !dir.trim().is_empty())
+}
+
 /// The Counter-Strike 1.6 `cstrike` folder whose models and sounds IW4L reads at runtime, the
 /// stand-in for a missing Counter-Strike: Source. It is never searched for: the player selects
-/// it with `IW4L_CSTRIKE` (environment or `.env`), and it is ignored whenever CS:S is found.
-/// Nothing is copied.
+/// it in the game folders window (or with `IW4L_CSTRIKE`, environment or `.env`, which wins),
+/// and it is ignored whenever CS:S is found. Nothing is copied.
 #[must_use]
 pub fn find_cstrike() -> Option<PathBuf> {
     if find_css_pak().is_some() {
         return None;
     }
-    let dir = PathBuf::from(env_or_dotenv(CSTRIKE_ENV).filter(|dir| !dir.trim().is_empty())?);
-    dir.join("models").is_dir().then_some(dir)
+    if let Some(dir) = cstrike_env_override() {
+        let dir = PathBuf::from(dir);
+        return dir.join("models").is_dir().then_some(dir);
+    }
+    saved(GameFolder::Cs16)
 }
 
 #[cfg(windows)]

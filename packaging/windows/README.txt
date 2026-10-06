@@ -11,13 +11,12 @@ HOW TO PLAY
   2. Run iw4l.exe.
      If Windows SmartScreen warns you, click "More info" then "Run anyway"
      (the program is not signed).
-  3. MW2 and Counter-Strike: Source are found through Steam automatically.
-     - MW2 not found: right-click in this folder, New > Shortcut, paste your
-       MW2 folder path, and name it "Modern Warfare 2".
-     - CS:Source not found: open .env in Notepad and follow the note there.
-     - No CS:Source at all: select your Counter-Strike 1.6 "cstrike" folder
-       (the one with a "models" folder inside) with IW4L_CSTRIKE in .env.
-       It is only used when CS:Source is missing.
+  3. The first time, a "game folders" window shows what was found. MW2 and
+     Counter-Strike: Source are found through Steam automatically.
+     - Not found: press Browse... and select the game's folder.
+     - No CS:Source at all: select your Half-Life folder (Counter-Strike 1.6)
+       instead. It is only used when CS:Source is missing.
+     Then press Play. Open the window again from Options > Game Folders.
 
 IN GAME
   - Press the key under Esc (`) to open the console.

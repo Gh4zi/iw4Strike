@@ -1,8 +1,0 @@
-# Only needed if Counter-Strike: Source is not found automatically through Steam.
-# Remove the # and point it at the cstrike folder inside Counter-Strike Source.
-# IW4L_CSS="D:/SteamLibrary/steamapps/common/Counter-Strike Source/cstrike"
-
-# Only if you do not have Counter-Strike: Source: select your Counter-Strike 1.6 cstrike
-# folder (the one with a models folder inside). It is ignored when Counter-Strike: Source
-# is found.
-# IW4L_CSTRIKE="C:/Program Files (x86)/Steam/steamapps/common/Half-Life/cstrike"

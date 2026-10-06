@@ -10,6 +10,8 @@ pub struct AcceptanceLaunch {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LaunchMode {
     Menu,
+    /// The game folders window (MW2, CS:S, CS 1.6), then the menu.
+    Paths,
     Map(String),
     Serve(String),
     ExportGltf(String),
@@ -77,7 +79,7 @@ fn parse_acceptance_flag(
     Ok((out, acceptance))
 }
 
-const USAGE: &str = "usage: iw4l [--no-cheats] [--cmds '<script>'] map <zone> | serve <zone> | menu | play <demo>\n       iw4l export-gltf <zone>\n       iw4l --help";
+const USAGE: &str = "usage: iw4l [--no-cheats] [--cmds '<script>'] map <zone> | serve <zone> | menu | paths | play <demo>\n       iw4l export-gltf <zone>\n       iw4l --help";
 
 pub fn parse_launch_args(mut args: impl Iterator<Item = String>) -> Result<LaunchMode, String> {
     match args.next().as_deref() {
@@ -109,9 +111,15 @@ pub fn parse_launch_args(mut args: impl Iterator<Item = String>) -> Result<Launc
             }
             Ok(LaunchMode::Menu)
         }
+        Some("paths") => {
+            if args.next().is_some() {
+                return Err("usage: iw4l paths".into());
+            }
+            Ok(LaunchMode::Paths)
+        }
         Some("play") => parse_play_args(args),
         Some(other) => Err(format!(
-            "unknown launch args starting with `{other}` — expected: map <zone> | serve <zone> | menu | play <demo> [--cmds '<script>'] | export-gltf <zone>"
+            "unknown launch args starting with `{other}` — expected: map <zone> | serve <zone> | menu | paths | play <demo> [--cmds '<script>'] | export-gltf <zone>"
         )),
         None => Err(USAGE.into()),
     }
