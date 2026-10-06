@@ -105,11 +105,28 @@ struct SequenceInfo {
     sounds: Vec<(f32, String)>,
 }
 
+/// The M4A1's and USP's silenced animations, and the two that screw the silencer on and off.
+/// (`Roles`' own idle/draw/reload/shoot are the plain gun.)
+struct Silenced {
+    idle: Option<usize>,
+    draw: Option<usize>,
+    reload: Option<usize>,
+    shoot: Vec<usize>,
+    attach: Option<usize>,
+    detach: Option<usize>,
+}
+
 struct Roles {
     idle: Option<usize>,
     draw: Option<usize>,
     reload: Option<usize>,
     shoot: Vec<usize>,
+    silenced: Option<Silenced>,
+    /// The shots of the other hand or mode (`ACT_VM_SECONDARYATTACK`: the Glock's burst, the Elites' right gun).
+    shoot_alt: Vec<usize>,
+    /// A shotgun's start and finish of a shell-by-shell reload (`reload` is one shell going in).
+    shell_start: Option<usize>,
+    shell_finish: Option<usize>,
     /// The knife's two alternating slashes, its stab and the stab that met nothing.
     slashes: Vec<usize>,
     /// A grenade's pin pull and throw.
@@ -117,6 +134,19 @@ struct Roles {
     throw: Option<usize>,
     stab: Option<usize>,
     stab_miss: Option<usize>,
+}
+
+/// A gun's idle, draw, reload and shoot animations.
+type GunSet<'a> = (Option<usize>, Option<usize>, Option<usize>, &'a [usize]);
+
+impl Roles {
+    /// The animations of the gun as it is now: with its silencer on (when it has one) or plain.
+    fn gun(&self, silenced: bool) -> GunSet<'_> {
+        match &self.silenced {
+            Some(s) if silenced => (s.idle, s.draw, s.reload, &s.shoot),
+            _ => (self.idle, self.draw, self.reload, &self.shoot),
+        }
+    }
 }
 
 /// The knife's sequences go by the same labels in CS:S and CS 1.6.
@@ -144,43 +174,71 @@ struct ViewWeapon {
     grenade: bool,
     /// The CS:S model is modelled right-handed already (not mirrored).
     css_right_handed: bool,
+    /// `PlayerState::cs_silencers` bit of a gun with a silencer; 0 for every other weapon.
+    silencer_bit: u32,
+    /// Seconds the silencer takes to go on or off; the attach/detach animation is stretched to it.
+    silencer_adjust: f32,
+    /// `PlayerState::cs_burst_modes` bit of this gun (burst mode, or the Elites' next hand).
+    mode_bit: u32,
+    /// The gun has a burst mode (Glock-18, FAMAS).
+    burst: bool,
+    /// Two guns firing in turn (Dual Elites).
+    dual: bool,
+    /// Zooming hides the gun and draws the sniper scope (the AUG and SG 552 only narrow the view).
+    scope_overlay: bool,
+    /// Shell-by-shell reload: (start, per shell, finish) seconds (shotguns).
+    shell_reload: Option<(f32, f32, f32)>,
 }
 
 impl ViewWeapon {
-    fn gun(weapon: &'static CsWeapon) -> Self {
+    fn plain(name: &'static str, view_model: &'static str, css_view_model: &'static str) -> Self {
         Self {
-            name: weapon.name,
-            view_model: weapon.view_model,
-            css_view_model: weapon.css_view_model,
-            reload: weapon.reload,
+            name,
+            view_model,
+            css_view_model,
+            reload: 0.0,
             knife: false,
             grenade: false,
             css_right_handed: false,
+            silencer_bit: 0,
+            silencer_adjust: 0.0,
+            mode_bit: 0,
+            burst: false,
+            dual: false,
+            scope_overlay: false,
+            shell_reload: None,
+        }
+    }
+
+    fn gun(weapon: &'static CsWeapon, index: u8) -> Self {
+        let bit = weapon_iw4::cs::silencer_bit(index);
+        let silencer = weapon.silencer.as_ref();
+        Self {
+            reload: weapon.reload,
+            silencer_bit: silencer.map_or(0, |_| bit),
+            silencer_adjust: silencer.map_or(0.0, |s| s.adjust),
+            mode_bit: bit,
+            burst: weapon.burst.is_some(),
+            dual: weapon.dual,
+            scope_overlay: weapon.scope_overlay,
+            shell_reload: weapon.shell_reload,
+            ..Self::plain(weapon.name, weapon.view_model, weapon.css_view_model)
         }
     }
 
     fn grenade(grenade: &'static weapon_iw4::cs::CsGrenade) -> Self {
         Self {
-            name: grenade.name,
-            view_model: grenade.view_model,
-            css_view_model: grenade.css_view_model,
-            reload: 0.0,
-            knife: false,
             grenade: true,
-            css_right_handed: false,
+            ..Self::plain(grenade.name, grenade.view_model, grenade.css_view_model)
         }
     }
 
     fn knife() -> Self {
         let knife = &weapon_iw4::cs::CS_KNIFE;
         Self {
-            name: knife.name,
-            view_model: knife.view_model,
-            css_view_model: knife.css_view_model,
-            reload: 0.0,
             knife: true,
-            grenade: false,
             css_right_handed: true,
+            ..Self::plain(knife.name, knife.view_model, knife.css_view_model)
         }
     }
 }
@@ -206,10 +264,14 @@ struct Playing {
     events_through: Option<f32>,
     last_fire_ms: i32,
     reloading: bool,
+    /// Whether the gun's silencer was on last frame.
+    silenced: bool,
     /// `PlayerState::cs_grenade` last frame.
     grenade_state: u32,
     /// When the last shot's muzzle flash started, and its random spin.
     flash: Option<(f64, u32)>,
+    /// When the next shell of a shotgun reload goes in.
+    shell_next: f64,
 }
 
 #[derive(Resource, Default)]
@@ -341,15 +403,40 @@ fn goldsrc_model(
     let (slashes, stab, stab_miss) = knife_roles(&labels);
     let label = |name: &str| labels.iter().position(|l| l.eq_ignore_ascii_case(name));
     let (pullpin, throw) = (label("pullpin"), label("throw"));
+    // With the `_unsil` set as the plain gun, the unmarked labels are the silenced one.
+    let silenced = unsilenced.then(|| Silenced {
+        idle: label("idle"),
+        draw: label("draw"),
+        reload: label("reload"),
+        shoot: studio
+            .sequences
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                let label = s.label.to_ascii_lowercase();
+                label.starts_with("shoot")
+                    && !label.contains("empty")
+                    && !label.contains("last")
+                    && !label.ends_with("_unsil")
+            })
+            .map(|(i, _)| i)
+            .collect(),
+        attach: label("add_silencer"),
+        detach: label("detach_silencer"),
+    });
     let roles = Roles {
         slashes,
         stab,
         stab_miss,
         pullpin,
         throw,
+        silenced,
         idle: pick("idle"),
         draw: pick("draw").or_else(|| pick("deploy")),
-        reload: pick("reload"),
+        reload: pick("reload").or_else(|| label("insert")),
+        shoot_alt: Vec::new(),
+        shell_start: label("start_reload"),
+        shell_finish: label("after_reload"),
         shoot: studio
             .sequences
             .iter()
@@ -461,15 +548,33 @@ fn source_model(
     let (slashes, stab, stab_miss) = knife_roles(&labels);
     let label = |name: &str| labels.iter().position(|l| l.eq_ignore_ascii_case(name));
     let (pullpin, throw) = (label("pullpin"), label("throw"));
+    // The silenced set has its own activities; only the M4A1 and USP carry it.
+    let attach = studio.sequence_for_activity("ACT_VM_ATTACH_SILENCER");
+    let silenced = attach.map(|attach| Silenced {
+        idle: studio.sequence_for_activity("ACT_VM_IDLE_SILENCED"),
+        draw: studio.sequence_for_activity("ACT_VM_DRAW_SILENCED"),
+        reload: studio.sequence_for_activity("ACT_VM_RELOAD_SILENCED"),
+        shoot: studio
+            .sequences_for_activity("ACT_VM_PRIMARYATTACK_SILENCED")
+            .collect(),
+        attach: Some(attach),
+        detach: studio.sequence_for_activity("ACT_VM_DETACH_SILENCER"),
+    });
     let roles = Roles {
         slashes,
         stab,
         stab_miss,
         pullpin,
         throw,
+        silenced,
         idle: studio.sequence_for_activity("ACT_VM_IDLE"),
         draw: studio.sequence_for_activity("ACT_VM_DRAW"),
         reload: studio.sequence_for_activity("ACT_VM_RELOAD"),
+        shoot_alt: studio
+            .sequences_for_activity("ACT_VM_SECONDARYATTACK")
+            .collect(),
+        shell_start: studio.sequence_for_activity("ACT_SHOTGUN_RELOAD_START"),
+        shell_finish: studio.sequence_for_activity("ACT_SHOTGUN_RELOAD_FINISH"),
         shoot: studio
             .sequences_for_activity("ACT_VM_PRIMARYATTACK")
             .collect(),
@@ -560,7 +665,8 @@ impl CsViewmodels {
                     goldsrc_model(&path, images).map_err(|e| format!("{}: {e}", path.display()))
                 }
                 None => Err(format!(
-                    "no Counter-Strike: Source ({}) or 1.6 ({}) install found",
+                    "no Counter-Strike: Source install found ({}) and no Counter-Strike 1.6 \
+                     folder selected: set {} in .env to its `cstrike` folder",
                     asset_transport::CSS_ENV,
                     asset_transport::CSTRIKE_ENV
                 )),
@@ -588,6 +694,11 @@ impl CsViewmodels {
     }
 }
 
+/// Whether the CS gun `ps` holds draws the sniper scope (and hides itself) when zoomed.
+pub(super) fn held_gun_scope_overlay(ps: &PlayerState, weapons: &PreparedWeapons) -> bool {
+    held_cs_weapon(ps, weapons).is_some_and(|(_, weapon)| weapon.scope_overlay)
+}
+
 /// The CS gun or knife `ps` holds, if its viewmodel weapon is one.
 fn held_cs_weapon(ps: &PlayerState, weapons: &PreparedWeapons) -> Option<(u32, ViewWeapon)> {
     let viewmodel = weapon_iw4::get_viewmodel_weapon_index(ps);
@@ -603,7 +714,7 @@ fn held_cs_weapon(ps: &PlayerState, weapons: &PreparedWeapons) -> Option<(u32, V
     }
     Some((
         viewmodel,
-        ViewWeapon::gun(weapon_iw4::cs::cs_weapon(index)?),
+        ViewWeapon::gun(weapon_iw4::cs::cs_weapon(index)?, index),
     ))
 }
 
@@ -822,7 +933,7 @@ pub fn update_cs_viewmodel(
     if ps.pm_type >= playerstate_iw4::PM_TYPE_DEAD
         || presented_is_third_person(&presented, local.0, view.in_killcam(), settings.third_person)
         // CS hides the viewmodel while scoped.
-        || ps.cs_zoom != 0
+        || (ps.cs_zoom != 0 && weapon.scope_overlay)
     {
         return;
     }
@@ -831,6 +942,9 @@ pub fn update_cs_viewmodel(
     let reloading = weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
         .is_ok_and(weapon_iw4::WeaponState::is_reload_family);
     let roles = &model.roles;
+    // A gun with a silencer plays its silenced or plain set by the replicated bit.
+    let silenced = weapon.silencer_bit != 0 && ps.cs_silencers & weapon.silencer_bit != 0;
+    let (idle, draw, gun_reload, shoot) = roles.gun(silenced);
     let start = |playing: &mut Playing, sequence: Option<usize>, rate: f32| {
         playing.sequence = sequence;
         playing.started = now;
@@ -845,7 +959,7 @@ pub fn update_cs_viewmodel(
                     (from, PULLED) if from != PULLED => Some(roles.pullpin),
                     (from, THROWN) if from != THROWN => Some(roles.throw),
                     // The next grenade comes up.
-                    (THROWN, IDLE) => Some(roles.draw),
+                    (THROWN, IDLE) => Some(draw),
                     _ => None,
                 };
                 if let Some(sequence) = sequence {
@@ -856,6 +970,20 @@ pub fn update_cs_viewmodel(
                     play_local(&mut sounds, FIRE_IN_THE_HOLE);
                 }
                 playing.grenade_state = ps.cs_grenade;
+            } else if silenced != playing.silenced
+                && let Some(silencer) = &roles.silenced
+            {
+                // The silencer goes on or off: its animation takes as long as the sim's lockout.
+                let sequence = if silenced {
+                    silencer.attach
+                } else {
+                    silencer.detach
+                };
+                let rate = sequence
+                    .map(|i| model.sequences[i].duration)
+                    .filter(|duration| *duration > 0.0 && weapon.silencer_adjust > 0.0)
+                    .map_or(1.0, |duration| duration / weapon.silencer_adjust);
+                start(playing, sequence.or(idle), rate);
             } else if ps.cs_last_fire_ms != playing.last_fire_ms
                 && ps.cs_last_fire_ms != 0
                 && weapon.knife
@@ -872,14 +1000,57 @@ pub fn update_cs_viewmodel(
                 }
                 play_local(&mut sounds, knife_attack_sound(model.format, ps.cs_knife));
             } else if ps.cs_last_fire_ms != playing.last_fire_ms && ps.cs_last_fire_ms != 0 {
-                playing.flash = Some((now, ps.cs_last_fire_ms.unsigned_abs()));
-                if !roles.shoot.is_empty() {
-                    let pick = (ps.cs_last_fire_ms.unsigned_abs() / 7) as usize % roles.shoot.len();
-                    start(playing, Some(roles.shoot[pick]), 1.0);
+                // A silenced shot has no muzzle flash.
+                if !silenced {
+                    playing.flash = Some((now, ps.cs_last_fire_ms.unsigned_abs()));
+                }
+                // The Glock in burst mode and the Elites' right gun shoot with the other set.
+                let alt = (weapon.burst || weapon.dual)
+                    && weapon.mode_bit != 0
+                    && ps.cs_burst_modes & weapon.mode_bit != 0
+                    && !roles.shoot_alt.is_empty();
+                let set = if alt { roles.shoot_alt.as_slice() } else { shoot };
+                if !set.is_empty() {
+                    let pick = (ps.cs_last_fire_ms.unsigned_abs() / 7) as usize % set.len();
+                    start(playing, Some(set[pick]), 1.0);
                 }
             } else if reloading
                 && !playing.reloading
-                && let Some(reload) = roles.reload
+                && let Some((start_time, _, _)) = weapon.shell_reload
+                && let Some(begin) = roles.shell_start
+            {
+                // A shotgun's reload starts by opening, then takes a shell at a time.
+                let duration = model.sequences[begin].duration;
+                let rate = if start_time > 0.0 && duration > 0.0 {
+                    duration / start_time
+                } else {
+                    1.0
+                };
+                start(playing, Some(begin), rate);
+                playing.shell_next = now + f64::from(start_time);
+            } else if reloading
+                && playing.reloading
+                && let Some((_, per_shell, _)) = weapon.shell_reload
+                && now >= playing.shell_next
+                && let Some(insert) = gun_reload
+            {
+                let duration = model.sequences[insert].duration;
+                let rate = if per_shell > 0.0 && duration > 0.0 {
+                    duration / per_shell
+                } else {
+                    1.0
+                };
+                start(playing, Some(insert), rate);
+                playing.shell_next += f64::from(per_shell);
+            } else if !reloading
+                && playing.reloading
+                && weapon.shell_reload.is_some()
+                && let Some(finish) = roles.shell_finish
+            {
+                start(playing, Some(finish), 1.0);
+            } else if reloading
+                && !playing.reloading
+                && let Some(reload) = gun_reload
             {
                 // The reload animation ends when the gun is ready again.
                 let duration = model.sequences[reload].duration;
@@ -892,6 +1063,7 @@ pub fn update_cs_viewmodel(
             }
             playing.last_fire_ms = ps.cs_last_fire_ms;
             playing.reloading = reloading;
+            playing.silenced = silenced;
             playing
         }
         _ => state.playing.insert({
@@ -900,14 +1072,16 @@ pub fn update_cs_viewmodel(
             }
             Playing {
                 weapon: weapon_index,
-                sequence: roles.draw.or(roles.idle),
+                sequence: draw.or(idle),
                 started: now,
                 rate: 1.0,
                 events_through: None,
                 last_fire_ms: ps.cs_last_fire_ms,
                 reloading,
+                silenced,
                 grenade_state: ps.cs_grenade,
                 flash: None,
+                shell_next: 0.0,
             }
         }),
     };
@@ -919,18 +1093,18 @@ pub fn update_cs_viewmodel(
     // hand until the next step.
     let holding = weapon.grenade && ps.cs_grenade != playerstate_iw4::cs_grenade::IDLE;
     if let Some(sequence) = playing.sequence
-        && Some(sequence) != roles.idle
+        && Some(sequence) != idle
         && !holding
         && (now - playing.started) as f32 * playing.rate > model.sequences[sequence].duration
     {
-        start(playing, roles.idle, 1.0);
+        start(playing, idle, 1.0);
     }
     let Some(sequence) = playing.sequence else {
         return;
     };
     let info = &model.sequences[sequence];
     let mut seconds = (now - playing.started) as f32 * playing.rate;
-    if Some(sequence) == roles.idle && info.duration > 0.0 {
+    if Some(sequence) == idle && info.duration > 0.0 {
         seconds %= info.duration;
     } else if holding {
         seconds = seconds.min(info.duration);

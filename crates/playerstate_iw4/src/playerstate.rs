@@ -172,6 +172,15 @@ pub struct PlayerState {
     /// until when (server ms) a silencer is being attached or detached (no firing).
     pub cs_silencers: u32,
     pub cs_adjust_ms: i32,
+    /// CS guns in burst mode (Glock-18, FAMAS), one bit per CS weapon index; shots of a burst
+    /// still to come and when the next is due (server ms); and when the gun may next start a
+    /// shot or burst (`cs_fire_gate_ms`), for guns whose cycle the CS layer times itself.
+    pub cs_burst_modes: u32,
+    pub cs_burst_left: u32,
+    pub cs_burst_next_ms: i32,
+    pub cs_fire_gate_ms: i32,
+    /// The burst bullet the gate let through this command: 1 first, 2 a later one, 0 none.
+    pub cs_burst_shot: u32,
 }
 
 pub mod cs_grenade {
@@ -440,6 +449,11 @@ impl PlayerState {
         cs_flash_alpha: 0,
         cs_silencers: 0,
         cs_adjust_ms: 0,
+        cs_burst_modes: 0,
+        cs_burst_left: 0,
+        cs_burst_next_ms: 0,
+        cs_fire_gate_ms: 0,
+        cs_burst_shot: 0,
     };
 
     pub fn anim(&self) -> AnimPair {

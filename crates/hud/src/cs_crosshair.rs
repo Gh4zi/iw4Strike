@@ -78,6 +78,8 @@ pub(crate) fn cs_crosshair_for(
     let weapon = weapon_iw4::cs::cs_weapon(index)?;
     Some(match weapon.spread {
         CsSpread::Sniper { .. } => None,
+        // The auto snipers show theirs until the scope comes up.
+        CsSpread::AutoSniper { .. } if ps.cs_zoom != 0 => None,
         _ => Some(weapon.crosshair),
     })
 }

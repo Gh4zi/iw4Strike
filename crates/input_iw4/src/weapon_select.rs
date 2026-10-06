@@ -7,7 +7,20 @@ pub fn weapon_cycle_allowed(
     select_time_override: i32,
     cycle_delay: i32,
 ) -> bool {
-    ps.pm_flags & 0xc08 == 0
+    weapon_cycle_allowed_masked(ps, time, select_time, select_time_override, cycle_delay, 0xc08)
+}
+
+/// [`weapon_cycle_allowed`] with the `pm_flags` that block a change given (IW4: `0xc08`, which
+/// includes the ladder; Counter-Strike passes `0xc00` so weapons swap while climbing).
+pub fn weapon_cycle_allowed_masked(
+    ps: &PlayerState,
+    time: i32,
+    select_time: i32,
+    select_time_override: i32,
+    cycle_delay: i32,
+    pm_block: u32,
+) -> bool {
+    ps.pm_flags & pm_block == 0
         && ps.weap_flags & 0x880 == 0
         && ps.other_flags & 2 == 0
         && ps.other_flags & 0x1000 != 0

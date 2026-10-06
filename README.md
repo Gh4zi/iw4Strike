@@ -33,9 +33,12 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 - No sprint, no prone
 
 **Weapons**
-- AK-47, M4A1, AWP, Desert Eagle, USP and Glock-18 with Counter-Strike: Source models and
-  sounds, and CS 1.6 damage, spread and recoil (one-tap AK headshots)
-- AWP scope: instant two-level zoom with the CS scope overlay
+- 24 guns with Counter-Strike: Source models and sounds, and CS 1.6 damage, spread and recoil
+  (one-tap AK headshots): pistols, shotguns, SMGs, rifles, snipers and the M249
+- M4A1 and USP silencers (right click), Glock-18 and FAMAS burst fire (right click)
+- Scopes: instant zoom with the CS scope overlay on the AWP, Scout, G3/SG-1 and SG 550; the
+  AUG and SG 552 zoom to 55 and keep the gun in view
+- Shotguns load one shell at a time
 - Knife: slash 15, stab 65, backstab 195
 - HE grenade, flashbang and smoke grenade with CS throw physics
   - Flashbangs follow CS rules: if you look away, you don't get flashed
@@ -62,7 +65,7 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 | **Visual Studio Build Tools** | Pick the *Desktop development with C++* workload |
 
 If Counter-Strike: Source isn't installed, the models and sounds fall back to a
-Counter-Strike 1.6 install. The CS:S HUD needs CS:S.
+Counter-Strike 1.6 install, which you select yourself (see below). The CS:S HUD needs CS:S.
 
 ---
 
@@ -110,12 +113,22 @@ If it isn't found (for example, it's installed outside Steam), add its `cstrike`
 `.env`:
 
 ```ini
-IW4L_CSS="D:\SteamLibrary\steamapps\common\Counter-Strike Source\cstrike"
+IW4L_CSS="D:/SteamLibrary/steamapps/common/Counter-Strike Source/cstrike"
 ```
 
 Point `IW4L_CSS` at the **`cstrike` folder inside** `Counter-Strike Source`, not at
 `Counter-Strike Source` itself. iw4Strike only reads from this folder and never changes or
 copies its files.
+
+**No Counter-Strike: Source?** Select your Counter-Strike 1.6 `cstrike` folder (the one with a
+`models` folder inside, usually `<Steam library>\steamapps\common\Half-Life\cstrike`) in
+`.env`:
+
+```ini
+IW4L_CSTRIKE="C:/Program Files (x86)/Steam/steamapps/common/Half-Life/cstrike"
+```
+
+It is never searched for, and it is ignored whenever Counter-Strike: Source is found.
 
 ### 4. Build and play
 
@@ -181,7 +194,25 @@ once money is added.
 | Sniper | `awp` | AWP | $4750 |
 | Pistol | `deagle` | Desert Eagle | $650 |
 | Pistol | `usp` | USP | $500 |
-| Pistol | `glock` | Glock-18 | $400 |
+| Pistol | `glock` | Glock-18 (right click: burst) | $400 |
+| Pistol | `p228` | P228 | $600 |
+| Pistol | `fiveseven` | Five-seveN | $750 |
+| Pistol | `elite` | Dual Elites | $800 |
+| Shotgun | `m3` | M3 | $1700 |
+| Shotgun | `xm1014` | XM1014 | $3000 |
+| SMG | `tmp` | TMP | $1250 |
+| SMG | `mac10` | MAC-10 | $1400 |
+| SMG | `mp5` | MP5 | $1500 |
+| SMG | `ump45` | UMP45 | $1700 |
+| SMG | `p90` | P90 | $2350 |
+| Rifle | `galil` | Galil | $2000 |
+| Rifle | `famas` | FAMAS (right click: burst) | $2250 |
+| Rifle | `sg552` | SG 552 (right click: scope) | $3500 |
+| Rifle | `aug` | AUG (right click: scope) | $3500 |
+| Sniper | `scout` | Scout | $2750 |
+| Sniper | `sg550` | SG 550 | $4200 |
+| Sniper | `g3sg1` | G3/SG-1 | $5000 |
+| Machine gun | `m249` | M249 | $5750 |
 | Grenade | `hegrenade` | HE grenade (carry 1) | $300 |
 | Grenade | `flashbang` | Flashbang (carry 2) | $200 |
 | Grenade | `smokegrenade` | Smoke grenade (carry 1) | $300 |
@@ -292,8 +323,9 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [x] Knife, HE, flashbang, smoke
 - [x] Kevlar and helmet, drop and pick up
 - [x] Counter-Strike: Source HUD
-- [ ] M4A1 and USP silencers, Glock and FAMAS burst fire
-- [ ] The rest of the CS weapons
+- [x] M4A1 and USP silencers, Glock and FAMAS burst fire
+- [x] The rest of the CS weapons (pistols, shotguns, SMGs, rifles, snipers, M249)
+- [ ] Other players holding the CS weapon models in third person
 - [ ] Rounds, money and buy menu
 - [ ] C4 bomb plant and defuse
 - [ ] Shooting through walls (CS penetration)

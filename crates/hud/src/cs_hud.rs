@@ -377,13 +377,21 @@ pub(crate) fn spawn_cs_hud(
 
 /// The ammo icon's cell in `640hud1` (`hud_textures.txt`, 640 set), by CS weapon.
 fn ammo_sprite(name: &str) -> Option<Rect> {
+    // By ammo type: 7.62 (AK-47, Scout, G3/SG-1), 5.56 (M4A1, Galil, FAMAS, SG 552, AUG, SG 550,
+    // M249), .338 (AWP), .50 AE, .45 ACP (USP, MAC-10, UMP45), 9mm (Glock, Elites, TMP, MP5),
+    // .357 SIG (P228), 5.7 (Five-seveN, P90), 12 gauge (M3, XM1014).
     let [x, y, w, h] = match name {
-        "ak47" => [232.0, 48.0, 24.0, 26.0],
-        "m4a1" => [157.0, 74.0, 25.0, 24.0],
+        "ak47" | "scout" | "g3sg1" => [232.0, 48.0, 24.0, 26.0],
+        "m4a1" | "galil" | "famas" | "sg552" | "aug" | "sg550" | "m249" => {
+            [157.0, 74.0, 25.0, 24.0]
+        }
         "awp" => [182.0, 74.0, 26.0, 24.0],
         "deagle" => [182.0, 48.0, 26.0, 26.0],
-        "usp" => [182.0, 0.0, 26.0, 24.0],
-        "glock" => [208.0, 48.0, 24.0, 26.0],
+        "usp" | "mac10" | "ump45" => [182.0, 0.0, 26.0, 24.0],
+        "glock" | "elite" | "tmp" | "mp5" => [208.0, 48.0, 24.0, 26.0],
+        "p228" => [208.0, 0.0, 24.0, 24.0],
+        "fiveseven" | "p90" => [208.0, 24.0, 24.0, 24.0],
+        "m3" | "xm1014" => [157.0, 48.0, 25.0, 26.0],
         _ => return None,
     };
     Some(Rect::new(x, y, x + w, y + h))
@@ -415,6 +423,24 @@ fn kill_icon(weapon: &str) -> (IconFont, char) {
         Some("deagle") => 'f',
         Some("usp") => 'a',
         Some("glock") => 'c',
+        Some("aug") => 'e',
+        Some("elite") => 's',
+        Some("famas") => 't',
+        Some("fiveseven") => 'u',
+        Some("g3sg1") => 'i',
+        Some("galil") => 'v',
+        Some("m249") => 'z',
+        Some("m3") => 'k',
+        Some("mac10") => 'l',
+        Some("mp5") => 'x',
+        Some("p228") => 'y',
+        Some("p90") => 'm',
+        Some("scout") => 'n',
+        Some("sg552") => 'A',
+        Some("sg550") => 'o',
+        Some("tmp") => 'd',
+        Some("ump45") => 'q',
+        Some("xm1014") => 'B',
         _ => 'C',
     };
     (IconFont::Death, glyph)

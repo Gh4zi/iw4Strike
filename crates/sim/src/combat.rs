@@ -54,6 +54,8 @@ pub struct AcceptedShot {
     pub cs_spread: Option<f32>,
     /// Fired with its silencer on (CS damage and range of the silenced gun).
     pub cs_silenced: bool,
+    /// 1 for the first bullet of a burst, 2 for a later one, else 0 (CS burst damage and range).
+    pub cs_burst: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,6 +72,7 @@ pub struct Emission {
     pub max_range: f32,
     pub base_damage: i32,
     pub cs_silenced: bool,
+    pub cs_burst: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,8 +223,9 @@ pub(crate) fn advance_weapon_command(
         let Some(facts) = world.combat_facts_for(facts_weapon) else {
             return accepted;
         };
+        let mut fire_gate = CsGate::Pass;
         if let Some(ps) = world.player_mut(*id) {
-            cs_weapon_frame(ps, &facts, facts_weapon, cmd);
+            fire_gate = cs_weapon_frame(ps, &facts, facts_weapon, cmd, old_buttons);
         }
 
         {
@@ -348,6 +352,14 @@ pub(crate) fn advance_weapon_command(
             0
         };
         let (fire_buttons, old_buttons) = (fire_buttons & !taken, old_buttons & !taken);
+        // A gun whose shots the CS layer times (burst, scope-dependent cycle) only sees the
+        // fire button when it is time, as a fresh press.
+        let attack = playerstate_iw4::buttons::ATTACK;
+        let (fire_buttons, old_buttons) = match fire_gate {
+            CsGate::Pass => (fire_buttons, old_buttons),
+            CsGate::Block => (fire_buttons & !attack, old_buttons),
+            CsGate::Press => (fire_buttons | attack, old_buttons & !attack),
+        };
         let selected_airdrop_marker =
             world.weapon_script_name(ps.weapon) == crate::equipment::AIRDROP_MARKER_WEAPON;
         let marker_offhand_class = i32::MAX;
@@ -739,8 +751,10 @@ pub(crate) fn advance_weapon_command(
                     let cs_silenced = ps.cs_silencers
                         & weapon_iw4::cs::silencer_bit(facts.cs_weapon)
                         != 0;
+                    // The burst bullet this command's gate let through (0 when not in a burst).
+                    let cs_burst = ps.cs_burst_shot.min(2) as u8;
                     let cs_gun = weapon_iw4::cs::cs_weapon(facts.cs_weapon)
-                        .map(|cs| cs.with_silencer(cs_silenced));
+                        .map(|cs| cs.with_silencer(cs_silenced).with_burst(cs_burst));
                     let cs = cs_gun.as_ref();
                     let mut shot_angles = ps.viewangles;
                     if cs.is_some() {
@@ -766,6 +780,15 @@ pub(crate) fn advance_weapon_command(
                             correlation: shot_id.0,
                             origin,
                             direction: shot_angles,
+                            simulation_flags: (if cs_silenced {
+                                weapon_iw4::cs::SILENCED_SHOT_FLAG
+                            } else {
+                                0
+                            }) | (if cs_burst != 0 {
+                                weapon_iw4::cs::BURST_SHOT_FLAG
+                            } else {
+                                0
+                            }),
                             ..Default::default()
                         },
                     );
@@ -801,7 +824,9 @@ pub(crate) fn advance_weapon_command(
                     );
                     let cs_spread = cs
                         .zip(world.player_mut(*id))
-                        .map(|(cs, ps_mut)| cs_weapon_fire(cs, ps_mut, *id, cmd.server_time));
+                        .map(|(cs, ps_mut)| {
+                            cs_weapon_fire(cs, ps_mut, *id, cmd.server_time, cs_burst, facts.cs_weapon)
+                        });
                     accepted.push(AcceptedShot {
                         shot_id,
                         attacker: *id,
@@ -820,6 +845,7 @@ pub(crate) fn advance_weapon_command(
                         spread_degrees,
                         cs_spread,
                         cs_silenced,
+                        cs_burst,
                     });
                 }
                 WeaponTickEvent::OffhandPrepare { weapon } => {
@@ -1111,12 +1137,15 @@ fn cs_weapon_frame(
     facts: &weapon_iw4::WeaponCombatFacts,
     weapon: u32,
     cmd: &playerstate_iw4::UserCmd,
-) {
+    old_buttons: u32,
+) -> CsGate {
+    ps.cs_burst_shot = 0;
     let Some(cs) = weapon_iw4::cs::cs_weapon(facts.cs_weapon) else {
         // Only a scoped CS gun stays zoomed.
         ps.cs_zoom = 0;
         ps.cs_last_zoom = 0;
-        return;
+        ps.cs_burst_left = 0;
+        return CsGate::Pass;
     };
     let reloading = weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
         .is_ok_and(weapon_iw4::WeaponState::is_reload_family);
@@ -1127,8 +1156,15 @@ fn cs_weapon_frame(
         ps.cs_delay_fire = 0;
         ps.cs_zoom = 0;
         ps.cs_last_zoom = 0;
+        ps.cs_burst_left = 0;
     }
     if ps.cs_gun_weapon != weapon {
+        ps.cs_burst_left = 0;
+        ps.cs_fire_gate_ms = 0;
+        if cs.dual {
+            // `Deploy`: the left gun fires first.
+            ps.cs_burst_modes |= weapon_iw4::cs::silencer_bit(facts.cs_weapon);
+        }
         ps.cs_gun_weapon = weapon;
         ps.cs_shots_fired = 0;
         ps.cs_accuracy = weapon_iw4::cs::initial_accuracy(cs);
@@ -1142,6 +1178,7 @@ fn cs_weapon_frame(
     }
     cs_zoom_frame(cs, ps, cmd, reloading);
     cs_silencer_frame(cs, facts.cs_weapon, ps, cmd, reloading);
+    let gate = cs_fire_gate(cs, facts.cs_weapon, ps, cmd, old_buttons, reloading);
     let mut state = cs_gun_state(ps);
     let mut delay_fire = ps.cs_delay_fire != 0;
     weapon_iw4::cs::post_frame(
@@ -1154,6 +1191,84 @@ fn cs_weapon_frame(
     );
     ps.cs_delay_fire = u32::from(delay_fire);
     store_cs_gun_state(ps, state);
+    gate
+}
+
+/// What a gun whose shots the CS layer times does with the fire button this command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CsGate {
+    /// The MW2 weapon machine sees the buttons as they are.
+    Pass,
+    /// Not time yet: it does not see the fire button.
+    Block,
+    /// Time for a shot: it sees a fresh press.
+    Press,
+}
+
+/// CS shot timing for guns with a burst mode or a scope-dependent cycle (`cs::CsWeapon::gated`),
+/// once per command. Right click switches burst on and off (`SecondaryAttack`, 0.3 s apart); in
+/// burst a press fires `shots` bullets on its own timetable whatever the button does; otherwise
+/// a shot goes out when the gun's cycle (the zoomed one while scoped) is up, and a semi-auto
+/// gun needs a fresh press for each.
+fn cs_fire_gate(
+    cs: &weapon_iw4::cs::CsWeapon,
+    index: u8,
+    ps: &mut PlayerState,
+    cmd: &playerstate_iw4::UserCmd,
+    old_buttons: u32,
+    reloading: bool,
+) -> CsGate {
+    if !cs.gated() {
+        return CsGate::Pass;
+    }
+    let now = cmd.server_time;
+    let ms = |seconds: f32| (seconds * 1000.0).round() as i32;
+    let bit = weapon_iw4::cs::silencer_bit(index);
+    let ready = ps.weaponstate_primary == weapon_iw4::WeaponState::Ready as i32;
+    if cs.burst.is_some()
+        && cmd.buttons & playerstate_iw4::buttons::ADS != 0
+        && ready
+        && !reloading
+        && now >= ps.cs_next_attack2_ms
+    {
+        ps.cs_burst_modes ^= bit;
+        ps.cs_next_attack2_ms = now + 300;
+    }
+    let attack = playerstate_iw4::buttons::ATTACK;
+    let pressing = cmd.buttons & attack != 0;
+    let fresh = pressing && old_buttons & attack == 0;
+    if let Some(burst) = cs.burst {
+        if ps.cs_burst_left > 0 {
+            // A burst under way: the button no longer matters.
+            if now >= ps.cs_burst_next_ms {
+                ps.cs_burst_left -= 1;
+                ps.cs_burst_next_ms = now + ms(burst.gap);
+                ps.cs_burst_shot = 2;
+                return CsGate::Press;
+            }
+            return CsGate::Block;
+        }
+        if ps.cs_burst_modes & bit != 0 {
+            if fresh && now >= ps.cs_fire_gate_ms {
+                ps.cs_burst_left = burst.shots.saturating_sub(1);
+                ps.cs_burst_next_ms = now + ms(burst.first_gap);
+                ps.cs_fire_gate_ms = now + ms(burst.cycle);
+                ps.cs_burst_shot = 1;
+                return CsGate::Press;
+            }
+            return CsGate::Block;
+        }
+    }
+    let cycle = if ps.cs_zoom != 0 && cs.cycle_zoomed > 0.0 {
+        cs.cycle_zoomed
+    } else {
+        cs.cycle
+    };
+    if pressing && now >= ps.cs_fire_gate_ms && (fresh || !cs.semi_auto) {
+        ps.cs_fire_gate_ms = now + ms(cycle);
+        return CsGate::Press;
+    }
+    CsGate::Block
 }
 
 /// CS scope, once per command: the zoom a shot dropped returns once the gun is ready to fire
@@ -1217,12 +1332,28 @@ fn cs_weapon_fire(
     ps: &mut PlayerState,
     id: ClientId,
     server_time: i32,
+    burst_shot: u8,
+    index: u8,
 ) -> f32 {
+    if cs.dual {
+        // The Elites fire left, right, left...: the bit says which hand is next.
+        ps.cs_burst_modes ^= weapon_iw4::cs::silencer_bit(index);
+    }
     let shooter = cs_shooter(ps);
     let mut state = cs_gun_state(ps);
+    if burst_shot == 2 {
+        // `FireRemaining`: the later bullets of a burst keep a fixed spread (or the first
+        // bullet's) and neither wear the accuracy nor kick the view again. The shot still shows
+        // (viewmodel animation, muzzle flash, crosshair) through `cs_last_fire_ms`.
+        ps.cs_last_fire_ms = server_time;
+        return cs
+            .burst
+            .and_then(|burst| burst.follow_spread)
+            .unwrap_or_else(|| weapon_iw4::cs::spread(cs, state.accuracy, shooter));
+    }
     let spread = weapon_iw4::cs::fire(cs, &mut state, shooter, server_time);
     if !cs.zoom.is_empty() {
-        if ps.cs_zoom != 0 {
+        if ps.cs_zoom != 0 && cs.unzoom_on_fire {
             ps.cs_last_zoom = ps.cs_zoom;
             ps.cs_zoom = 0;
         }
@@ -1744,6 +1875,7 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
                     .map_or(facts.bullet_range(), |cs| cs.distance),
                 base_damage: facts.damage,
                 cs_silenced: shot.cs_silenced,
+                cs_burst: shot.cs_burst,
             });
         }
     }
@@ -1799,7 +1931,8 @@ pub(crate) fn phase_trace(
                 let dz = end[2] - em.origin[2];
                 (dx * dx + dy * dy + dz * dz).sqrt()
             };
-            let scaled = bullet_damage_at_distance(&facts, dist, em.cs_silenced).max(0) as u32;
+            let scaled =
+                bullet_damage_at_distance(&facts, dist, em.cs_silenced, em.cs_burst).max(0) as u32;
             let mut map = glass_damage.borrow_mut();
             let cur = map.entry(pane).or_insert(0);
             *cur = glass_add_damage(*cur, scaled);
@@ -1950,8 +2083,8 @@ pub(crate) fn phase_trace(
                 (dx * dx + dy * dy + dz * dz).sqrt()
             };
             let scaled =
-                ((bullet_damage_at_distance(&facts, dist, em.cs_silenced) as f32) * segment.damage_mult)
-                    as i32;
+                ((bullet_damage_at_distance(&facts, dist, em.cs_silenced, em.cs_burst) as f32)
+                    * segment.damage_mult) as i32;
             if !exit && world.publishes_snapshot() {
                 let means = crate::script_player::means(
                     world,

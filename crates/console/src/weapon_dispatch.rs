@@ -77,7 +77,7 @@ pub(crate) fn register_weapon_commands(
     if registry.resolve("buy").is_none() {
         registry.register(
             crate::CommandSpec::new("buy")
-                .usage("buy <ak47|m4a1|awp|deagle|usp|glock|hegrenade|flashbang|smokegrenade> — CS gun or grenade (free for now)")
+                .usage("buy <weapon> — a CS gun or grenade by its buy name (ak47, m4a1, awp, deagle, usp, glock, famas, galil, aug, sg552, scout, g3sg1, sg550, m249, m3, xm1014, mac10, tmp, mp5, ump45, p90, p228, fiveseven, elite, hegrenade, flashbang, smokegrenade, vest, vesthelm); free for now")
                 .arg(StaticCompleter::new(
                     weapon_iw4::cs::cs_buy_list().map(|(name, _, _)| name),
                 )),

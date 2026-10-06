@@ -49,14 +49,14 @@ fn dotenv_path() -> Option<PathBuf> {
 
 /// `key` from the environment, else its own line in `.env` — read directly, so a line the
 /// dotenv parser stops at (an unquoted Windows path with spaces or brackets) can't hide it.
-fn env_or_dotenv(key: &str) -> Option<String> {
+pub(crate) fn env_or_dotenv(key: &str) -> Option<String> {
     if let Ok(value) = std::env::var(key) {
         return Some(value);
     }
     let text = std::fs::read_to_string(dotenv_path()?).ok()?;
     text.lines().find_map(|line| {
         let (name, value) = line.trim().split_once('=')?;
-        (name.trim() == key).then(|| value.trim().trim_matches('"').to_owned())
+        (name.trim() == key).then(|| value.trim().trim_matches(['"', '\'']).to_owned())
     })
 }
 
@@ -208,6 +208,26 @@ fn game_files(root: &Path) -> impl Iterator<Item = Result<PathBuf, String>> {
     files_under(search_roots(root))
 }
 
+/// Folders the game never keeps zones in: cargo's output when the games root is the build's own
+/// `target/play` (tens of thousands of files, walked on every discovery), and our own
+/// artifacts.
+const NOT_GAME_DIRS: [&str; 6] = [
+    "incremental",
+    "deps",
+    "build",
+    ".fingerprint",
+    "examples",
+    "iw4l-artifacts",
+];
+
+fn is_not_game_dir(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
+        NOT_GAME_DIRS
+            .iter()
+            .any(|skip| name.eq_ignore_ascii_case(skip))
+    })
+}
+
 fn files_under(roots: Vec<PathBuf>) -> impl Iterator<Item = Result<PathBuf, String>> {
     let mut pending: VecDeque<_> = roots.into_iter().map(Ok).collect();
     let mut visited = HashSet::new();
@@ -217,6 +237,9 @@ fn files_under(roots: Vec<PathBuf>) -> impl Iterator<Item = Result<PathBuf, Stri
                 Ok(path) => path,
                 Err(error) => return Some(Err(error)),
             };
+            if is_not_game_dir(&path) {
+                continue;
+            }
             let canonical = match std::fs::canonicalize(&path) {
                 Ok(path) => path,
                 Err(error) => {

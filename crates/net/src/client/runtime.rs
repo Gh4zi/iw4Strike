@@ -254,6 +254,13 @@ pub struct WeaponSelect {
     pub mapped_index: u32,
 }
 
+/// Whether the player may change weapons now. Counter-Strike lets you swap on a ladder (IW4
+/// blocks it there).
+fn weapon_cycle_allowed(ps: &playerstate_iw4::PlayerState, time: i32, select_time: i32) -> bool {
+    let block = if movement_iw4::rules::CS_RULES { 0xc00 } else { 0xc08 };
+    input_iw4::weapon_select::weapon_cycle_allowed_masked(ps, time, select_time, 0, 0, block)
+}
+
 pub fn follow_held_weapon_select(
     select: &mut WeaponSelect,
     ps_weapon: u32,
@@ -284,8 +291,8 @@ pub fn cycle_weapon_select(
     time: i32,
     next: bool,
 ) {
-    use input_iw4::weapon_select::{cycle_weapon, weapon_cycle_allowed};
-    if !weapon_cycle_allowed(ps, time, select.time, 0, 0) {
+    use input_iw4::weapon_select::cycle_weapon;
+    if !weapon_cycle_allowed(ps, time, select.time) {
         return;
     }
 
@@ -971,8 +978,7 @@ pub fn sample_client_input(
     }
     if let Some(ps) = ps.filter(|_| !frozen) {
         for slot in slots {
-            if !input_iw4::weapon_select::weapon_cycle_allowed(ps, clock.time(), select.time, 0, 0)
-            {
+            if !weapon_cycle_allowed(ps, clock.time(), select.time) {
                 continue;
             }
             let target = match ps.action_slot_type.get(slot).copied() {
@@ -1012,8 +1018,7 @@ pub fn sample_client_input(
     let weapon_slots = std::mem::take(&mut actions.client.weapon_slots);
     if let Some(ps) = ps.filter(|_| !frozen) {
         for slot in weapon_slots {
-            if !input_iw4::weapon_select::weapon_cycle_allowed(ps, clock.time(), select.time, 0, 0)
-            {
+            if !weapon_cycle_allowed(ps, clock.time(), select.time) {
                 continue;
             }
             let world = prediction.0.world();

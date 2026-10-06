@@ -5,7 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::ZoneGame;
-use crate::discover::GamesRoot;
+use crate::discover::{GamesRoot, env_or_dotenv};
 #[cfg(windows)]
 use crate::discover::{search_roots, zone_game_for_path};
 
@@ -105,15 +105,16 @@ pub fn link_steam_games(_root: &GamesRoot) -> SteamProbe {
 pub const CSS_ENV: &str = "IW4L_CSS";
 
 /// Counter-Strike: Source's main pack (`cstrike/cstrike_pak_dir.vpk`): `IW4L_CSS` (its `cstrike`
-/// folder) when set, else `steamapps/common/Counter-Strike Source/cstrike` in any Steam library.
+/// folder, from the environment or `.env`) when set, else
+/// `steamapps/common/Counter-Strike Source/cstrike` in any Steam library.
 #[must_use]
 pub fn find_css_pak() -> Option<PathBuf> {
     let pak = |dir: PathBuf| {
         let file = dir.join("cstrike_pak_dir.vpk");
         file.is_file().then_some(file)
     };
-    if let Some(dir) = std::env::var_os(CSS_ENV).map(PathBuf::from) {
-        return pak(dir);
+    if let Some(dir) = env_or_dotenv(CSS_ENV).filter(|dir| !dir.trim().is_empty()) {
+        return pak(PathBuf::from(dir));
     }
     #[cfg(windows)]
     for library in steam_libraries() {
@@ -132,26 +133,17 @@ pub fn find_css_pak() -> Option<PathBuf> {
 /// Environment override naming a Counter-Strike 1.6 `cstrike` folder.
 pub const CSTRIKE_ENV: &str = "IW4L_CSTRIKE";
 
-/// The Counter-Strike 1.6 `cstrike` folder whose models IW4L reads at runtime: `IW4L_CSTRIKE`
-/// when set, else `steamapps/common/Half-Life/cstrike` in any Steam library. Nothing is copied.
+/// The Counter-Strike 1.6 `cstrike` folder whose models and sounds IW4L reads at runtime, the
+/// stand-in for a missing Counter-Strike: Source. It is never searched for: the player selects
+/// it with `IW4L_CSTRIKE` (environment or `.env`), and it is ignored whenever CS:S is found.
+/// Nothing is copied.
 #[must_use]
 pub fn find_cstrike() -> Option<PathBuf> {
-    let is_cstrike = |dir: &PathBuf| dir.join("models").is_dir();
-    if let Some(dir) = std::env::var_os(CSTRIKE_ENV).map(PathBuf::from) {
-        return is_cstrike(&dir).then_some(dir);
+    if find_css_pak().is_some() {
+        return None;
     }
-    #[cfg(windows)]
-    for library in steam_libraries() {
-        let dir = library
-            .join("steamapps")
-            .join("common")
-            .join("Half-Life")
-            .join("cstrike");
-        if is_cstrike(&dir) {
-            return Some(dir);
-        }
-    }
-    None
+    let dir = PathBuf::from(env_or_dotenv(CSTRIKE_ENV).filter(|dir| !dir.trim().is_empty())?);
+    dir.join("models").is_dir().then_some(dir)
 }
 
 #[cfg(windows)]

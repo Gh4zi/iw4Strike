@@ -1,8 +1,14 @@
 use weapon_iw4::WeaponCombatFacts;
 
-pub fn bullet_damage_at_distance(facts: &WeaponCombatFacts, dist: f32, cs_silenced: bool) -> i32 {
+pub fn bullet_damage_at_distance(
+    facts: &WeaponCombatFacts,
+    dist: f32,
+    cs_silenced: bool,
+    cs_burst: u8,
+) -> i32 {
     if let Some(cs) = weapon_iw4::cs::cs_weapon(facts.cs_weapon) {
-        return weapon_iw4::cs::damage_at_distance(&cs.with_silencer(cs_silenced), dist) as i32;
+        let gun = cs.with_silencer(cs_silenced).with_burst(cs_burst);
+        return weapon_iw4::cs::damage_at_distance(&gun, dist) as i32;
     }
     let base = facts.damage;
     let min = if facts.min_damage > 0 {

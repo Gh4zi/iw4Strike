@@ -6,6 +6,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use assets::PreparedWeapons;
 use frame::ViewSubject;
 use net::{LocalPresentClient, PresentedSnapshot};
 use render_gpu::CsScopeFrame;
@@ -82,6 +83,7 @@ fn load_images(images: &mut Assets<Image>) -> CsScopeImages {
 
 pub fn update_cs_scope(
     presented: Res<PresentedSnapshot>,
+    weapons: Option<Res<PreparedWeapons>>,
     local: Res<LocalPresentClient>,
     view: Res<ViewSubject>,
     mut textures: ResMut<CsScopeImages>,
@@ -91,7 +93,14 @@ pub fn update_cs_scope(
     let zoomed = !view.in_killcam()
         && presented
             .player(local.0)
-            .is_some_and(|ps| ps.cs_zoom != 0 && ps.pm_type < playerstate_iw4::PM_TYPE_DEAD);
+            .is_some_and(|ps| {
+            ps.cs_zoom != 0
+                && ps.pm_type < playerstate_iw4::PM_TYPE_DEAD
+                // Only the snipers draw the scope; the AUG and SG 552 just narrow the view.
+                && weapons
+                    .as_ref()
+                    .is_some_and(|weapons| super::cs_viewmodel::held_gun_scope_overlay(ps, weapons))
+        });
     if !zoomed {
         if frame.active {
             frame.active = false;

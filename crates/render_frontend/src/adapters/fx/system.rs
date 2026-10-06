@@ -2223,6 +2223,12 @@ fn drain_weapon_fire_fx(
             if let Some(cs) = weapon_iw4::cs::cs_weapon_index_for(&weapons.0.script_name_of(weapon))
                 .and_then(weapon_iw4::cs::cs_weapon)
             {
+                // The shooter's silencer rides on the event, so everyone hears the same gun.
+                let silenced = fire.event.payload.simulation_flags
+                    & weapon_iw4::cs::SILENCED_SHOT_FLAG
+                    != 0;
+                let burst = fire.event.payload.simulation_flags & weapon_iw4::cs::BURST_SHOT_FLAG != 0;
+                let cs = &cs.with_silencer(silenced).with_burst(u8::from(burst));
                 let suffix = if player_view {
                     asset_audio::CS_SOUND_PLAYER_SUFFIX
                 } else {

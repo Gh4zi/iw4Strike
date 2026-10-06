@@ -33,6 +33,18 @@ pub enum CsSpread {
         standing: f32,
         unscoped: f32,
     },
+    /// Auto snipers (G3SG1, SG550): `(1 - accuracy) * (state + unscoped)` by airborne / moving /
+    /// ducked / standing; `moving_scaled` false keeps the moving value whole (SG550).
+    AutoSniper {
+        air: f32,
+        moving: f32,
+        ducked: f32,
+        standing: f32,
+        unscoped: f32,
+        moving_scaled: bool,
+    },
+    /// Shotguns: every pellet strays by this cone (`vecCone`).
+    Cone(f32),
 }
 
 /// `KickBack(up_base, lateral_base, up_modifier, lateral_modifier, up_max, lateral_max,
@@ -79,6 +91,14 @@ pub enum CsRecoil {
     },
     /// Pistols and bolt snipers: a flat upward punch.
     Punch(f32),
+    /// Auto snipers: pitch kicks up by a random `up` plus a quarter of the punch already there,
+    /// and yaw by a random amount within `side`.
+    AutoSniper { up: (f32, f32), side: f32 },
+    /// Shotguns: a random whole-degree pitch kick, by on the ground / in the air.
+    Shotgun {
+        ground: (u32, u32),
+        air: (u32, u32),
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,9 +107,22 @@ pub enum CsAccuracy {
     /// first few bullets of a spray keep `base` and the next jumps to `max`.
     Sustained {
         initial: f32,
-        divisor: i32,
+        divisor: f32,
+        /// Retail divides as integers for most guns (the MP5 divides by 220.1 as a float).
+        integer: bool,
         base: f32,
         max: f32,
+        /// Shots fired are raised to this power (3 for rifles, 2 for most SMGs).
+        power: u32,
+    },
+    /// Auto snipers: `(seconds since the last shot) * scale + base`, at most `cap`; `first`
+    /// when there was no last shot.
+    SniperTime {
+        initial: f32,
+        scale: f32,
+        base: f32,
+        cap: f32,
+        first: f32,
     },
     /// Pistols: accuracy drops by `(recover - since_last_shot) * factor`, clamped.
     Pistol {
@@ -144,7 +177,85 @@ pub struct CsWeapon {
     pub crosshair: CsCrosshair,
     /// The silencer right click screws on and off (M4A1, USP), if any.
     pub silencer: Option<CsSilencer>,
+    /// Ground speed above which a rifle or SMG uses its running spread (`RIFLE_RUN_SPEED`).
+    pub run_speed: f32,
+    /// Bullets per shot (shotgun pellets); 1 otherwise.
+    pub pellets: u32,
+    /// The burst mode right click switches to (Glock-18, FAMAS), if any.
+    pub burst: Option<CsBurst>,
+    /// Seconds between shots while zoomed, when that differs from `cycle` (AUG, SG 552); 0 = same.
+    pub cycle_zoomed: f32,
+    /// A shot drops the scope back to the unzoomed view until the gun is ready again (AWP, Scout).
+    pub unzoom_on_fire: bool,
+    /// Zooming draws the sniper scope overlay and hides the gun (snipers); the AUG and SG 552 only
+    /// narrow the field of view.
+    pub scope_overlay: bool,
+    /// Shotguns reload one shell at a time: (start, per shell, finish) in seconds.
+    pub shell_reload: Option<(f32, f32, f32)>,
+    /// Two guns that fire in turn (Dual Elites); `cs_burst_modes` holds which hand is next.
+    pub dual: bool,
 }
+
+/// A burst mode (`WPNSTATE_GLOCK18_BURST_MODE`, `WPNSTATE_FAMAS_BURST_MODE`): one press fires
+/// `shots` bullets, `first_gap` then `gap` seconds apart, and the gun waits `cycle` before the
+/// next burst.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CsBurst {
+    pub shots: u32,
+    pub first_gap: f32,
+    pub gap: f32,
+    pub cycle: f32,
+    pub damage: f32,
+    pub range_modifier: f32,
+    /// Spread of the first bullet of a burst.
+    pub spread: CsSpread,
+    /// The bullets after the first keep this spread (`FireRemaining`); `None` keeps the first
+    /// bullet's own.
+    pub follow_spread: Option<f32>,
+    /// Range modifier of the bullets after the first, when it differs.
+    pub follow_range_modifier: Option<f32>,
+    pub fire_sounds: &'static [&'static str],
+    pub css_fire_sound: &'static str,
+}
+
+/// What every [`CsWeapon`] starts from: an entry names only what it changes.
+const BASE: CsWeapon = CsWeapon {
+    name: "",
+    mw2_name: "",
+    view_model: "",
+    fire_sounds: &[],
+    css_view_model: "",
+    css_fire_sound: "",
+    price: 0,
+    damage: 0.0,
+    range_modifier: 1.0,
+    cycle: 0.1,
+    clip: 30,
+    reserve: 90,
+    reload: 3.0,
+    max_speed: 250.0,
+    max_speed_zoomed: 250.0,
+    zoom: &[],
+    semi_auto: false,
+    distance: 8192.0,
+    spread: CsSpread::Cone(0.0),
+    recoil: CsRecoil::Punch(0.0),
+    accuracy: CsAccuracy::None,
+    pistol: false,
+    crosshair: CsCrosshair {
+        gap: 4.0,
+        delta: 4.0,
+    },
+    silencer: None,
+    run_speed: RIFLE_RUN_SPEED,
+    pellets: 1,
+    burst: None,
+    cycle_zoomed: 0.0,
+    unzoom_on_fire: true,
+    scope_overlay: false,
+    shell_reload: None,
+    dual: false,
+};
 
 /// A silencer (`SecondaryAttack` on the M4A1 and USP): what changes while it is on.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -176,11 +287,49 @@ impl CsWeapon {
     }
 }
 
+impl CsWeapon {
+    /// The weapon as a burst bullet fires: `burst` 1 is the first bullet of a burst, 2 a later
+    /// one, anything else (or a gun without a burst mode) is itself.
+    #[must_use]
+    pub fn with_burst(&self, burst: u8) -> CsWeapon {
+        match self.burst {
+            Some(mode) if burst == 1 || burst == 2 => CsWeapon {
+                damage: mode.damage,
+                range_modifier: if burst == 2 {
+                    mode.follow_range_modifier.unwrap_or(mode.range_modifier)
+                } else {
+                    mode.range_modifier
+                },
+                spread: mode.spread,
+                fire_sounds: mode.fire_sounds,
+                css_fire_sound: mode.css_fire_sound,
+                ..*self
+            },
+            _ => *self,
+        }
+    }
+
+    /// Whether the CS layer times this gun's shots itself (burst, or a cycle that depends on the
+    /// scope) rather than leaving them to the MW2 weapon machine.
+    #[must_use]
+    pub fn gated(&self) -> bool {
+        self.burst.is_some() || self.cycle_zoomed > 0.0
+    }
+}
+
+/// Bit of a weapon-fire event's `simulation_flags` marking a burst bullet (see
+/// [`SILENCED_SHOT_FLAG`]).
+pub const BURST_SHOT_FLAG: u8 = 4;
+
 /// `PlayerState::cs_silencers` bit of CS weapon `index`.
 #[must_use]
 pub fn silencer_bit(index: u8) -> u32 {
     1u32.checked_shl(u32::from(index)).unwrap_or(0)
 }
+
+/// Bit of a weapon-fire event's `simulation_flags` marking a shot from a silenced gun, so every
+/// client picks the silenced gunshot (bit 0 is the impact events' "penetrated").
+pub const SILENCED_SHOT_FLAG: u8 = 2;
 
 /// Crosshair gap at rest and how much each shot widens it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -221,7 +370,7 @@ pub const CS_LOCATION_DAMAGE: [f32; HITLOC_COUNT] = [
 
 const RIFLE_RUN_SPEED: f32 = 140.0;
 
-pub const CS_WEAPONS: [CsWeapon; 6] = [
+pub const CS_WEAPONS: [CsWeapon; 24] = [
     CsWeapon {
         name: "ak47",
         mw2_name: "ak47_mp",
@@ -254,9 +403,11 @@ pub const CS_WEAPONS: [CsWeapon; 6] = [
         },
         accuracy: CsAccuracy::Sustained {
             initial: 0.2,
-            divisor: 200,
+            divisor: 200.0,
+            integer: true,
             base: 0.35,
             max: 1.25,
+            power: 3,
         },
         pistol: false,
         crosshair: CsCrosshair {
@@ -264,6 +415,7 @@ pub const CS_WEAPONS: [CsWeapon; 6] = [
             delta: 4.0,
         },
         silencer: None,
+        ..BASE
     },
     CsWeapon {
         name: "m4a1",
@@ -297,9 +449,11 @@ pub const CS_WEAPONS: [CsWeapon; 6] = [
         },
         accuracy: CsAccuracy::Sustained {
             initial: 0.2,
-            divisor: 220,
+            divisor: 220.0,
+            integer: true,
             base: 0.3,
             max: 1.0,
+            power: 3,
         },
         pistol: false,
         crosshair: CsCrosshair {
@@ -319,6 +473,7 @@ pub const CS_WEAPONS: [CsWeapon; 6] = [
             fire_sounds: &["m4a1-1"],
             css_fire_sound: "Weapon_M4A1.Silenced",
         }),
+        ..BASE
     },
     CsWeapon {
         name: "awp",
@@ -355,6 +510,8 @@ pub const CS_WEAPONS: [CsWeapon; 6] = [
             delta: 3.0,
         },
         silencer: None,
+        scope_overlay: true,
+        ..BASE
     },
     CsWeapon {
         name: "deagle",
@@ -395,6 +552,7 @@ pub const CS_WEAPONS: [CsWeapon; 6] = [
             delta: 3.0,
         },
         silencer: None,
+        ..BASE
     },
     CsWeapon {
         name: "usp",
@@ -448,6 +606,7 @@ pub const CS_WEAPONS: [CsWeapon; 6] = [
             fire_sounds: &["usp1", "usp2"],
             css_fire_sound: "Weapon_USP.SilencedShot",
         }),
+        ..BASE
     },
     CsWeapon {
         name: "glock",
@@ -487,7 +646,759 @@ pub const CS_WEAPONS: [CsWeapon; 6] = [
             gap: 8.0,
             delta: 3.0,
         },
-        silencer: None,
+        // `GLOCK18Fire` in burst mode: 3 bullets 0.1 s apart, cycle 0.5 s; the bullets after the
+        // first fire at spread 0.05 with range modifier 0.9 (`FireRemaining`).
+        burst: Some(CsBurst {
+            shots: 3,
+            first_gap: 0.1,
+            gap: 0.1,
+            cycle: 0.5,
+            damage: 25.0,
+            range_modifier: 0.75,
+            spread: CsSpread::Pistol {
+                air: 1.2,
+                moving: 0.185,
+                ducked: 0.095,
+                standing: 0.3,
+            },
+            follow_spread: Some(0.05),
+            follow_range_modifier: Some(0.9),
+            fire_sounds: &["glock18-1", "glock18-2"],
+            css_fire_sound: "Weapon_Glock.Burst",
+        }),
+        ..BASE
+    },
+    // ---- Pistols ----
+    CsWeapon {
+        name: "p228",
+        mw2_name: "deserteaglegold_mp",
+        view_model: "v_p228",
+        fire_sounds: &["p228-1"],
+        css_view_model: "v_pist_p228",
+        css_fire_sound: "Weapon_P228.Single",
+        price: 600,
+        damage: 32.0,
+        range_modifier: 0.8,
+        cycle: 0.15,
+        clip: 13,
+        reserve: 52,
+        reload: 2.7,
+        semi_auto: true,
+        distance: 4096.0,
+        spread: CsSpread::Pistol {
+            air: 1.5,
+            moving: 0.255,
+            ducked: 0.075,
+            standing: 0.15,
+        },
+        recoil: CsRecoil::Punch(2.0),
+        accuracy: CsAccuracy::Pistol {
+            initial: 0.9,
+            recover: 0.325,
+            factor: 0.3,
+            min: 0.6,
+            max: 0.9,
+        },
+        pistol: true,
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    CsWeapon {
+        name: "fiveseven",
+        mw2_name: "kriss_mp",
+        view_model: "v_fiveseven",
+        fire_sounds: &["fiveseven-1"],
+        css_view_model: "v_pist_fiveseven",
+        css_fire_sound: "Weapon_FiveSeven.Single",
+        price: 750,
+        damage: 20.0,
+        range_modifier: 0.885,
+        cycle: 0.15,
+        clip: 20,
+        reserve: 100,
+        reload: 2.7,
+        semi_auto: true,
+        distance: 4096.0,
+        spread: CsSpread::Pistol {
+            air: 1.5,
+            moving: 0.255,
+            ducked: 0.075,
+            standing: 0.15,
+        },
+        recoil: CsRecoil::Punch(2.0),
+        accuracy: CsAccuracy::Pistol {
+            initial: 0.92,
+            recover: 0.275,
+            factor: 0.25,
+            min: 0.725,
+            max: 0.92,
+        },
+        pistol: true,
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    CsWeapon {
+        name: "elite",
+        mw2_name: "sa80_mp",
+        view_model: "v_elite",
+        fire_sounds: &["elite_fire"],
+        css_view_model: "v_pist_elite",
+        css_fire_sound: "Weapon_Elite.Single",
+        price: 800,
+        damage: 36.0,
+        range_modifier: 0.75,
+        // `ELITEFire`: 0.2 s less the retail 0.125 s.
+        cycle: 0.075,
+        clip: 30,
+        reserve: 120,
+        reload: 4.5,
+        semi_auto: true,
+        distance: 4096.0,
+        spread: CsSpread::Pistol {
+            air: 1.3,
+            moving: 0.175,
+            ducked: 0.08,
+            standing: 0.1,
+        },
+        recoil: CsRecoil::Punch(2.0),
+        accuracy: CsAccuracy::Pistol {
+            initial: 0.88,
+            recover: 0.325,
+            factor: 0.275,
+            min: 0.55,
+            max: 0.88,
+        },
+        pistol: true,
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 3.0,
+        },
+        dual: true,
+        ..BASE
+    },
+    // ---- Shotguns ----
+    CsWeapon {
+        name: "m3",
+        mw2_name: "spas12_mp",
+        view_model: "v_m3",
+        fire_sounds: &["m3-1"],
+        css_view_model: "v_shot_m3super90",
+        css_fire_sound: "Weapon_M3.Single",
+        price: 1700,
+        damage: 20.0,
+        cycle: 0.875,
+        clip: 8,
+        reserve: 32,
+        max_speed: 230.0,
+        max_speed_zoomed: 230.0,
+        semi_auto: true,
+        distance: 3000.0,
+        spread: CsSpread::Cone(0.0675),
+        recoil: CsRecoil::Shotgun {
+            ground: (4, 6),
+            air: (8, 11),
+        },
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 6.0,
+        },
+        pellets: 9,
+        shell_reload: Some((0.55, 0.45, 0.45)),
+        ..BASE
+    },
+    CsWeapon {
+        name: "xm1014",
+        mw2_name: "m1014_mp",
+        view_model: "v_xm1014",
+        fire_sounds: &["xm1014-1"],
+        css_view_model: "v_shot_xm1014",
+        css_fire_sound: "Weapon_XM1014.Single",
+        price: 3000,
+        damage: 20.0,
+        cycle: 0.25,
+        clip: 7,
+        reserve: 32,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        semi_auto: true,
+        distance: 3048.0,
+        spread: CsSpread::Cone(0.0725),
+        recoil: CsRecoil::Shotgun {
+            ground: (3, 5),
+            air: (7, 10),
+        },
+        crosshair: CsCrosshair {
+            gap: 9.0,
+            delta: 4.0,
+        },
+        pellets: 6,
+        shell_reload: Some((0.55, 0.3, 0.4)),
+        ..BASE
+    },
+    // ---- Submachine guns ----
+    CsWeapon {
+        name: "mac10",
+        mw2_name: "uzi_mp",
+        view_model: "v_mac10",
+        fire_sounds: &["mac10-1"],
+        css_view_model: "v_smg_mac10",
+        css_fire_sound: "Weapon_MAC10.Single",
+        price: 1400,
+        damage: 29.0,
+        range_modifier: 0.82,
+        cycle: 0.07,
+        clip: 30,
+        reserve: 100,
+        reload: 3.15,
+        spread: CsSpread::Rifle {
+            air: (0.0, 0.375),
+            run: (0.0, 0.03),
+            still: (0.0, 0.03),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(0.9, 0.45, 0.25, 0.035, 3.5, 2.75, 7),
+            air: kick(1.3, 0.55, 0.4, 0.05, 4.75, 3.75, 5),
+            ducked: kick(0.75, 0.4, 0.175, 0.03, 2.75, 2.5, 10),
+            standing: kick(0.775, 0.425, 0.2, 0.03, 3.0, 2.75, 9),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.15,
+            divisor: 200.0,
+            integer: true,
+            base: 0.6,
+            max: 1.65,
+            power: 3,
+        },
+        crosshair: CsCrosshair {
+            gap: 9.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    CsWeapon {
+        name: "tmp",
+        mw2_name: "tmp_mp",
+        view_model: "v_tmp",
+        fire_sounds: &["tmp-1", "tmp-2"],
+        css_view_model: "v_smg_tmp",
+        css_fire_sound: "Weapon_TMP.Single",
+        price: 1250,
+        damage: 20.0,
+        range_modifier: 0.85,
+        cycle: 0.07,
+        clip: 30,
+        reserve: 120,
+        reload: 2.12,
+        spread: CsSpread::Rifle {
+            air: (0.0, 0.25),
+            run: (0.0, 0.03),
+            still: (0.0, 0.03),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(0.8, 0.4, 0.2, 0.03, 3.0, 2.5, 7),
+            air: kick(1.1, 0.5, 0.35, 0.045, 4.5, 3.5, 6),
+            ducked: kick(0.7, 0.35, 0.125, 0.025, 2.5, 2.0, 10),
+            standing: kick(0.725, 0.375, 0.15, 0.025, 2.75, 2.25, 9),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 200.0,
+            integer: true,
+            base: 0.55,
+            max: 1.4,
+            power: 3,
+        },
+        crosshair: CsCrosshair {
+            gap: 7.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    CsWeapon {
+        name: "mp5",
+        mw2_name: "mp5k_mp",
+        view_model: "v_mp5",
+        fire_sounds: &["mp5-1", "mp5-2"],
+        css_view_model: "v_smg_mp5",
+        css_fire_sound: "Weapon_MP5Navy.Single",
+        price: 1500,
+        damage: 26.0,
+        range_modifier: 0.84,
+        cycle: 0.075,
+        clip: 30,
+        reserve: 120,
+        reload: 2.63,
+        spread: CsSpread::Rifle {
+            air: (0.0, 0.2),
+            run: (0.0, 0.04),
+            still: (0.0, 0.04),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(0.5, 0.275, 0.2, 0.03, 3.0, 2.0, 10),
+            air: kick(0.9, 0.475, 0.35, 0.0425, 5.0, 3.0, 6),
+            ducked: kick(0.225, 0.15, 0.1, 0.015, 2.0, 1.0, 10),
+            standing: kick(0.25, 0.175, 0.125, 0.02, 2.25, 1.25, 10),
+        },
+        // The MP5 is the one gun that divides by a float (220.1).
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.0,
+            divisor: 220.1,
+            integer: false,
+            base: 0.45,
+            max: 0.75,
+            power: 2,
+        },
+        crosshair: CsCrosshair {
+            gap: 6.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    CsWeapon {
+        name: "ump45",
+        mw2_name: "ump45_mp",
+        view_model: "v_ump45",
+        fire_sounds: &["ump45-1"],
+        css_view_model: "v_smg_ump45",
+        css_fire_sound: "Weapon_UMP45.Single",
+        price: 1700,
+        damage: 30.0,
+        range_modifier: 0.82,
+        cycle: 0.1,
+        clip: 25,
+        reserve: 100,
+        reload: 3.5,
+        spread: CsSpread::Rifle {
+            air: (0.0, 0.24),
+            run: (0.0, 0.04),
+            still: (0.0, 0.04),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(0.55, 0.3, 0.225, 0.03, 3.5, 2.5, 10),
+            air: kick(0.125, 0.65, 0.55, 0.0475, 5.5, 4.0, 10),
+            ducked: kick(0.25, 0.175, 0.125, 0.02, 2.25, 1.25, 10),
+            standing: kick(0.275, 0.2, 0.15, 0.0225, 2.5, 1.5, 10),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.0,
+            divisor: 210.0,
+            integer: true,
+            base: 0.5,
+            max: 1.0,
+            power: 2,
+        },
+        crosshair: CsCrosshair {
+            gap: 6.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    CsWeapon {
+        name: "p90",
+        mw2_name: "p90_mp",
+        view_model: "v_p90",
+        fire_sounds: &["p90-1"],
+        css_view_model: "v_smg_p90",
+        css_fire_sound: "Weapon_P90.Single",
+        price: 2350,
+        damage: 21.0,
+        range_modifier: 0.885,
+        cycle: 0.066,
+        clip: 50,
+        reserve: 100,
+        reload: 3.4,
+        max_speed: 245.0,
+        max_speed_zoomed: 245.0,
+        spread: CsSpread::Rifle {
+            air: (0.0, 0.3),
+            run: (0.0, 0.115),
+            still: (0.0, 0.045),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(0.45, 0.3, 0.2, 0.0275, 4.0, 2.25, 7),
+            air: kick(0.9, 0.45, 0.35, 0.04, 5.25, 3.5, 4),
+            ducked: kick(0.275, 0.2, 0.125, 0.02, 3.0, 1.0, 9),
+            standing: kick(0.3, 0.225, 0.125, 0.02, 3.25, 1.25, 8),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 175.0,
+            integer: true,
+            base: 0.45,
+            max: 1.0,
+            power: 2,
+        },
+        crosshair: CsCrosshair {
+            gap: 7.0,
+            delta: 4.0,
+        },
+        run_speed: 170.0,
+        ..BASE
+    },
+    // ---- Rifles ----
+    CsWeapon {
+        name: "galil",
+        mw2_name: "fal_mp",
+        view_model: "v_galil",
+        fire_sounds: &["galil-1", "galil-2"],
+        css_view_model: "v_rif_galil",
+        css_fire_sound: "Weapon_Galil.Single",
+        price: 2000,
+        damage: 30.0,
+        range_modifier: 0.98,
+        cycle: 0.0875,
+        clip: 35,
+        reserve: 90,
+        reload: 2.45,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        spread: CsSpread::Rifle {
+            air: (0.04, 0.3),
+            run: (0.04, 0.07),
+            still: (0.0, 0.0375),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(1.0, 0.45, 0.28, 0.045, 3.75, 3.0, 7),
+            air: kick(1.2, 0.5, 0.23, 0.15, 5.5, 3.5, 6),
+            ducked: kick(0.6, 0.3, 0.2, 0.0125, 3.25, 2.0, 7),
+            standing: kick(0.65, 0.35, 0.25, 0.015, 3.5, 2.25, 7),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 200.0,
+            integer: true,
+            base: 0.35,
+            max: 1.25,
+            power: 3,
+        },
+        crosshair: CsCrosshair {
+            gap: 4.0,
+            delta: 4.0,
+        },
+        ..BASE
+    },
+    CsWeapon {
+        name: "famas",
+        mw2_name: "famas_mp",
+        view_model: "v_famas",
+        fire_sounds: &["famas-1", "famas-2"],
+        css_view_model: "v_rif_famas",
+        css_fire_sound: "Weapon_FAMAS.Single",
+        price: 2250,
+        damage: 30.0,
+        range_modifier: 0.96,
+        cycle: 0.0825,
+        clip: 25,
+        reserve: 90,
+        reload: 3.3,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        // Full auto adds 0.01 to the spread (`FamasFire`); burst does not.
+        spread: CsSpread::Rifle {
+            air: (0.04, 0.3),
+            run: (0.04, 0.07),
+            still: (0.01, 0.02),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(1.0, 0.45, 0.275, 0.05, 4.0, 2.5, 7),
+            air: kick(1.25, 0.45, 0.22, 0.18, 5.5, 4.0, 5),
+            ducked: kick(0.575, 0.325, 0.2, 0.011, 3.25, 2.0, 8),
+            standing: kick(0.625, 0.375, 0.25, 0.0125, 3.5, 2.25, 8),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 215.0,
+            integer: true,
+            base: 0.3,
+            max: 1.0,
+            power: 3,
+        },
+        crosshair: CsCrosshair {
+            gap: 3.0,
+            delta: 3.0,
+        },
+        // `FamasFire` in burst mode: 3 bullets (0.05 s then 0.1 s apart), 34 damage, 0.55 s
+        // before the next burst; the later bullets keep the first one's spread.
+        burst: Some(CsBurst {
+            shots: 3,
+            first_gap: 0.05,
+            gap: 0.1,
+            cycle: 0.55,
+            damage: 34.0,
+            range_modifier: 0.96,
+            spread: CsSpread::Rifle {
+                air: (0.03, 0.3),
+                run: (0.03, 0.07),
+                still: (0.0, 0.02),
+            },
+            follow_spread: None,
+            follow_range_modifier: None,
+            fire_sounds: &["famas-burst"],
+            css_fire_sound: "Weapon_FAMAS.Burst",
+        }),
+        ..BASE
+    },
+    CsWeapon {
+        name: "sg552",
+        mw2_name: "fn2000_mp",
+        view_model: "v_sg552",
+        fire_sounds: &["sg552-1", "sg552-2"],
+        css_view_model: "v_rif_sg552",
+        css_fire_sound: "Weapon_SG552.Single",
+        price: 3500,
+        damage: 33.0,
+        range_modifier: 0.955,
+        cycle: 0.0825,
+        clip: 30,
+        reserve: 90,
+        reload: 3.0,
+        max_speed: 235.0,
+        max_speed_zoomed: 200.0,
+        zoom: &[55],
+        spread: CsSpread::Rifle {
+            air: (0.035, 0.45),
+            run: (0.035, 0.075),
+            still: (0.0, 0.02),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(1.0, 0.45, 0.28, 0.04, 4.25, 2.5, 7),
+            air: kick(1.25, 0.45, 0.22, 0.18, 6.0, 4.0, 5),
+            ducked: kick(0.6, 0.35, 0.2, 0.0125, 3.7, 2.0, 10),
+            standing: kick(0.625, 0.375, 0.25, 0.0125, 4.0, 2.25, 9),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 220.0,
+            integer: true,
+            base: 0.3,
+            max: 1.0,
+            power: 3,
+        },
+        crosshair: CsCrosshair {
+            gap: 3.0,
+            delta: 4.0,
+        },
+        cycle_zoomed: 0.135,
+        unzoom_on_fire: false,
+        ..BASE
+    },
+    CsWeapon {
+        name: "aug",
+        mw2_name: "aug_mp",
+        view_model: "v_aug",
+        fire_sounds: &["aug-1"],
+        css_view_model: "v_rif_aug",
+        css_fire_sound: "Weapon_AUG.Single",
+        price: 3500,
+        damage: 32.0,
+        range_modifier: 0.96,
+        cycle: 0.0825,
+        clip: 30,
+        reserve: 90,
+        reload: 3.3,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        zoom: &[55],
+        spread: CsSpread::Rifle {
+            air: (0.035, 0.4),
+            run: (0.035, 0.07),
+            still: (0.0, 0.02),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(1.0, 0.45, 0.275, 0.05, 4.0, 2.5, 7),
+            air: kick(1.25, 0.45, 0.22, 0.18, 5.5, 4.0, 5),
+            ducked: kick(0.575, 0.325, 0.2, 0.011, 3.25, 2.0, 8),
+            standing: kick(0.625, 0.375, 0.25, 0.0125, 3.5, 2.25, 8),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 215.0,
+            integer: true,
+            base: 0.3,
+            max: 1.0,
+            power: 3,
+        },
+        crosshair: CsCrosshair {
+            gap: 3.0,
+            delta: 3.0,
+        },
+        cycle_zoomed: 0.135,
+        unzoom_on_fire: false,
+        ..BASE
+    },
+    // ---- Snipers ----
+    CsWeapon {
+        name: "scout",
+        mw2_name: "m21_mp",
+        view_model: "v_scout",
+        fire_sounds: &["scout_fire-1"],
+        css_view_model: "v_snip_scout",
+        css_fire_sound: "Weapon_Scout.Single",
+        price: 2750,
+        damage: 75.0,
+        range_modifier: 0.98,
+        cycle: 1.25,
+        clip: 10,
+        reserve: 90,
+        reload: 2.0,
+        max_speed: 260.0,
+        max_speed_zoomed: 220.0,
+        zoom: &[40, 15],
+        semi_auto: true,
+        spread: CsSpread::Sniper {
+            air: 0.2,
+            run: 0.075,
+            walk: 0.007,
+            ducked: 0.0,
+            standing: 0.007,
+            unscoped: 0.025,
+        },
+        recoil: CsRecoil::Punch(2.0),
+        crosshair: CsCrosshair {
+            gap: 7.0,
+            delta: 3.0,
+        },
+        run_speed: 170.0,
+        scope_overlay: true,
+        ..BASE
+    },
+    CsWeapon {
+        name: "g3sg1",
+        mw2_name: "wa2000_mp",
+        view_model: "v_g3sg1",
+        fire_sounds: &["g3sg1-1"],
+        css_view_model: "v_snip_g3sg1",
+        css_fire_sound: "Weapon_G3SG1.Single",
+        price: 5000,
+        damage: 80.0,
+        range_modifier: 0.98,
+        cycle: 0.25,
+        clip: 20,
+        reserve: 90,
+        reload: 3.5,
+        max_speed: 210.0,
+        max_speed_zoomed: 150.0,
+        zoom: &[40, 15],
+        semi_auto: true,
+        spread: CsSpread::AutoSniper {
+            air: 0.45,
+            moving: 0.15,
+            ducked: 0.035,
+            standing: 0.055,
+            unscoped: 0.025,
+            moving_scaled: true,
+        },
+        recoil: CsRecoil::AutoSniper {
+            up: (0.75, 1.75),
+            side: 0.75,
+        },
+        accuracy: CsAccuracy::SniperTime {
+            initial: 0.2,
+            scale: 0.3,
+            base: 0.55,
+            cap: 0.98,
+            first: 0.98,
+        },
+        crosshair: CsCrosshair {
+            gap: 6.0,
+            delta: 4.0,
+        },
+        unzoom_on_fire: false,
+        scope_overlay: true,
+        ..BASE
+    },
+    CsWeapon {
+        name: "sg550",
+        mw2_name: "barrett_mp",
+        view_model: "v_sg550",
+        fire_sounds: &["sg550-1"],
+        css_view_model: "v_snip_sg550",
+        css_fire_sound: "Weapon_SG550.Single",
+        price: 4200,
+        damage: 70.0,
+        range_modifier: 0.98,
+        cycle: 0.25,
+        clip: 30,
+        reserve: 90,
+        reload: 3.35,
+        max_speed: 210.0,
+        max_speed_zoomed: 150.0,
+        zoom: &[40, 15],
+        semi_auto: true,
+        spread: CsSpread::AutoSniper {
+            air: 0.45,
+            moving: 0.15,
+            ducked: 0.04,
+            standing: 0.05,
+            unscoped: 0.025,
+            moving_scaled: false,
+        },
+        recoil: CsRecoil::AutoSniper {
+            up: (0.75, 1.25),
+            side: 0.75,
+        },
+        accuracy: CsAccuracy::SniperTime {
+            initial: 0.9,
+            scale: 0.35,
+            base: 0.65,
+            cap: 0.98,
+            first: 0.9,
+        },
+        crosshair: CsCrosshair {
+            gap: 5.0,
+            delta: 2.0,
+        },
+        unzoom_on_fire: false,
+        scope_overlay: true,
+        ..BASE
+    },
+    // ---- Machine gun ----
+    CsWeapon {
+        name: "m249",
+        mw2_name: "m240_mp",
+        view_model: "v_m249",
+        fire_sounds: &["m249-1", "m249-2"],
+        css_view_model: "v_mach_m249para",
+        css_fire_sound: "Weapon_M249.Single",
+        price: 5750,
+        damage: 32.0,
+        range_modifier: 0.97,
+        cycle: 0.1,
+        clip: 100,
+        reserve: 200,
+        reload: 4.7,
+        max_speed: 220.0,
+        max_speed_zoomed: 220.0,
+        spread: CsSpread::Rifle {
+            air: (0.045, 0.5),
+            run: (0.045, 0.095),
+            still: (0.0, 0.03),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(1.1, 0.5, 0.3, 0.06, 4.0, 3.0, 8),
+            air: kick(1.8, 0.65, 0.45, 0.125, 5.0, 3.5, 8),
+            ducked: kick(0.75, 0.325, 0.25, 0.025, 3.5, 2.5, 9),
+            standing: kick(0.8, 0.35, 0.3, 0.03, 3.75, 3.0, 9),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 175.0,
+            integer: true,
+            base: 0.4,
+            max: 0.9,
+            power: 3,
+        },
+        crosshair: CsCrosshair {
+            gap: 6.0,
+            delta: 6.0,
+        },
+        ..BASE
     },
 ];
 
@@ -860,12 +1771,19 @@ pub fn armor_penetration(index: u8) -> f32 {
     if is_knife(index) {
         return 1.7;
     }
+    // `TakeDamage`'s per-weapon `flRatio *=`.
     match cs_weapon(index).map(|w| w.name) {
-        Some("ak47") => 1.55,
-        Some("m4a1") => 1.4,
+        Some("ak47" | "galil") => 1.55,
+        Some("m4a1" | "aug" | "famas" | "sg552") => 1.4,
         Some("awp") => 1.95,
-        Some("deagle") => 1.5,
-        Some("glock") => 1.05,
+        Some("g3sg1") => 1.65,
+        Some("sg550") => 1.45,
+        Some("m249") => 1.5,
+        Some("deagle" | "fiveseven" | "p90") => 1.5,
+        Some("glock" | "elite") => 1.05,
+        Some("mac10") => 0.95,
+        Some("p228") => 1.25,
+        Some("scout") => 1.7,
         _ => 1.0,
     }
 }
@@ -908,6 +1826,24 @@ pub fn display_name(index: u8) -> Option<&'static str> {
         "deagle" => "Desert Eagle",
         "usp" => "USP",
         "glock" => "Glock-18",
+        "p228" => "P228",
+        "fiveseven" => "Five-seveN",
+        "elite" => "Dual Elites",
+        "m3" => "M3",
+        "xm1014" => "XM1014",
+        "mac10" => "MAC-10",
+        "tmp" => "TMP",
+        "mp5" => "MP5",
+        "ump45" => "UMP45",
+        "p90" => "P90",
+        "galil" => "Galil",
+        "famas" => "FAMAS",
+        "sg552" => "SG 552",
+        "aug" => "AUG",
+        "scout" => "Scout",
+        "g3sg1" => "G3/SG-1",
+        "sg550" => "SG 550",
+        "m249" => "M249",
         other => other,
     })
 }
@@ -959,11 +1895,26 @@ pub fn apply_overrides(facts: &mut WeaponCombatFacts, index: u8) -> Option<(f32,
     facts.cs_weapon = index;
     let ms = |seconds: f32| (seconds * 1000.0 + 0.5) as i32;
     // A bolt gun's cycle is the shot plus the MW2 rechamber animation that follows it.
-    facts.fire_time_ms = if facts.bolt_action {
+    facts.fire_time_ms = if weapon.gated() {
+        // The CS layer times these guns' shots itself (`cs_fire_gate_ms`); the MW2 machine
+        // only has to be ready by the next tick.
+        40
+    } else if facts.bolt_action {
         (ms(weapon.cycle) - facts.rechamber_time_ms.max(0)).max(50)
     } else {
         ms(weapon.cycle)
     };
+    if weapon.pellets > 1 {
+        facts.weap_class = crate::WEAPCLASS_SPREAD;
+        facts.shots_per_fire = weapon.pellets as i32;
+    }
+    if let Some((start, per_shell, finish)) = weapon.shell_reload {
+        facts.reload_start_time_ms = ms(start);
+        facts.reload_start_add_time_ms = ms(start);
+        facts.reload_add_time_ms = ms(per_shell);
+        facts.reload_empty_add_time_ms = ms(per_shell);
+        facts.reload_end_time_ms = ms(finish);
+    }
     facts.clip_size = weapon.clip;
     facts.start_ammo = weapon.clip + weapon.reserve;
     facts.max_ammo = weapon.reserve;
@@ -1034,15 +1985,44 @@ pub struct CsGunState {
 /// Fire one shot: return the spread `FireBullets3` uses (from the accuracy the previous shot
 /// left), then advance accuracy for the next one.
 pub fn fire(weapon: &CsWeapon, state: &mut CsGunState, shooter: CsShooter, now_ms: i32) -> f32 {
+    // Auto snipers work their accuracy out before the shot, from the time since the last one.
+    if let CsAccuracy::SniperTime {
+        scale,
+        base,
+        cap,
+        first,
+        ..
+    } = weapon.accuracy
+    {
+        state.accuracy = if state.last_fire_ms != 0 {
+            let since = (now_ms - state.last_fire_ms) as f32 / 1000.0;
+            (since * scale + base).min(cap)
+        } else {
+            first
+        };
+    }
     let spread = spread(weapon, state.accuracy, shooter);
     state.shots_fired += 1;
     match weapon.accuracy {
         CsAccuracy::Sustained {
-            divisor, base, max, ..
+            divisor,
+            integer,
+            base,
+            max,
+            power,
+            ..
         } => {
+            // Retail divides as integers for most guns, so the first bullets keep `base`.
             let shots = state.shots_fired.min(1000);
-            state.accuracy = ((shots * shots * shots / divisor) as f32 + base).min(max);
+            let powered = if power == 2 { shots * shots } else { shots * shots * shots };
+            let grown = if integer {
+                (powered / divisor as i32) as f32
+            } else {
+                powered as f32 / divisor
+            };
+            state.accuracy = (grown + base).min(max);
         }
+        CsAccuracy::SniperTime { .. } => {}
         CsAccuracy::Pistol {
             recover,
             factor,
@@ -1068,13 +2048,39 @@ pub fn spread(weapon: &CsWeapon, accuracy: f32, shooter: CsShooter) -> f32 {
         CsSpread::Rifle { air, run, still } => {
             let (base, scale) = if !shooter.on_ground {
                 air
-            } else if shooter.speed > RIFLE_RUN_SPEED {
+            } else if shooter.speed > weapon.run_speed {
                 run
             } else {
                 still
             };
             base + scale * accuracy
         }
+        CsSpread::AutoSniper {
+            air,
+            moving,
+            ducked,
+            standing,
+            unscoped,
+            moving_scaled,
+        } => {
+            let base = if !shooter.on_ground {
+                air
+            } else if shooter.speed > 0.0 {
+                moving
+            } else if shooter.ducked {
+                ducked
+            } else {
+                standing
+            };
+            let moving_whole = shooter.on_ground && shooter.speed > 0.0 && !moving_scaled;
+            let base = if shooter.zoomed { base } else { base + unscoped };
+            if moving_whole {
+                base
+            } else {
+                (1.0 - accuracy) * base
+            }
+        }
+        CsSpread::Cone(cone) => cone,
         CsSpread::Pistol {
             air,
             moving,
@@ -1102,7 +2108,7 @@ pub fn spread(weapon: &CsWeapon, accuracy: f32, shooter: CsShooter) -> f32 {
         } => {
             let base = if !shooter.on_ground {
                 air
-            } else if shooter.speed > RIFLE_RUN_SPEED {
+            } else if shooter.speed > weapon.run_speed {
                 run
             } else if shooter.speed > 10.0 {
                 walk
@@ -1130,9 +2136,23 @@ pub fn recoil(
     punch: &mut [f32; 3],
     flip_roll: u32,
 ) {
+    // Two uniform values in 0..1 from the roll, for the random kicks.
+    let unit = |shift: u32| ((flip_roll >> shift) & 0xffff) as f32 / 65535.0;
     let kick = match weapon.recoil {
         CsRecoil::Punch(up) => {
             punch[0] -= up;
+            return;
+        }
+        CsRecoil::AutoSniper { up, side } => {
+            let random_up = up.0 + (up.1 - up.0) * unit(0);
+            punch[0] -= random_up + punch[0] * 0.25;
+            punch[1] += (unit(16) * 2.0 - 1.0) * side;
+            return;
+        }
+        CsRecoil::Shotgun { ground, air } => {
+            let (low, high) = if shooter.on_ground { ground } else { air };
+            let span = high.saturating_sub(low) + 1;
+            punch[0] -= (low + (flip_roll >> 3) % span) as f32;
             return;
         }
         CsRecoil::KickBack {
@@ -1242,6 +2262,7 @@ pub fn post_frame(
 pub fn initial_accuracy(weapon: &CsWeapon) -> f32 {
     match weapon.accuracy {
         CsAccuracy::Sustained { initial, .. } => initial,
+        CsAccuracy::SniperTime { initial, .. } => initial,
         CsAccuracy::Pistol { initial, .. } => initial,
         CsAccuracy::None => 0.0,
     }
@@ -1392,6 +2413,154 @@ mod tests {
         assert_eq!(damage_at_distance(deagle, 5000.0), 0.0);
         // An AK head hit at close range is lethal without armour.
         assert!(damage_at_distance(ak, 100.0) * CS_LOCATION_DAMAGE[2] > 100.0);
+    }
+
+    #[test]
+    fn silencers_change_damage_range_and_gunshot() {
+        // Only the M4A1 and USP carry one; every other gun is unchanged by it.
+        for name in ["ak47", "awp", "deagle", "glock"] {
+            let gun = weapon(name);
+            assert!(gun.silencer.is_none(), "{name}");
+            assert_eq!(gun.with_silencer(true), *gun, "{name}");
+        }
+        let (m4, usp) = (weapon("m4a1"), weapon("usp"));
+        let (m4_sil, usp_sil) = (m4.with_silencer(true), usp.with_silencer(true));
+        assert_eq!(m4.with_silencer(false), *m4);
+        // M4A1 hits harder but loses range; the USP loses damage and range.
+        assert!((damage_at_distance(m4, 0.0) - 32.0).abs() < 1e-4);
+        assert!((damage_at_distance(&m4_sil, 0.0) - 33.0).abs() < 1e-4);
+        assert!(damage_at_distance(&m4_sil, 1000.0) < damage_at_distance(m4, 1000.0));
+        assert!((damage_at_distance(usp, 0.0) - 34.0).abs() < 1e-4);
+        assert!((damage_at_distance(&usp_sil, 0.0) - 30.0).abs() < 1e-4);
+        // The silenced gunshot differs, and the silencer bit is one per weapon index.
+        assert_ne!(m4_sil.css_fire_sound, m4.css_fire_sound);
+        assert_ne!(usp_sil.css_fire_sound, usp.css_fire_sound);
+        assert_ne!(silencer_bit(1), silencer_bit(2));
+        assert_eq!(SILENCED_SHOT_FLAG & 1, 0, "bit 0 is the impact events' penetrated flag");
+    }
+
+    #[test]
+    fn the_table_is_consistent() {
+        // One bit per gun in the per-weapon flags (`silencer_bit`), unique names and twins.
+        assert!(CS_WEAPONS.len() < 31);
+        for (i, a) in CS_WEAPONS.iter().enumerate() {
+            for b in &CS_WEAPONS[i + 1..] {
+                assert_ne!(a.name, b.name);
+                assert_ne!(a.mw2_name, b.mw2_name, "{} and {} share a twin", a.name, b.name);
+            }
+            assert_ne!(a.mw2_name, CS_KNIFE.mw2_name, "{}", a.name);
+            assert!(CS_GRENADES.iter().all(|g| g.mw2_name != a.mw2_name), "{}", a.name);
+            assert!(a.clip > 0 && a.damage > 0.0 && a.cycle > 0.0, "{}", a.name);
+            assert!(!a.fire_sounds.is_empty() && !a.css_view_model.is_empty(), "{}", a.name);
+            // Scoped guns have levels; a gun that drops its zoom per shot must have one.
+            assert!(a.zoom.is_empty() || a.zoom.iter().all(|z| *z < 90), "{}", a.name);
+            assert_eq!(a.gated(), a.burst.is_some() || a.cycle_zoomed > 0.0);
+        }
+        assert!(CS_KNIFE_INDEX as usize <= 31);
+    }
+
+    #[test]
+    fn smgs_square_the_shots_and_the_mp5_divides_as_a_float() {
+        let (mac, mp5) = (weapon("mac10"), weapon("mp5"));
+        let mut state = fresh(mac);
+        assert!((state.accuracy - 0.15).abs() < 1e-6);
+        // `shots^3 / 200` is 0 for the first 5 bullets (integer division), so the base stays.
+        for _ in 0..5 {
+            fire(mac, &mut state, STANDING, 1000);
+        }
+        assert!((state.accuracy - 0.6).abs() < 1e-5);
+        let mut state = fresh(mp5);
+        assert_eq!(state.accuracy, 0.0);
+        fire(mp5, &mut state, STANDING, 1000);
+        // 1 shot: 1 / 220.1 + 0.45 (float division), not the integer 0 + 0.45.
+        assert!((state.accuracy - (1.0 / 220.1 + 0.45)).abs() < 1e-5);
+        for _ in 0..40 {
+            fire(mp5, &mut state, STANDING, 1000);
+        }
+        assert!((state.accuracy - 0.75).abs() < 1e-6, "capped at 0.75");
+    }
+
+    #[test]
+    fn burst_changes_damage_range_and_keeps_later_bullets_steady() {
+        let famas = weapon("famas");
+        let burst = famas.with_burst(1);
+        assert_eq!(famas.with_burst(0), *famas);
+        assert!((damage_at_distance(famas, 0.0) - 30.0).abs() < 1e-4);
+        assert!((damage_at_distance(&burst, 0.0) - 34.0).abs() < 1e-4);
+        // Full auto adds 0.01 to a still FAMAS's spread; burst does not.
+        let auto = spread(famas, 0.5, STANDING);
+        let first = spread(&burst, 0.5, STANDING);
+        assert!((auto - first - 0.01).abs() < 1e-6);
+        let glock = weapon("glock");
+        let mode = glock.burst.expect("burst");
+        assert_eq!(mode.follow_spread, Some(0.05));
+        assert!((damage_at_distance(&glock.with_burst(2), 500.0) - 25.0 * 0.9).abs() < 1e-4);
+        assert!((damage_at_distance(&glock.with_burst(1), 500.0) - 25.0 * 0.75).abs() < 1e-4);
+        // Only these two have a burst mode, and the CS layer times them.
+        assert_eq!(CS_WEAPONS.iter().filter(|w| w.burst.is_some()).count(), 2);
+        assert!(famas.gated() && glock.gated() && !weapon("ak47").gated());
+    }
+
+    #[test]
+    fn auto_snipers_recover_with_time_and_scoped_rifles_zoom_to_55() {
+        let g3 = weapon("g3sg1");
+        let mut state = fresh(g3);
+        // No last shot: 0.98 straight away, so the first scoped shot is nearly perfect.
+        let scoped = CsShooter { zoomed: true, ..STANDING };
+        let first = fire(g3, &mut state, scoped, 5000);
+        assert!((state.accuracy - 0.98).abs() < 1e-6);
+        assert!((first - 0.02 * 0.055).abs() < 1e-6);
+        // Firing again 100 ms later: 0.1 * 0.3 + 0.55 = 0.58, so the spread opens up.
+        let second = fire(g3, &mut state, scoped, 5100);
+        assert!((state.accuracy - 0.58).abs() < 1e-5);
+        assert!((second - 0.42 * 0.055).abs() < 1e-5);
+        // Unscoped adds 0.025 before the accuracy takes its share.
+        assert!(spread(g3, 0.98, STANDING) > spread(g3, 0.98, scoped));
+        for name in ["aug", "sg552"] {
+            let rifle = weapon(name);
+            assert_eq!(rifle.zoom, &[55]);
+            assert!(!rifle.unzoom_on_fire && !rifle.scope_overlay);
+            assert!(rifle.cycle_zoomed > rifle.cycle);
+            assert_eq!(next_zoom(rifle, 0), 55);
+            assert_eq!(next_zoom(rifle, 55), 0);
+        }
+        for name in ["awp", "scout", "g3sg1", "sg550"] {
+            assert!(weapon(name).scope_overlay, "{name}");
+        }
+        assert!(weapon("awp").unzoom_on_fire && weapon("scout").unzoom_on_fire);
+        assert!(!g3.unzoom_on_fire && !weapon("sg550").unzoom_on_fire);
+    }
+
+    #[test]
+    fn shotguns_fire_pellets_and_kick_by_ground_or_air() {
+        for (name, pellets, damage) in [("m3", 9, 20.0), ("xm1014", 6, 20.0)] {
+            let gun = weapon(name);
+            assert_eq!(gun.pellets, pellets);
+            assert!(gun.shell_reload.is_some());
+            assert!((damage_at_distance(gun, 1000.0) - damage).abs() < 1e-4, "no falloff");
+        }
+        let m3 = weapon("m3");
+        let mut state = fresh(m3);
+        let mut punch = [0.0; 3];
+        recoil(m3, &mut state, STANDING, &mut punch, 12345);
+        assert!((-6.0..=-4.0).contains(&punch[0]), "{punch:?}");
+        let mut punch = [0.0; 3];
+        let air = CsShooter { on_ground: false, ..STANDING };
+        recoil(m3, &mut state, air, &mut punch, 12345);
+        assert!((-11.0..=-8.0).contains(&punch[0]), "{punch:?}");
+        assert!((spread(m3, 1.0, STANDING) - 0.0675).abs() < 1e-6);
+    }
+
+    #[test]
+    fn new_guns_use_the_right_armor_ratio() {
+        let index = |name: &str| {
+            u8::try_from(CS_WEAPONS.iter().position(|w| w.name == name).unwrap() + 1).unwrap()
+        };
+        assert_eq!(armor_penetration(index("scout")), 1.7);
+        assert_eq!(armor_penetration(index("g3sg1")), 1.65);
+        assert_eq!(armor_penetration(index("mac10")), 0.95);
+        assert_eq!(armor_penetration(index("galil")), 1.55);
+        assert_eq!(armor_penetration(index("mp5")), 1.0);
     }
 
     #[test]
