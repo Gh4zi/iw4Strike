@@ -285,8 +285,6 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - The movement mode (`mv_mode`) isn't sent to other players yet, so use the same mode on
   every client.
 
-Detailed progress notes are in [`CLAUDE.md`](CLAUDE.md).
-
 ---
 
 ## How it works
