@@ -15,6 +15,9 @@ HOW TO PLAY
      - MW2 not found: right-click in this folder, New > Shortcut, paste your
        MW2 folder path, and name it "Modern Warfare 2".
      - CS:Source not found: open .env in Notepad and follow the note there.
+     - No CS:Source at all: select your Counter-Strike 1.6 "cstrike" folder
+       (the one with a "models" folder inside) with IW4L_CSTRIKE in .env.
+       It is only used when CS:Source is missing.
 
 IN GAME
   - Press the key under Esc (`) to open the console.
