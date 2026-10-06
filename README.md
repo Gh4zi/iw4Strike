@@ -340,8 +340,9 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   timer properly.
 - Flashbangs and smoke grenades don't bounce like CS grenades yet. Their bouncing will be
   reworked.
-- Favela: broken glass can turn red when you look at it from certain angles. This may also be
-  one of the reasons for low FPS on that map.
+- Terminal: broken glass can turn red when you look at it from certain angles. This may be
+  one of the reasons for low FPS.
+- Favela: rendering issues and low FPS (cause not found yet).
 - Fall damage is inconsistent: sometimes a fall kills you, sometimes it doesn't register any hit.
 - There is no fall damage sound yet (to come from CS 1.6 or CS:S).
 - The flashbang explosion has no sound yet.
