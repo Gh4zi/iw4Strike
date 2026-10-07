@@ -700,6 +700,6 @@ pub fn snapshot_ground_e_type(snapshot: &Snapshot, mover_num: i32) -> Option<i32
 
 /// Where the player is between fixed movement steps: the last step's origin carried on by the
 /// time the command has not moved yet (0 outside `mv_mode csgo64`/`csgo128`).
-fn between_steps(ps: &PlayerState) -> [f32; 3] {
+pub(crate) fn between_steps(ps: &PlayerState) -> [f32; 3] {
     [0, 1, 2].map(|axis| ps.origin[axis] + ps.velocity[axis] * ps.cs_move_accum)
 }

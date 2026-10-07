@@ -267,7 +267,8 @@ pub fn player_state_to_entity_state(client: ClientId, ps: &PlayerState) -> Entit
         es.e_flags |= EFLAGS_DEAD;
     }
     es.tr_type = TR_INTERPOLATE;
-    es.tr_base = ps.origin;
+    // Between fixed movement steps (`mv_mode csgo64`/`csgo128`), so bodies move smoothly.
+    es.tr_base = crate::client::predict::between_steps(ps);
     es.apos_tr_type = TR_INTERPOLATE;
     es.apos_tr_base = ps.viewangles;
     es.ground_entity_num = ps.ground_entity_num;
