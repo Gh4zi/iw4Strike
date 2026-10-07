@@ -105,11 +105,15 @@ pub const CSS_ENV: &str = "IW4L_CSS";
 
 /// Counter-Strike: Source's main pack (`cstrike/cstrike_pak_dir.vpk`): `IW4L_CSS` (its `cstrike`
 /// folder, from the environment or `.env`) when set, else the folder saved in the game folders
-/// window, else `steamapps/common/Counter-Strike Source/cstrike` in any Steam library.
+/// window, else `steamapps/common/Counter-Strike Source/cstrike` in any Steam library — unless
+/// the player cleared it in the window.
 #[must_use]
 pub fn find_css_pak() -> Option<PathBuf> {
     if let Some(dir) = css_env_override() {
         return css_pak_in(Path::new(&dir));
+    }
+    if crate::game_paths::turned_off(GameFolder::Css) {
+        return None;
     }
     saved(GameFolder::Css)
         .and_then(|dir| css_pak_in(&dir))

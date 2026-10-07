@@ -125,6 +125,8 @@ struct Folders {
     chosen: [Option<PathBuf>; 3],
     /// A pick (or saved folder) without the game's data, for the status line.
     rejected: [Option<PathBuf>; 3],
+    /// A Counter-Strike game the player cleared: not used, not even from Steam.
+    off: [bool; 3],
     auto_mw2: Option<PathBuf>,
     steam_css: Option<PathBuf>,
     css_env: Option<String>,
@@ -159,9 +161,14 @@ impl Folders {
             .unwrap_or_default();
         let mut chosen: [Option<PathBuf>; 3] = Default::default();
         let mut rejected: [Option<PathBuf>; 3] = Default::default();
+        let mut off = [false; 3];
         for folder in GameFolder::ALL {
             let raw = saved[folder.index()].trim();
             if raw.is_empty() {
+                continue;
+            }
+            if raw.eq_ignore_ascii_case(game_paths::TURNED_OFF) {
+                off[folder.index()] = folder != GameFolder::Mw2;
                 continue;
             }
             match folder.resolve(Path::new(raw)) {
@@ -174,6 +181,7 @@ impl Folders {
             opened,
             chosen,
             rejected,
+            off,
             auto_mw2: asset_transport::discover::auto_mw2_folder(&games.0),
             steam_css: asset_transport::steam_css_pak()
                 .and_then(|pak| pak.parent().map(Path::to_path_buf)),
@@ -231,7 +239,15 @@ impl Folders {
                         )
                     };
                 }
-                if let Some(path) = &self.chosen[index] {
+                if self.off[index] {
+                    (
+                        None,
+                        Tone::Dim,
+                        "Not used (cleared). Browse to use it again; Counter-Strike 1.6 below is \
+                         used instead when selected."
+                            .into(),
+                    )
+                } else if let Some(path) = &self.chosen[index] {
                     (Some(path.clone()), Tone::Good, format!("{rejected}Selected."))
                 } else if let Some(path) = &self.steam_css {
                     (
@@ -264,6 +280,12 @@ impl Folders {
                         );
                     }
                     Some((dir, "Set by IW4L_CSTRIKE in .env (it overrides this window)."))
+                } else if self.off[index] {
+                    return (
+                        None,
+                        Tone::Dim,
+                        "Not used (cleared). Browse to use it again.".into(),
+                    );
                 } else {
                     self.chosen[index].clone().map(|dir| (dir, "Selected."))
                 };
@@ -303,6 +325,9 @@ impl Folders {
             .as_deref()
             .ok_or("there is no settings file location")?;
         let paths = GameFolder::ALL.map(|folder| {
+            if self.off[folder.index()] {
+                return game_paths::TURNED_OFF.to_owned();
+            }
             self.chosen[folder.index()]
                 .as_ref()
                 .map(|path| path.display().to_string())
@@ -589,8 +614,11 @@ fn press_buttons(
                 picker.0 = Some((folder, answer));
             }
             Action::Clear(folder) => {
+                // MW2 goes back to being found automatically; a Counter-Strike game is turned
+                // off, so a Steam copy isn't picked up again either.
                 folders.chosen[folder.index()] = None;
                 folders.rejected[folder.index()] = None;
+                folders.off[folder.index()] = folder != GameFolder::Mw2;
             }
             Action::Play => match folders.save() {
                 Ok(()) => {
@@ -631,6 +659,7 @@ fn poll_picker(mut picker: ResMut<Picker>, mut folders: ResMut<Folders>) {
             diag::info!(Launch, "game folders: {} = {}", folder.title(), found.display());
             folders.chosen[folder.index()] = Some(found);
             folders.rejected[folder.index()] = None;
+            folders.off[folder.index()] = false;
         }
         None => folders.rejected[folder.index()] = Some(picked),
     }

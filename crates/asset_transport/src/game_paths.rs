@@ -1,7 +1,8 @@
 //! The game folders the player selects in the game folders window, saved in `settings.cfg`
 //! (`game_path_mw2`, `game_path_css`, `game_path_cs16`). An environment / `.env` override
 //! (`IW4L_CSS`, `IW4L_CSTRIKE`) still wins over a saved folder; Steam is searched only when
-//! neither names one.
+//! neither names one. A Counter-Strike folder saved as `none` (Clear in the window) is not used
+//! at all, not even when Steam has the game.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -135,11 +136,23 @@ pub fn confirmed() -> bool {
     saved_at_start().is_some()
 }
 
+/// What a cleared Counter-Strike folder is saved as: that game is not used.
+pub const TURNED_OFF: &str = "none";
+
+/// Whether the player cleared `folder` in the game folders window: the game is not used, and
+/// not looked for in Steam either.
+#[must_use]
+pub fn turned_off(folder: GameFolder) -> bool {
+    saved_at_start()
+        .as_ref()
+        .is_some_and(|saved| saved[folder.index()].trim().eq_ignore_ascii_case(TURNED_OFF))
+}
+
 /// The folder saved for `folder`, resolved, when it still holds the game's data.
 #[must_use]
 pub fn saved(folder: GameFolder) -> Option<PathBuf> {
     let raw = &saved_at_start().as_ref()?[folder.index()];
-    if raw.is_empty() {
+    if raw.is_empty() || raw.trim().eq_ignore_ascii_case(TURNED_OFF) {
         return None;
     }
     let found = folder.resolve(Path::new(raw));
