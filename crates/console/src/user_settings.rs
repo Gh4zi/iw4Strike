@@ -334,6 +334,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("vsync={}", settings.vsync),
         format!("master_volume={:.3}", settings.master_volume),
         format!("snd_ambient_volume={:.2}", settings.ambient_volume),
+        format!("_vgui_menus={}", u8::from(settings.vgui_menus)),
         format!("brightness={:.3}", settings.brightness),
         format!("fov={:.0}", settings.fov),
         format!("viewmodel_fov={:.0}", settings.viewmodel_fov),
@@ -430,6 +431,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                 }
             }
             "sv_destructibles" => settings.destructibles = value.trim() == "1",
+            "_vgui_menus" => settings.vgui_menus = value.trim() != "0",
             "mv_mode" => {
                 if movement_iw4::rules::MovementMode::from_name(value).is_some() {
                     value.trim().clone_into(&mut settings.mv_mode);
@@ -510,6 +512,23 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
         && !binds.iter().any(|(_, id)| id == 21)
     {
         binds.set(BindButton::Key(KeyCode::Digit4), 21);
+    }
+    // Counter-Strike: B opens the buy menu, 6-9 and 0 pick its items (slot6..slot10). Settings
+    // saved before those commands existed get them on keys nothing else uses.
+    for (key, command) in [
+        (KeyCode::KeyB, "buymenu"),
+        (KeyCode::Digit6, "slot6"),
+        (KeyCode::Digit7, "slot7"),
+        (KeyCode::Digit8, "slot8"),
+        (KeyCode::Digit9, "slot9"),
+        (KeyCode::Digit0, "slot10"),
+    ] {
+        let Some(id) = input_iw4::command_id_from_name(command) else {
+            continue;
+        };
+        if binds.get(BindButton::Key(key)).is_none() && !binds.iter().any(|(_, bound)| bound == id) {
+            binds.set(BindButton::Key(key), id);
+        }
     }
 }
 

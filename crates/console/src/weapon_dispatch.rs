@@ -77,11 +77,16 @@ pub(crate) fn register_weapon_commands(
     if registry.resolve("buy").is_none() {
         registry.register(
             crate::CommandSpec::new("buy")
-                .usage("buy <weapon> — a CS gun or grenade by its buy name (ak47, m4a1, awp, deagle, usp, glock, famas, galil, aug, sg552, scout, g3sg1, sg550, m249, m3, xm1014, mac10, tmp, mp5, ump45, p90, p228, fiveseven, elite, hegrenade, flashbang, smokegrenade, vest, vesthelm); free for now")
+                .usage("buy <weapon> — a CS gun or grenade by its buy name (ak47, m4a1, awp, deagle, usp, glock, famas, galil, aug, sg552, scout, g3sg1, sg550, m249, m3, xm1014, mac10, tmp, mp5, ump45, p90, p228, fiveseven, elite, hegrenade, flashbang, smokegrenade, vest, vesthelm) — paid from your money in a buy zone during the buy time (bomb mode), free anywhere in the other modes")
                 .arg(StaticCompleter::new(
                     weapon_iw4::cs::cs_buy_list().map(|(name, _, _)| name),
                 )),
         );
+    }
+    if registry.resolve("menuselect").is_none() {
+        registry.register(crate::CommandSpec::new("menuselect").usage(
+            "menuselect <0-9> — pick an item of the open CS menu (the buy menu), as its number key",
+        ));
     }
     if registry.resolve("menuresponse").is_none() {
         registry.register(crate::CommandSpec::new("menuresponse").usage(
@@ -155,6 +160,86 @@ fn should_refresh_weapon_args(catalog_changed: bool, last_held: Option<u32>, hel
     catalog_changed || last_held != Some(held)
 }
 
+/// Sends a CS purchase by buy name or alias (`ak47`, `fn57`, `vest`, ...); the server checks the
+/// money, the buy zone and time and the side. Returns what to tell the player.
+fn send_buy(
+    name: &str,
+    weapons: Option<&PreparedWeapons>,
+    presented: &PresentedSnapshot,
+    local: sim::ClientId,
+    inbox: &mut ClientActionInbox,
+    seq: &mut net::ActionRequestIds,
+) -> String {
+    let Some(name) = weapon_iw4::cs::buy_alias(name) else {
+        return format!("buy: nothing sold as `{name}`");
+    };
+    if !alive(presented, local) {
+        return "buy: not Alive".into();
+    }
+    let price = weapon_iw4::cs::buy_price(name).unwrap_or(0);
+    let money = presented.player(local).map_or(0, |ps| ps.cs_money as i32);
+    if money < price && !(name == "vesthelm" && money >= 350) {
+        return format!("buy: {name} costs ${price}, you have ${money}");
+    }
+    let request_id = seq.allocate();
+    let action = match name {
+        "vest" | "vesthelm" => ClientAction::BuyArmor {
+            request_id,
+            helmet: name == "vesthelm",
+        },
+        _ => {
+            let Some(weapons) = weapons else {
+                return "buy: weapon catalog not loaded".into();
+            };
+            let Some((_, mw2_name, _)) = weapon_iw4::cs::cs_buyable(name) else {
+                return format!("buy: nothing sold as `{name}`");
+            };
+            match resolve_give_id(&weapons.0, mw2_name, &[]) {
+                Ok(weapon) => ClientAction::BuyWeapon { request_id, weapon },
+                Err(msg) => return format!("buy: {msg}"),
+            }
+        }
+    };
+    match inbox.push(local, action) {
+        Ok(()) => format!("buy: {name} (${price})"),
+        Err(error) => format!("buy: {error}"),
+    }
+}
+
+/// The buy menu's picks, sent like the `buy` command; `menuselect <n>` picks an item as its
+/// number key would.
+pub(crate) fn route_buy_menu(
+    mut events: MessageReader<ConsoleCommand>,
+    menu: Option<ResMut<hud::CsBuyMenu>>,
+    weapons: Option<Res<PreparedWeapons>>,
+    presented: Res<PresentedSnapshot>,
+    local: Res<LocalPresentClient>,
+    mut inbox: ResMut<ClientActionInbox>,
+    mut seq: ResMut<net::ActionRequestIds>,
+) {
+    let Some(mut menu) = menu else {
+        return;
+    };
+    for cmd in events.read() {
+        if cmd.name == "menuselect"
+            && let Some(key) = cmd.args.first().and_then(|n| n.parse::<u8>().ok())
+        {
+            menu.select(if key == 0 { 10 } else { key.min(10) });
+        }
+    }
+    for name in menu.take_purchases() {
+        let message = send_buy(
+            name,
+            weapons.as_deref(),
+            &presented,
+            local.0,
+            &mut inbox,
+            &mut seq,
+        );
+        diag::info!(Console, "buy menu: {message}");
+    }
+}
+
 pub(crate) fn route_weapon_commands(
     mut events: MessageReader<ConsoleCommand>,
     mut console: ResMut<ConsoleState>,
@@ -176,7 +261,7 @@ pub(crate) fn route_weapon_commands(
     };
 
     for cmd in events.read() {
-        if matches!(cmd.name.as_str(), "give" | "attach" | "buy")
+        if matches!(cmd.name.as_str(), "give" | "attach")
             && authority.as_ref().is_some_and(|a| !a.0.cheats_enabled())
         {
             echo(
@@ -213,66 +298,25 @@ pub(crate) fn route_weapon_commands(
                 };
                 echo(message, &mut console, &mut line);
             }
-            "buy" if matches!(cmd.args.first().map(String::as_str), Some("vest" | "vesthelm")) => {
-                let helmet = cmd.args.first().is_some_and(|a| a == "vesthelm");
-                if !alive(&presented, local.0) {
-                    echo("buy: not Alive".into(), &mut console, &mut line);
-                    continue;
-                }
-                let request_id = seq.allocate();
-                let price = if helmet {
-                    weapon_iw4::cs::CS_KEVLAR_HELMET_PRICE
-                } else {
-                    weapon_iw4::cs::CS_KEVLAR_PRICE
-                };
-                let message = match inbox.push(local.0, ClientAction::BuyArmor { request_id, helmet }) {
-                    Ok(()) => format!("buy: {} (${price})", if helmet { "kevlar + helmet" } else { "kevlar" }),
-                    Err(error) => format!("buy: {error}"),
-                };
-                echo(message, &mut console, &mut line);
-            }
             "buy" => {
-                let Some((name, mw2_name, price)) = cmd
-                    .args
-                    .first()
-                    .and_then(|name| weapon_iw4::cs::cs_buyable(name))
-                else {
+                let Some(name) = cmd.args.first() else {
                     let names: Vec<_> = weapon_iw4::cs::cs_buy_list().map(|(n, _, _)| n).collect();
-                    echo(format!("buy: one of {}", names.join(" ")), &mut console, &mut line);
-                    continue;
-                };
-                let Some(weapons) = weapons.as_ref() else {
-                    echo("buy: weapon catalog not loaded".into(), &mut console, &mut line);
-                    continue;
-                };
-                if !alive(&presented, local.0) {
-                    echo("buy: not Alive".into(), &mut console, &mut line);
-                    continue;
-                }
-                let money = presented
-                    .player(local.0)
-                    .map_or(0, |ps| ps.cs_money as i32);
-                if money < price {
                     echo(
-                        format!("buy: {name} costs ${price}, you have ${money}"),
+                        format!("buy: one of {} vest vesthelm", names.join(" ")),
                         &mut console,
                         &mut line,
                     );
                     continue;
-                }
-                match resolve_give_id(&weapons.0, mw2_name, &[]) {
-                    Ok(weapon) => {
-                        let request_id = seq.allocate();
-                        let message = match inbox
-                            .push(local.0, ClientAction::BuyWeapon { request_id, weapon })
-                        {
-                            Ok(()) => format!("buy: {name} (${price})"),
-                            Err(error) => format!("buy: {error}"),
-                        };
-                        echo(message, &mut console, &mut line);
-                    }
-                    Err(msg) => echo(format!("buy: {msg}"), &mut console, &mut line),
-                }
+                };
+                let message = send_buy(
+                    name,
+                    weapons.as_deref(),
+                    &presented,
+                    local.0,
+                    &mut inbox,
+                    &mut seq,
+                );
+                echo(message, &mut console, &mut line);
             }
             "give" => {
                 let target = match parse_give_target(&cmd.args) {

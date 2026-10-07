@@ -26,6 +26,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "sv_destructibles [0|1] — cars, barrels and breakable walls take damage (default 0)",
         ));
     }
+    if registry.resolve("_vgui_menus").is_none() {
+        registry.register(crate::CommandSpec::new("_vgui_menus").usage(
+            "_vgui_menus [0|1] — buy menu: 1 the window you click (CS:S / CS 1.6 VGUI), 0 CS 1.6's old numbered text menu",
+        ));
+    }
     if registry.resolve("snd_ambient_volume").is_none() {
         registry.register(crate::CommandSpec::new("snd_ambient_volume").usage(
             "snd_ambient_volume [0-1] — how loud the map's own ambience plays (wind, engines, hum)",
@@ -122,6 +127,15 @@ pub(crate) fn route_movement_commands(
                     format!("sv_destructibles = {arg}")
                 }
                 _ => "usage: sv_destructibles [0|1]".to_owned(),
+            },
+            "_vgui_menus" => match cmd.args.as_slice() {
+                [] => format!("_vgui_menus = {}", u8::from(game.vgui_menus)),
+                [arg] if arg == "0" || arg == "1" => {
+                    game.vgui_menus = arg == "1";
+                    game.touch();
+                    format!("_vgui_menus = {arg}")
+                }
+                _ => "usage: _vgui_menus [0|1]".to_owned(),
             },
             "snd_ambient_volume" => match cmd.args.as_slice() {
                 [] => format!("snd_ambient_volume = {:.2}", game.ambient_volume),

@@ -600,6 +600,7 @@ fn run_entity_types_system(ecs: &mut World) {
         crate::entity_run::phase_run_entity_thinks(&mut world, tick);
         if world.publishes_snapshot() {
             crate::equipment::refire_cs_smokes(&mut world, tick);
+            crate::cs_economy::update_buy_bits(&mut world, tick);
             world.world_objects_mut().glass_update(
                 i32::try_from(tick.0.saturating_mul(crate::MATCH_TICK_MS)).unwrap_or(i32::MAX),
             );
@@ -863,7 +864,11 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
             ClientAction::UseCopycat { .. } | ClientAction::SpawnClient { .. } => {}
             ClientAction::DropWeapon { .. } => crate::item::drop_cs_weapon(world, tick, *id),
             ClientAction::BuyArmor { helmet, .. } => {
-                crate::script_player::cs_buy_armor(world, *id, helmet);
+                if let Some(refusal) = crate::cs_economy::buy_refusal(world, tick, *id) {
+                    diag::info!(Sim, "cs buy: client {} can't buy armor: {refusal}", id.0);
+                } else {
+                    crate::script_player::cs_buy_armor(world, *id, helmet);
+                }
             }
             ClientAction::BuyWeapon { request_id, weapon } => {
                 apply_buy_weapon(world, tick, *id, request_id, weapon);
@@ -1415,7 +1420,9 @@ fn apply_configuration_change(
 }
 
 /// A CS purchase: the gun or grenade's price comes out of the player's money, as in CS refused
-/// when they can't pay it, already own that gun, or carry all of that grenade they may.
+/// when they can't pay it, already own that gun, or carry all of that grenade they may — and in
+/// the bomb mode outside a buy zone, after the buy time, or for the other side's guns. A gun
+/// bought over one in the same slot throws that one down (CS `DropPrimary`/`DropPistol`).
 fn apply_buy_weapon(world: &mut FrameWorld, tick: Tick, id: ClientId, request_id: u32, weapon: u32) {
     if !world
         .client_meta(id)
@@ -1427,11 +1434,20 @@ fn apply_buy_weapon(world: &mut FrameWorld, tick: Tick, id: ClientId, request_id
         return;
     };
     let index = facts.cs_weapon;
-    let (price, carry) = match (weapon_iw4::cs::cs_weapon(index), weapon_iw4::cs::cs_grenade(index)) {
-        (Some(gun), _) => (gun.price, None),
-        (None, Some(grenade)) => (grenade.price, Some(grenade.carry)),
-        (None, None) => return,
-    };
+    let (name, price, carry) =
+        match (weapon_iw4::cs::cs_weapon(index), weapon_iw4::cs::cs_grenade(index)) {
+            (Some(gun), _) => (gun.name, gun.price, None),
+            (None, Some(grenade)) => (grenade.name, grenade.price, Some(grenade.carry)),
+            (None, None) => return,
+        };
+    if let Some(refusal) = crate::cs_economy::buy_refusal(world, tick, id) {
+        diag::info!(Sim, "cs buy: client {} can't buy {name}: {refusal}", id.0);
+        return;
+    }
+    if !crate::cs_economy::side_may_buy(world, id, name) {
+        diag::info!(Sim, "cs buy: client {} can't buy {name}: not sold to their side", id.0);
+        return;
+    }
     let owned = world
         .player(id)
         .is_some_and(|ps| ps.weapons.contains(&(weapon as i32)));
@@ -1445,20 +1461,27 @@ fn apply_buy_weapon(world: &mut FrameWorld, tick: Tick, id: ClientId, request_id
         }
     };
     if full {
-        diag::info!(Sim, "cs buy: client {} already carries {}", id.0, world.weapon_script_name(weapon));
+        diag::info!(Sim, "cs buy: client {} already carries {name}", id.0);
         return;
     }
     if !crate::cs_economy::pay(world, id, price) {
         let has = crate::cs_economy::money(world, id);
-        diag::info!(
-            Sim,
-            "cs buy: client {} can't afford {} (${price}, has ${has})",
-            id.0,
-            world.weapon_script_name(weapon)
-        );
+        diag::info!(Sim, "cs buy: client {} can't afford {name} (${price}, has ${has})", id.0);
         return;
     }
+    if carry.is_none()
+        && let Some(replaced) = crate::item::owned_in_same_cs_slot(world, id, weapon)
+    {
+        crate::item::throw_cs_weapon(world, tick, id, replaced);
+    }
     apply_give_weapon(world, tick, id, request_id, weapon);
+    let held = world.player(id).map_or(0, |ps| ps.weapon);
+    diag::info!(
+        Sim,
+        "cs buy: client {} bought {name} (${price}), holding {}",
+        id.0,
+        world.weapon_script_name(held)
+    );
 }
 
 fn apply_give_weapon(
@@ -1636,12 +1659,32 @@ fn apply_give_weapon(
             }
         }
     }
+    // Counter-Strike brings a new gun up only when it ranks at or above the held one
+    // (`FShouldSwitchWeapon`: rifle over pistol over knife and grenades). A gun that replaced the
+    // held one, or comes to empty hands, is in hand at once; otherwise the client is asked to
+    // select it (`WeaponSwitchRequested`), so the commands it already sent, still naming the held
+    // weapon, don't switch straight back.
+    let held = (next.weapon, next.weapon_primary, next.last_weapon_hand);
+    let held_kept = held.0 != 0
+        && !(replaced && held.0 == outgoing)
+        && next.weapons.contains(&(held.0 as i32));
+    let ranks = !held_kept
+        || world.combat_facts_for(held.0).is_none_or(|held_facts| {
+            weapon_iw4::cs::slot_of(&facts) <= weapon_iw4::cs::slot_of(&held_facts)
+        });
+    let raise = facts.cs_weapon == 0 || !held_kept;
+    let client_switch = facts.cs_weapon != 0 && held_kept && ranks;
     give_weapon_to_ps_akimbo(&mut next, weapon, akimbo);
     *world.player_mut(id).expect("validated alive player") = next;
-    let (clip, stock) = if let Some(ps_mut) = world.player_mut(id) {
-        arm_held_weapon(ps_mut, weapon, &facts)
-    } else {
-        (0, 0)
+    let (clip, stock) = match world.player_mut(id) {
+        Some(ps_mut) if raise => arm_held_weapon(ps_mut, weapon, &facts),
+        Some(ps_mut) => {
+            (ps_mut.weapon, ps_mut.weapon_primary, ps_mut.last_weapon_hand) = held;
+            let (clip0, clip1, stock) = weapon_iw4::spawn_clip_stock(&facts, 0);
+            seed_ps_ammo_tables(ps_mut, weapon, &facts, clip0, clip1, false, stock);
+            (clip0, stock)
+        }
+        None => (0, 0),
     };
     let meta = world.client_meta_mut(id);
     if replaced {
@@ -1650,12 +1693,21 @@ fn apply_give_weapon(
     }
     meta.set_ammo(weapon, clip, stock);
     meta.set_quick_reload_ready(weapon, true);
-    meta.mirror_held_ammo(weapon);
-    meta.weapon_shot_count = 0;
-    meta.burst_latch = false;
-    meta.burst_latch_secondary = false;
-    meta.rechamber_pending = false;
-    meta.rechamber_pending_secondary = false;
+    if raise {
+        meta.mirror_held_ammo(weapon);
+        meta.weapon_shot_count = 0;
+        meta.burst_latch = false;
+        meta.burst_latch_secondary = false;
+        meta.rechamber_pending = false;
+        meta.rechamber_pending_secondary = false;
+    }
+    if client_switch {
+        world.push_event(
+            tick,
+            EventAudience::Client(id),
+            SimEvent::WeaponSwitchRequested { weapon },
+        );
+    }
     world.push_event(
         tick,
         EventAudience::Client(id),

@@ -1016,8 +1016,12 @@ pub fn sample_client_input(
             input_iw4::set_ads(&mut actions.client, false);
         }
     }
-    // Counter-Strike slot keys: select the owned weapon in that slot.
-    let weapon_slots = std::mem::take(&mut actions.client.weapon_slots);
+    // Counter-Strike slot keys: select the owned weapon in that slot — or, while a CS menu is
+    // open, pick its items.
+    let mut weapon_slots = std::mem::take(&mut actions.client.weapon_slots);
+    if let Some(keys) = actions.menu_keys.as_mut() {
+        keys.append(&mut weapon_slots);
+    }
     if let Some(ps) = ps.filter(|_| !frozen) {
         for slot in weapon_slots {
             if !weapon_cycle_allowed(ps, clock.time(), select.time) {

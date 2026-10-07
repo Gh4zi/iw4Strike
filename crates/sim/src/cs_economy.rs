@@ -107,6 +107,117 @@ pub(crate) fn reward_kill(world: &mut FrameWorld, victim: ClientId, attacker: Op
     );
 }
 
+/// Seconds of buying once the freeze is over (`scr_cs_buytime`; CS2's `mp_buytime 20`).
+const BUY_TIME_DEFAULT_SECONDS: f32 = 20.0;
+/// A buy zone: this close to any of the player's side's spawn points (CS 1.6 on a map without
+/// `func_buyzone`, ReGameDLL `CBasePlayer::HandleSignals`).
+const BUY_ZONE_RADIUS: f32 = 200.0;
+
+/// The bomb mode's attacking (Terrorist) MW2 team, from its script.
+pub(crate) fn attackers(world: &mut FrameWorld) -> Option<i32> {
+    let runtime = world.ecs().get_resource::<crate::script::Runtime>()?;
+    match runtime.dvars.get("cs_attackers").map(String::as_str) {
+        Some("axis") => Some(entity_iw4::TEAM_AXIS),
+        Some("allies") => Some(entity_iw4::TEAM_ALLIES),
+        _ => None,
+    }
+}
+
+/// Whether the round still sells: all through the freeze (the script's `level.startTime` is set
+/// when it ends) and for the buy time after it.
+fn buy_time_open(world: &mut FrameWorld, tick: crate::Tick) -> bool {
+    let Some(runtime) = world.ecs().get_resource::<crate::script::Runtime>() else {
+        return true;
+    };
+    let Some(crate::script::Value::Int(start)) =
+        crate::script::host::restart::field(runtime, 0, "startTime")
+    else {
+        return true;
+    };
+    let seconds = runtime
+        .dvars
+        .get("scr_cs_buytime")
+        .and_then(|value| value.parse::<f32>().ok())
+        .unwrap_or(BUY_TIME_DEFAULT_SECONDS);
+    let now = i64::from(tick.0) * i64::from(crate::MATCH_TICK_MS);
+    now - i64::from(start) < (seconds * 1000.0) as i64
+}
+
+/// Where and when `id` may buy now (`playerstate_iw4::cs_buy` bits). Outside the bomb mode
+/// everything sells everywhere.
+pub(crate) fn buy_bits(world: &mut FrameWorld, tick: crate::Tick, id: ClientId) -> u32 {
+    use playerstate_iw4::cs_buy::{TIME, ZONE};
+    if !economy(world) {
+        return ZONE | TIME;
+    }
+    let time = if buy_time_open(world, tick) { TIME } else { 0 };
+    let attackers = attackers(world).unwrap_or(entity_iw4::TEAM_AXIS);
+    let Some(team) = world.client_meta(id).map(|meta| meta.client_state_team) else {
+        return time;
+    };
+    let class = if team == attackers {
+        "mp_sd_spawn_attacker"
+    } else if team == entity_iw4::TEAM_AXIS || team == entity_iw4::TEAM_ALLIES {
+        "mp_sd_spawn_defender"
+    } else {
+        return time;
+    };
+    let Some(origin) = world.player(id).map(|ps| ps.origin) else {
+        return time;
+    };
+    let near = world
+        .bootstrap_ref()
+        .spawns
+        .iter()
+        .filter(|spawn| spawn.classname.eq_ignore_ascii_case(class))
+        .any(|spawn| {
+            let d = [0, 1, 2].map(|i| spawn.origin[i] - origin[i]);
+            d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < BUY_ZONE_RADIUS * BUY_ZONE_RADIUS
+        });
+    time | if near { ZONE } else { 0 }
+}
+
+/// Refreshes every player's buy zone and buy time bits, for their HUD and buy menu.
+pub(crate) fn update_buy_bits(world: &mut FrameWorld, tick: crate::Tick) {
+    for id in world.client_ids_sorted() {
+        let bits = buy_bits(world, tick, id);
+        if let Some(ps) = world.player_mut(id)
+            && ps.cs_buy != bits
+        {
+            ps.cs_buy = bits;
+        }
+    }
+}
+
+/// Why `id` can't buy right now, if they can't: out of buy time or out of a buy zone (CS
+/// checks the time first).
+pub(crate) fn buy_refusal(world: &mut FrameWorld, tick: crate::Tick, id: ClientId) -> Option<&'static str> {
+    use playerstate_iw4::cs_buy::{TIME, ZONE};
+    let bits = buy_bits(world, tick, id);
+    if bits & TIME == 0 {
+        Some("the buy time is over")
+    } else if bits & ZONE == 0 {
+        Some("not in a buy zone")
+    } else {
+        None
+    }
+}
+
+/// Whether `id`'s side may buy `name` (a buy name): team weapons are kept to their side in the
+/// bomb mode, where the sides are Terrorists and Counter-Terrorists.
+pub(crate) fn side_may_buy(world: &mut FrameWorld, id: ClientId, name: &str) -> bool {
+    use weapon_iw4::cs::BuyTeam;
+    let team = weapon_iw4::cs::buy_team(name);
+    if team == BuyTeam::Both || !economy(world) {
+        return true;
+    }
+    let attackers = attackers(world).unwrap_or(entity_iw4::TEAM_AXIS);
+    let terrorist = world
+        .client_meta(id)
+        .is_some_and(|meta| meta.client_state_team == attackers);
+    (team == BuyTeam::Terrorists) == terrorist
+}
+
 /// How the bomb mode's round ended, as its script left it at the restart.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct RoundEnd {

@@ -1878,6 +1878,71 @@ pub fn cs_buy_list() -> impl Iterator<Item = (&'static str, &'static str, i32)> 
         .chain(CS_GRENADES.iter().map(|g| (g.name, g.mw2_name, g.price)))
 }
 
+/// Which side may buy an item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuyTeam {
+    Both,
+    Terrorists,
+    CounterTerrorists,
+}
+
+/// Who sells `name` (a buy name): the AK-47, Galil, SG 552, MAC-10, G3/SG-1 and Dual Elites are
+/// the Terrorists' alone, the M4A1, FAMAS, AUG, TMP, SG 550 and Five-seveN the
+/// Counter-Terrorists' (CS 1.6 and CS:S).
+#[must_use]
+pub fn buy_team(name: &str) -> BuyTeam {
+    match name {
+        "ak47" | "galil" | "sg552" | "mac10" | "g3sg1" | "elite" => BuyTeam::Terrorists,
+        "m4a1" | "famas" | "aug" | "tmp" | "sg550" | "fiveseven" => BuyTeam::CounterTerrorists,
+        _ => BuyTeam::Both,
+    }
+}
+
+/// The buy name behind a CS buy command or alias: CS:S's `buy <name>` names, CS 1.6's aliases
+/// (`fn57`, `elites`, `mp5`, `hegren`, `sgren`, `flash`, ...). `None` for what isn't sold here
+/// (night vision, the shield, the defuse kit, ammo).
+#[must_use]
+pub fn buy_alias(command: &str) -> Option<&'static str> {
+    const ALIASES: [(&str, &str); 13] = [
+        ("elites", "elite"),
+        ("fn57", "fiveseven"),
+        ("mp5navy", "mp5"),
+        ("smg", "mp5"),
+        ("nighthawk", "deagle"),
+        ("km45", "usp"),
+        ("9x19mm", "glock"),
+        ("228compact", "p228"),
+        ("flash", "flashbang"),
+        ("hegren", "hegrenade"),
+        ("sgren", "smokegrenade"),
+        ("vest", "vest"),
+        ("vesthelm", "vesthelm"),
+    ];
+    let command = command.trim();
+    let name = command
+        .get(..4)
+        .filter(|head| head.eq_ignore_ascii_case("buy "))
+        .map_or(command, |_| &command[4..])
+        .trim();
+    if let Some((_, buy)) = ALIASES
+        .iter()
+        .find(|(alias, _)| alias.eq_ignore_ascii_case(name))
+    {
+        return Some(buy);
+    }
+    cs_buyable(name).map(|(buy, _, _)| buy)
+}
+
+/// The price of kevlar (`vest`) or kevlar and helmet (`vesthelm`), or of any weapon by buy name.
+#[must_use]
+pub fn buy_price(name: &str) -> Option<i32> {
+    match name {
+        "vest" => Some(CS_KEVLAR_PRICE),
+        "vesthelm" => Some(CS_KEVLAR_HELMET_PRICE),
+        other => cs_buyable(other).map(|(_, _, price)| price),
+    }
+}
+
 /// The CS weapon by buy name (`ak47`).
 #[must_use]
 pub fn cs_weapon_by_name(name: &str) -> Option<&'static CsWeapon> {

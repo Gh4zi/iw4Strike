@@ -3,6 +3,7 @@ mod blood;
 mod breath_hint;
 mod chrome;
 mod compass;
+mod cs_buymenu;
 mod cs_crosshair;
 mod cs_hud;
 mod cs_scoreboard;
@@ -43,6 +44,7 @@ pub use gpu_list::{
     HudTessBatch, HudTessGpuFrame, HudTessTechnique, HudTessVertex, ShellshockScreen,
 };
 pub use hudelem::HudElemSoundLatch;
+pub use cs_buymenu::CsBuyMenu;
 pub use menus::ScriptMenus;
 pub use overhead_names::{
     OverheadPosedHead, OverheadPosedModelFrame, OverheadPosedPlayerFrame,

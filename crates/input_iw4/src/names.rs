@@ -1,4 +1,4 @@
-pub const INPUT_COMMAND_NAMES: [&str; 84] = [
+pub const INPUT_COMMAND_NAMES: [&str; 90] = [
     "",
     "+attack",
     "-attack",
@@ -85,6 +85,14 @@ pub const INPUT_COMMAND_NAMES: [&str; 84] = [
     "slot5",
     // Counter-Strike: throw the held gun.
     "drop",
+    // Counter-Strike: open or close the buy menu.
+    "buymenu",
+    // Counter-Strike: the rest of the number keys (menu items 6-9, 0 = slot10 closes a menu).
+    "slot6",
+    "slot7",
+    "slot8",
+    "slot9",
+    "slot10",
 ];
 
 pub const HOLD_PAIR_LIMIT: u32 = 0x41;

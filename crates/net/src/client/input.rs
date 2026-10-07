@@ -64,6 +64,9 @@ pub struct ClientActionInput {
     pub pad_lockon: Option<u64>,
     pub pad_autoaim: Option<(u64, f32)>,
     pub pad_was_ads: bool,
+    /// While a Counter-Strike menu (the buy menu) is open, the number keys it takes instead of
+    /// selecting weapons: `slot1`..`slot10` as 1..10.
+    pub menu_keys: Option<Vec<u8>>,
 }
 
 impl Default for ClientActionInput {
@@ -101,6 +104,7 @@ impl Default for ClientActionInput {
             pad_lockon: None,
             pad_autoaim: None,
             pad_was_ads: false,
+            menu_keys: None,
         }
     }
 }

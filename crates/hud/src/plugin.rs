@@ -44,6 +44,7 @@ impl Plugin for HudPlugin {
             .init_resource::<ReticleAdsLatch>()
             .init_resource::<crate::cs_crosshair::CsCrosshairState>()
             .init_resource::<crate::cs_scoreboard::CsBoardState>()
+            .init_resource::<crate::cs_buymenu::CsBuyMenu>()
             .init_resource::<crate::cs_hud::CsHudAssets>()
             .init_resource::<crate::cs_hud::CsKillFeed>()
             .init_resource::<crate::cs_hud::CsMoneyFlash>()
@@ -83,7 +84,11 @@ impl Plugin for HudPlugin {
                     sync_zone_atlases,
                     warm_hud_images,
                     ensure_hud_root,
-                    (crate::cs_hud::spawn_cs_hud, crate::cs_scoreboard::spawn_cs_scoreboard),
+                    (
+                        crate::cs_hud::spawn_cs_hud,
+                        crate::cs_scoreboard::spawn_cs_scoreboard,
+                        crate::cs_buymenu::spawn_cs_buymenu,
+                    ),
                     sync_frontend_camera,
                     hud_stamp_setup,
                     ApplyDeferred,
@@ -103,7 +108,11 @@ impl Plugin for HudPlugin {
                             crate::surface::update_hud_surface,
                             update_reticle,
                             crate::cs_crosshair::update_cs_crosshair,
-                            (crate::cs_hud::update_cs_hud, crate::cs_scoreboard::update_cs_scoreboard),
+                            (
+                                crate::cs_hud::update_cs_hud,
+                                crate::cs_scoreboard::update_cs_scoreboard,
+                                crate::cs_buymenu::update_cs_buymenu,
+                            ),
                             hud_stage_close::<0>,
                             update_iris,
                             hud_stage_close::<1>,

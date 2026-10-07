@@ -382,8 +382,30 @@ pub(crate) fn drop_cs_weapon(world: &mut FrameWorld, tick: Tick, player: ClientI
         return;
     }
     let weapon = ps.weapon;
-    if cs_gun_slot(world, weapon).is_none() || !ps.weapons.contains(&(weapon as i32)) {
+    let Some(number) = throw_cs_weapon(world, tick, player, weapon) else {
         return;
+    };
+    let next = raise_best_cs_weapon(world, player);
+    diag::debug!(
+        Sim,
+        "cs drop: client {} threw {} (item {number}), now holding {}",
+        player.0,
+        world.weapon_script_name(weapon),
+        next.map_or("nothing".to_owned(), |w| world.weapon_script_name(w).to_owned())
+    );
+}
+
+/// Throws `weapon`, a CS gun `player` owns, the way `drop` throws the held one (a gun bought
+/// over it goes the same way); returns the item's entity number.
+pub(crate) fn throw_cs_weapon(
+    world: &mut FrameWorld,
+    tick: Tick,
+    player: ClientId,
+    weapon: u32,
+) -> Option<i32> {
+    let ps = world.player(player).copied()?;
+    if cs_gun_slot(world, weapon).is_none() || !ps.weapons.contains(&(weapon as i32)) {
+        return None;
     }
     let (clip_r, clip_l, stock) = ammo_from_ps(world, &ps, weapon);
     let (forward, _, _) = angle_vectors([ps.viewangles[0] / 3.0, ps.viewangles[1], 0.0]);
@@ -421,17 +443,17 @@ pub(crate) fn drop_cs_weapon(world: &mut FrameWorld, tick: Tick, player: ClientI
         false,
     );
     if number == ENTITYNUM_NONE {
-        return;
+        return None;
     }
     crate::script_player::take_weapon(world, player, weapon);
-    let next = raise_best_cs_weapon(world, player);
-    diag::debug!(
-        Sim,
-        "cs drop: client {} threw {} (item {number}), now holding {}",
-        player.0,
-        world.weapon_script_name(weapon),
-        next.map_or("nothing".to_owned(), |w| world.weapon_script_name(w).to_owned())
-    );
+    Some(number)
+}
+
+/// The CS gun `player` owns in `weapon`'s slot, other than `weapon` itself.
+pub(crate) fn owned_in_same_cs_slot(world: &FrameWorld, player: ClientId, weapon: u32) -> Option<u32> {
+    let slot = cs_gun_slot(world, weapon)?;
+    let ps = world.player(player)?;
+    owned_in_cs_slot(world, ps, slot, weapon)
 }
 
 pub(crate) fn drop_scavenger_item(

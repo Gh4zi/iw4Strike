@@ -11,7 +11,7 @@ Weapon models, sounds and HUD fonts are read at runtime from **your own Counter-
 Source install**. Gameplay numbers (damage, spread, recoil, speeds) follow CS 1.6. No game
 files are included in this repository.
 
-> **Work in progress.** Rounds, money, the buy menu and the bomb are not in yet. See
+> **Work in progress.** The C4 isn't a CS weapon yet (the bomb is still MW2's). See
 > [Roadmap](#roadmap).
 
 ![Desert Eagle on Rust with the Counter-Strike: Source HUD](docs/screenshots/mp_rust-deagle.webp)
@@ -64,8 +64,13 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 - Survivors keep their weapons and armor into the next round; everyone else respawns with the
   knife and their side's pistol (Terrorists a Glock, Counter-Terrorists a USP)
 - CS 1.6 money: $800 to start, $300 per kill, round rewards and the losing-streak bonus, $16000
-  at most; `buy` takes the price from your money. The money panel shows in this mode only
-  (free-for-all and team deathmatch buy for free)
+  at most. The money panel shows in this mode only (free-for-all and team deathmatch buy for
+  free)
+- Buy menu on **B**: buy near your side's spawn (within 200 units of a spawn point, CS 1.6's
+  rule for maps without buy zones) during the freeze and the 20 s after it. Each side sells its
+  own guns (AK-47, Galil, SG 552, MAC-10, G3/SG-1, Dual Elites for the Terrorists; M4A1, FAMAS,
+  AUG, TMP, SG 550, Five-seveN for the Counter-Terrorists). A gun bought over one in the same
+  slot drops the old one, so you can buy for a teammate
 - 3 s plant, 10 s defuse, 40 s bomb; the round ends 7 s after it is decided so you can still
   get away; the final killcam plays only for the kill that wins the match
 
@@ -158,6 +163,7 @@ GitHub builds `iw4l.exe` for you with the
 | **E** | Use / swap for a gun on the ground |
 | **G** | Drop gun |
 | **1 / 2 / 3 / 4** | Primary / pistol / knife / grenades (press 4 again to cycle grenades) |
+| **B** | Buy menu (number keys or the mouse pick; **0** or **Esc** closes) |
 | **Tab** | Scoreboard |
 
 Your keys still the old MW2 ones? Run `binddefaults` in the console.
@@ -174,8 +180,19 @@ Press **`** (the key under **Esc**) to open the console. Type a command and pres
 
 ### 🛒 Buy weapons and armor
 
-Use `buy <name>`. There's no money yet, so buying is free. The price is what it will cost
-once money is added.
+Press **B** for the buy menu, or type `buy <name>`. In Defusal it costs money and works only
+in your buy zone during the buy time; in the other modes it is free and works anywhere.
+
+The buy menu comes in two looks, switched with `_vgui_menus` (saved), as in CS 1.6:
+- `_vgui_menus 1` (default): the game's own buy window, read from your install: the CS:S buy
+  menu, or the CS 1.6 one when you play with CS 1.6. Point at a gun to see its picture and
+  numbers. Pick with the mouse or the number keys; you stand still while it is open, as in
+  CS:S.
+- `_vgui_menus 0`: CS 1.6's old numbered text menu at the left of the screen (its text comes
+  from your CS 1.6 install when you have one). Pick with the number keys while you keep moving.
+
+In free-for-all there are no sides: **9** in the buy menu switches between the Terrorist and
+Counter-Terrorist guns.
 
 | Type | Name | Weapon | Price |
 |---|---|---|---|
@@ -216,7 +233,7 @@ buy vesthelm
 buy flashbang
 ```
 
-All `buy` commands are 🔧 for now.
+`buy` also takes CS 1.6's short names (`fn57`, `elites`, `hegren`, `sgren`, `flash`, `mp5navy`).
 
 ### 🏃 Movement
 
@@ -331,7 +348,7 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   CS:CZ): pick weapon models, HUD, player hands and sounds separately, for example CZ weapons
   with the CS 1.6 HUD and CS:S hands
 - [x] Defusal rounds (CS2 format), freeze time, kept loadouts and CS 1.6 money
-- [ ] Buy menu (buy zones and buy time)
+- [x] Buy menu (CS:S and CS 1.6 VGUI, CS 1.6 classic text menu), buy zones and buy time
 - [ ] C4 as a CS weapon (slot 5, plant by holding fire in a bomb site, defuse kit)
 - [ ] Shooting through walls (CS penetration)
 - [ ] Better FPS

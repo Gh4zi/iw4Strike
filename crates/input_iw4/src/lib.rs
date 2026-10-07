@@ -255,6 +255,8 @@ pub struct ClientInput {
     pub weapon_slots: Vec<u8>,
     /// Counter-Strike `drop` pressed this frame.
     pub drop_weapon: bool,
+    /// Counter-Strike `buymenu` pressed this frame.
+    pub buy_menu: bool,
     pub action_slots: Vec<usize>,
 
     pub offhand_hold_cancel: bool,
@@ -275,6 +277,7 @@ impl Default for ClientInput {
             weapon_cycles: Vec::new(),
             weapon_slots: Vec::new(),
             drop_weapon: false,
+            buy_menu: false,
             action_slots: Vec::new(),
             offhand_hold_cancel: false,
             stance_held: None,
@@ -378,6 +381,8 @@ pub fn input_cmd(client: &mut ClientInput, cmd_id: u32, key: i32, now_msec: i32,
         77 => set_ads(client, false),
         78..=82 => client.weapon_slots.push((cmd_id - 77) as u8),
         83 => client.drop_weapon = true,
+        84 => client.buy_menu = true,
+        85..=89 => client.weapon_slots.push((cmd_id - 79) as u8),
         _ => {}
     }
 }

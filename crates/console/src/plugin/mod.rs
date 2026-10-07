@@ -174,7 +174,11 @@ impl Plugin for ConsolePlugin {
                         crate::class_dispatch::complete_pending_spawn,
                         crate::weapon_dispatch::clear_weapon_args_on_torn_down,
                         crate::weapon_dispatch::refresh_weapon_arg_completions,
-                        crate::weapon_dispatch::route_weapon_commands,
+                        (
+                            crate::weapon_dispatch::route_weapon_commands,
+                            crate::weapon_dispatch::route_buy_menu,
+                        )
+                            .chain(),
                     )
                         .chain(),
                     (
@@ -315,7 +319,7 @@ fn publish_client_action_input(
     binds: Res<KeyBinds>,
     mut scripted: ResMut<ConsoleInputState>,
     console: Res<ConsoleState>,
-    script_menus: Option<Res<hud::ScriptMenus>>,
+    (script_menus, buy_menu): (Option<Res<hud::ScriptMenus>>, Option<Res<hud::CsBuyMenu>>),
     mut hud_input: ResMut<frame::HudInputView>,
     settings: Res<frame::GameSettings>,
     mut out: ResMut<ClientActionInput>,
@@ -368,7 +372,9 @@ fn publish_client_action_input(
     if binds.is_changed() {
         *wheel_carry = 0.0;
     }
+    let buy_captures = buy_menu.is_some_and(|menu| menu.captures_input());
     let modal_captured = console.open
+        || buy_captures
         || script_menus.is_some_and(|menus| menus.captures_input())
         || keys.just_pressed(KeyCode::Escape)
         || pad.is_some_and(|pad| pad.just_pressed(bevy::input::gamepad::GamepadButton::Start));
@@ -433,6 +439,15 @@ fn publish_client_action_input(
             keys,
             ..Default::default()
         };
+        // The CS buy window holds gameplay input, but its own key still closes it.
+        if buy_captures
+            && !console.open
+            && let Some(buymenu) = input_iw4::command_id_from_name("buymenu")
+        {
+            out.client.buy_menu = binds
+                .iter()
+                .any(|(button, id)| id == buymenu && inputs.just_pressed(button));
+        }
         out.pad_turn_rate = [0.0; 2];
         out.pad_lockon = None;
         out.pad_autoaim = None;
@@ -589,6 +604,7 @@ fn publish_client_action_input(
 fn sync_cursor_grab(
     console: Res<ConsoleState>,
     script_menus: Option<Res<hud::ScriptMenus>>,
+    buy_menu: Option<Res<hud::CsBuyMenu>>,
     screen: Option<Res<AppScreen>>,
     mut focused: MessageReader<WindowFocused>,
     mut entered: MessageReader<CursorEntered>,
@@ -600,7 +616,8 @@ fn sync_cursor_grab(
     }
     returned |= entered.read().count() > 0;
 
-    let menu_open = script_menus.is_some_and(|m| m.captures_input());
+    let menu_open = script_menus.is_some_and(|m| m.captures_input())
+        || buy_menu.is_some_and(|m| m.captures_input());
     let in_game = screen
         .as_ref()
         .is_some_and(|s| matches!(**s, AppScreen::InGame));

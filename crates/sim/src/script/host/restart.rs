@@ -120,12 +120,15 @@ fn symbol_name(runtime: &Runtime, id: u32) -> Option<Arc<str>> {
     })
 }
 
-fn field(runtime: &Runtime, object: u64, name: &str) -> Option<Value> {
+/// Field `name` of script object `object` (`0` is `level`). Field names are case-insensitive;
+/// the compiler keeps them lowercase.
+pub(crate) fn field(runtime: &Runtime, object: u64, name: &str) -> Option<Value> {
     let program = runtime.program.as_ref()?;
+    let name = name.to_ascii_lowercase();
     let id = program
         .symbol_ids
-        .get(name)
-        .or_else(|| runtime.dynamic_symbols.get(name))?;
+        .get(name.as_str())
+        .or_else(|| runtime.dynamic_symbols.get(name.as_str()))?;
     runtime.objects.get(&object)?.get(id).cloned()
 }
 

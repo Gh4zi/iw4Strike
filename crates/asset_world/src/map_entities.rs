@@ -351,6 +351,9 @@ const MP_SPAWN_CLASSNAMES: &[&str] = &[
     "mp_dd_spawn_defender_a",
     "mp_dd_spawn_defender_b",
     "mp_dd_spawn_defender_start",
+    // Search and Destroy: the CS bomb mode's buy zones are around these.
+    "mp_sd_spawn_attacker",
+    "mp_sd_spawn_defender",
 ];
 
 pub fn dm_spawn_points(s: &ZoneStream<'_>) -> Vec<SpawnPoint> {
