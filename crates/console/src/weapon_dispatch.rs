@@ -88,6 +88,16 @@ pub(crate) fn register_weapon_commands(
             "menuselect <0-9> — pick an item of the open CS menu (the buy menu), as its number key",
         ));
     }
+    if registry.resolve("autobuy").is_none() {
+        registry.register(crate::CommandSpec::new("autobuy").usage(
+            "autobuy — buy the best rifle and armor you can afford (in a buy zone, during the buy time)",
+        ));
+    }
+    if registry.resolve("rebuy").is_none() {
+        registry.register(crate::CommandSpec::new("rebuy").usage(
+            "rebuy — buy again what you bought last time (in a buy zone, during the buy time)",
+        ));
+    }
     if registry.resolve("menuresponse").is_none() {
         registry.register(crate::CommandSpec::new("menuresponse").usage(
             "menuresponse <menu> <response> — send a script menu answer, as clicking it would (e.g. team_marinesopfor spectator)",
@@ -225,6 +235,10 @@ pub(crate) fn route_buy_menu(
             && let Some(key) = cmd.args.first().and_then(|n| n.parse::<u8>().ok())
         {
             menu.select(if key == 0 { 10 } else { key.min(10) });
+        } else if cmd.name == "autobuy" {
+            menu.autobuy();
+        } else if cmd.name == "rebuy" {
+            menu.rebuy();
         }
     }
     for name in menu.take_purchases() {

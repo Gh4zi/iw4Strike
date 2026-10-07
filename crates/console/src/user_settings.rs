@@ -513,10 +513,13 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
     {
         binds.set(BindButton::Key(KeyCode::Digit4), 21);
     }
-    // Counter-Strike: B opens the buy menu, 6-9 and 0 pick its items (slot6..slot10). Settings
+    // Counter-Strike: B opens the buy menu, 6-9 and 0 pick its items (slot6..slot10), F1 / F2
+    // autobuy / rebuy. Settings
     // saved before those commands existed get them on keys nothing else uses.
     for (key, command) in [
         (KeyCode::KeyB, "buymenu"),
+        (KeyCode::F1, "autobuy"),
+        (KeyCode::F2, "rebuy"),
         (KeyCode::Digit6, "slot6"),
         (KeyCode::Digit7, "slot7"),
         (KeyCode::Digit8, "slot8"),

@@ -1,4 +1,4 @@
-pub const INPUT_COMMAND_NAMES: [&str; 90] = [
+pub const INPUT_COMMAND_NAMES: [&str; 92] = [
     "",
     "+attack",
     "-attack",
@@ -93,7 +93,13 @@ pub const INPUT_COMMAND_NAMES: [&str; 90] = [
     "slot8",
     "slot9",
     "slot10",
+    // Counter-Strike: buy the best rifle and armor you can afford / what you bought last time.
+    "autobuy",
+    "rebuy",
 ];
+
+/// Other games' names for the same commands: `+jump` is `+gostand`.
+const COMMAND_ALIASES: [(&str, &str); 2] = [("+jump", "+gostand"), ("-jump", "-gostand")];
 
 pub const HOLD_PAIR_LIMIT: u32 = 0x41;
 
@@ -118,7 +124,7 @@ pub fn command_id_lookup(name: &str) -> Option<u32> {
         buf[i] = b.to_ascii_lowercase();
     }
     let folded = core::str::from_utf8(&buf[..n]).ok()?;
-    if let Some(id) = command_id_from_name(folded) {
+    if let Some(id) = id_or_alias(folded) {
         return Some(id);
     }
     if folded.starts_with('+') || folded.starts_with('-') {
@@ -130,7 +136,15 @@ pub fn command_id_lookup(name: &str) -> Option<u32> {
     buf.copy_within(..n, 1);
     buf[0] = b'+';
     let plus = core::str::from_utf8(&buf[..n + 1]).ok()?;
-    command_id_from_name(plus)
+    id_or_alias(plus)
+}
+
+fn id_or_alias(name: &str) -> Option<u32> {
+    let name = COMMAND_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map_or(name, |(_, command)| *command);
+    command_id_from_name(name)
 }
 
 pub fn command_name(id: u32) -> Option<&'static str> {

@@ -75,7 +75,7 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
   AUG, TMP, SG 550, Five-seveN for the Counter-Terrorists). A gun bought over one in the same
   slot drops the old one, so you can buy for a teammate
 - 3 s plant, 10 s defuse, 40 s bomb; the round ends 7 s after it is decided so you can still
-  get away; the final killcam plays only for the kill that wins the match
+  get away. Killcams are off for now
 - CS's radio voice ends each round ("Terrorists win!", "Counter-Terrorists win!", "Round
   draw!"), from your CS:S or CS 1.6 install
 
@@ -159,7 +159,7 @@ GitHub builds `iw4l.exe` for you with the
 | Key | Action |
 |---|---|
 | **W A S D** | Move |
-| **Space** / **Mouse wheel down** | Jump |
+| **Space** | Jump |
 | **Ctrl** | Crouch |
 | **Shift** | Walk |
 | **Mouse 1** | Fire / knife slash |
@@ -168,10 +168,13 @@ GitHub builds `iw4l.exe` for you with the
 | **E** | Use / swap for a gun on the ground |
 | **G** | Drop gun |
 | **1 / 2 / 3 / 4** | Primary / pistol / knife / grenades (press 4 again to cycle grenades) |
+| **Mouse wheel** | Next / previous weapon |
 | **B** | Buy menu (number keys or the mouse pick; **0** or **Esc** closes) |
+| **F1** / **F2** | Autobuy / rebuy |
 | **Tab** | Scoreboard |
 
-Your keys still the old MW2 ones? Run `binddefaults` in the console.
+Your keys still the old MW2 ones? Run `binddefaults` in the console. To jump with the mouse
+wheel like in CS: `bind MWHEELDOWN +jump` (and `bind MWHEELUP +jump` for both directions).
 
 ---
 
@@ -198,6 +201,9 @@ The buy menu comes in two looks, switched with `_vgui_menus` (saved), as in CS 1
 
 In free-for-all there are no sides: **9** in the buy menu switches between the Terrorist and
 Counter-Terrorist guns.
+
+`autobuy` (**F1**) buys the best rifle and armor you can afford; `rebuy` (**F2**) buys again
+what you bought from the buy menu last time. Both work in the buy zone during the buy time.
 
 | Type | Name | Weapon | Price |
 |---|---|---|---|
@@ -316,7 +322,7 @@ god
 
 | Command | What it does |
 |---|---|
-| `bind <key> <command>` | Bind a key, for example `bind Q slot3` (knife on Q) |
+| `bind <key> <command>` | Bind a key, for example `bind Q slot3` (knife on Q) or `bind MWHEELDOWN +jump` |
 | `unbind <key>` | Remove a key's bind |
 | `binddefaults` | Reset every key to the iw4Strike defaults |
 

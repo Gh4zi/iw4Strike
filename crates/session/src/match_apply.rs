@@ -1108,11 +1108,13 @@ fn preflight_match_install(
         // through `_tweakables`; 0 turns regeneration off (the match config sets 5).
         // An unranked (private) match: `level.rankedMatch` is false, so `_rank` gives no XP,
         // no "+50" popups or rank-ups, and `_missions` runs no challenges.
-        const CS_DVARS: [(&str, &str); 11] = [
+        const CS_DVARS: [(&str, &str); 12] = [
             // Seconds every round after the first starts frozen (CS 1.6/CS:S `mp_freezetime`).
             ("scr_cs_freezetime", "6"),
             ("scr_player_healthregentime", "0"),
             ("xblive_privatematch", "1"),
+            // No killcams for now, the final one included (user, 2026-10-07).
+            ("scr_game_allowkillcam", "0"),
             // Defusal (Search and Destroy), CS2 competitive format; the bounds MW2 registers
             // these with are raised by `cs_script_patches`.
             ("scr_sd_winlimit", "13"),

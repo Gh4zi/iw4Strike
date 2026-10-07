@@ -218,6 +218,18 @@ key_catalog! {
         BracketLeft { code: 59, display: "BRACKETLEFT", names: ["bracketleft", "["], parse: [BracketLeft], hint: ["bracketleft"] },
         BracketRight { code: 60, display: "BRACKETRIGHT", names: ["bracketright", "]"], parse: [BracketRight], hint: ["bracketright"] },
         Backslash { code: 61, display: "BACKSLASH", names: ["backslash"], parse: [Backslash], hint: ["backslash"] },
+        F1 { code: 63, display: "F1", names: ["f1"], parse: [F1], hint: ["f1"] },
+        F2 { code: 64, display: "F2", names: ["f2"], parse: [F2], hint: ["f2"] },
+        F3 { code: 65, display: "F3", names: ["f3"], parse: [F3], hint: ["f3"] },
+        F4 { code: 66, display: "F4", names: ["f4"], parse: [F4], hint: ["f4"] },
+        F5 { code: 67, display: "F5", names: ["f5"], parse: [F5], hint: ["f5"] },
+        F6 { code: 68, display: "F6", names: ["f6"], parse: [F6], hint: ["f6"] },
+        F7 { code: 69, display: "F7", names: ["f7"], parse: [F7], hint: ["f7"] },
+        F8 { code: 70, display: "F8", names: ["f8"], parse: [F8], hint: ["f8"] },
+        F9 { code: 71, display: "F9", names: ["f9"], parse: [F9], hint: ["f9"] },
+        F10 { code: 72, display: "F10", names: ["f10"], parse: [F10], hint: ["f10"] },
+        F11 { code: 73, display: "F11", names: ["f11"], parse: [F11], hint: ["f11"] },
+        F12 { code: 74, display: "F12", names: ["f12"], parse: [F12], hint: ["f12"] },
     }
     mouse {
         Left { code: 180, display: "MOUSE1", names: ["mouse1", "mouseleft", "lmb"], parse: [Left], hint: ["mouse1"] },

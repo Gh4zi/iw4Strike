@@ -38,6 +38,10 @@ pub struct CsBuyMenu {
     purchases: Vec<&'static str>,
     /// `menuselect` picks waiting for the next frame.
     selected: Vec<u8>,
+    /// `autobuy` / `rebuy` asked from the console, for the next frame.
+    requested: Option<Action>,
+    /// The loadout `rebuy` buys again.
+    loadout: Loadout,
     /// A refusal shown in the middle of the screen, until `until_s`.
     message: Option<(String, f32)>,
     /// Free-for-all has no sides: which side's guns the menu shows there (9 switches).
@@ -65,6 +69,16 @@ impl CsBuyMenu {
     /// Picks item `key` (1-9, 10 for 0) of the open menu, as CS's `menuselect`.
     pub fn select(&mut self, key: u8) {
         self.selected.push(key);
+    }
+
+    /// CS's `autobuy` console command.
+    pub fn autobuy(&mut self) {
+        self.requested = Some(Action::AutoBuy);
+    }
+
+    /// CS's `rebuy` console command.
+    pub fn rebuy(&mut self) {
+        self.requested = Some(Action::Rebuy);
     }
 
     /// The buy names picked since the last call.
@@ -553,6 +567,12 @@ fn load_controls(data: &Data, path: &str) -> Option<Vec<Control>> {
         if image.as_deref().is_some_and(|i| i.contains("market_sticker")) {
             continue;
         }
+        // No ammo for sale (guns come with full reserves) and no weekly bargain.
+        let command = get("command").unwrap_or_default().trim().to_ascii_lowercase();
+        let command = command.strip_prefix("buy ").unwrap_or(&command);
+        if matches!(command, "primammo" | "secammo" | "bargainbuy") {
+            continue;
+        }
         let raw = data.localize(get("labeltext").unwrap_or_default());
         let hotkey = raw
             .find('&')
@@ -615,10 +635,14 @@ enum Action {
     Open(String),
     Buy(&'static str),
     Close,
-    /// Not sold here (ammo, night vision, defuse kit, shield).
+    /// Not sold here (night vision, defuse kit, shield, favourites).
     Unavailable,
     /// Free-for-all: the other side's guns.
     SwitchSide,
+    /// CS's `autobuy`: the first rifle or SMG of its list the player can afford, then armour.
+    AutoBuy,
+    /// CS's `rebuy`: the loadout bought last (primary, pistol, armour, grenades) again.
+    Rebuy,
 }
 
 const CT_PISTOLS: [&str; 5] = ["glock", "usp", "p228", "deagle", "fiveseven"];
@@ -658,7 +682,6 @@ fn classic_action(menu: &str, key: u8, terrorist: bool, ffa: bool) -> Option<Act
             3 => Action::Open(side("T_BuySubMachineGun", "CT_BuySubMachineGun").to_owned()),
             4 => Action::Open(side("T_BuyRifle", "CT_BuyRifle").to_owned()),
             5 => Action::Open("BuyMachineGun".to_owned()),
-            6 | 7 => Action::Unavailable,
             8 => Action::Open(side("T_BuyItem", "CT_BuyItem").to_owned()),
             9 if ffa => Action::SwitchSide,
             _ => return None,
@@ -686,9 +709,6 @@ fn own_classic_menus() -> HashMap<String, Vec<String>> {
             "3. Sub-Machine Guns",
             "4. Rifles",
             "5. Machine Guns",
-            "",
-            "6. Primary Ammo",
-            "7. Secondary Ammo",
             "",
             "8. Equipment",
             "",
@@ -845,16 +865,22 @@ struct Buyer {
     economy: bool,
     armor: u32,
     helmet: bool,
+    /// Owns a rifle, SMG, shotgun or machine gun.
+    has_primary: bool,
 }
 
 impl Buyer {
-    fn may_buy(&self, name: &str) -> bool {
-        let side = match cs::buy_team(name) {
+    /// The player's side sells `name` (team guns are kept to their side in the bomb mode).
+    fn side_allows(&self, name: &str) -> bool {
+        match cs::buy_team(name) {
             BuyTeam::Both => true,
             BuyTeam::Terrorists => self.terrorist || !self.economy,
             BuyTeam::CounterTerrorists => !self.terrorist || !self.economy,
-        };
-        side && cs::buy_price(name).is_some_and(|price| price <= self.money)
+        }
+    }
+
+    fn may_buy(&self, name: &str) -> bool {
+        self.side_allows(name) && cs::buy_price(name).is_some_and(|price| price <= self.money)
     }
 }
 
@@ -866,11 +892,12 @@ pub(crate) fn update_cs_buymenu(
     local: Res<LocalPresentClient>,
     view_subject: Res<ViewSubject>,
     settings: Res<frame::GameSettings>,
-    (keys, mouse, windows, time): (
+    (keys, mouse, windows, time, weapons): (
         Res<ButtonInput<KeyCode>>,
         Res<ButtonInput<MouseButton>>,
         Query<&Window, With<bevy::window::PrimaryWindow>>,
         Res<Time>,
+        Option<Res<assets::PreparedWeapons>>,
     ),
     mut actions: Option<ResMut<ClientActionInput>>,
     mut menu: ResMut<CsBuyMenu>,
@@ -889,6 +916,18 @@ pub(crate) fn update_cs_buymenu(
     let toggle = actions
         .as_mut()
         .is_some_and(|a| std::mem::take(&mut a.client.buy_menu));
+    if actions
+        .as_mut()
+        .is_some_and(|a| std::mem::take(&mut a.client.auto_buy))
+    {
+        menu.autobuy();
+    }
+    if actions
+        .as_mut()
+        .is_some_and(|a| std::mem::take(&mut a.client.re_buy))
+    {
+        menu.rebuy();
+    }
     let mut picks: Vec<u8> = actions
         .as_mut()
         .and_then(|a| a.menu_keys.as_mut().map(std::mem::take))
@@ -925,6 +964,14 @@ pub(crate) fn update_cs_buymenu(
         economy,
         armor: ps.map_or(0, |ps| ps.cs_armor),
         helmet: ps.is_some_and(|ps| ps.cs_helmet != 0),
+        has_primary: ps.zip(weapons.as_deref()).is_some_and(|(ps, weapons)| {
+            ps.weapons
+                .iter()
+                .filter_map(|&id| u32::try_from(id).ok().filter(|&id| id != 0))
+                .filter_map(|id| cs::cs_weapon_index_for(&weapons.0.script_name_of(id)))
+                .filter_map(cs::cs_weapon)
+                .any(|gun| !gun.pistol)
+        }),
     };
 
     if menu.data.is_none() && (toggle || menu.screen.is_some()) {
@@ -944,16 +991,8 @@ pub(crate) fn update_cs_buymenu(
             menu.close();
         } else if buyer.alive {
             let data = menu.data.as_ref().expect("loaded above");
-            if buyer.bits & TIME == 0 {
-                let text = data
-                    .say(
-                        "Cstrike_TitlesTXT_Cant_buy",
-                        "%s1 seconds have passed.\nYou can't buy anything now!",
-                    )
-                    .replace("%s1", &BUY_TIME_SECONDS.to_string());
+            if let Some(text) = shop_closed(data, buyer.bits) {
                 menu.message = Some((text, now + MESSAGE_SECONDS));
-            } else if buyer.bits & ZONE == 0 {
-                menu.message = Some(("You are not in a buy zone.".to_owned(), now + MESSAGE_SECONDS));
             } else {
                 let vgui = settings.vgui_menus
                     && data
@@ -972,6 +1011,16 @@ pub(crate) fn update_cs_buymenu(
                     Screen::Classic("Buy".to_owned())
                 });
             }
+        }
+    }
+    // `autobuy` / `rebuy` from the console buy straight away, where and when buying is open.
+    if let Some(request) = menu.requested.take()
+        && buyer.alive
+    {
+        let data = menu.data.get_or_insert_with(Data::load);
+        match shop_closed(data, buyer.bits) {
+            Some(text) => menu.message = Some((text, now + MESSAGE_SECONDS)),
+            None => act(menu, request, &buyer, now),
         }
     }
     if menu.screen.is_some() && (!buyer.alive || buyer.bits != ZONE | TIME) {
@@ -1141,6 +1190,23 @@ pub(crate) fn update_cs_buymenu(
     menu.shown = Some(view);
 }
 
+/// Why buying is shut right now, in CS's words, if it is: out of buy time or out of a buy zone.
+fn shop_closed(data: &Data, bits: u32) -> Option<String> {
+    if bits & TIME == 0 {
+        Some(
+            data.say(
+                "Cstrike_TitlesTXT_Cant_buy",
+                "%s1 seconds have passed.\nYou can't buy anything now!",
+            )
+            .replace("%s1", &BUY_TIME_SECONDS.to_string()),
+        )
+    } else if bits & ZONE == 0 {
+        Some("You are not in a buy zone.".to_owned())
+    } else {
+        None
+    }
+}
+
 const DIGIT_KEYS: [(KeyCode, u8); 20] = [
     (KeyCode::Digit1, 1),
     (KeyCode::Digit2, 2),
@@ -1232,6 +1298,12 @@ fn vgui_action(menu: &CsBuyMenu, control: &Control, terrorist: bool) -> Action {
     if command == "ffa_side" {
         return Action::SwitchSide;
     }
+    if command.eq_ignore_ascii_case("autobuy") {
+        return Action::AutoBuy;
+    }
+    if command.eq_ignore_ascii_case("rebuy") {
+        return Action::Rebuy;
+    }
     if command.to_ascii_lowercase().ends_with(".res") {
         return menu
             .data
@@ -1322,15 +1394,120 @@ fn act(menu: &mut CsBuyMenu, action: Action, buyer: &Buyer, now: f32) {
             });
             match refusal {
                 Some(text) => menu.message = Some((text, now + MESSAGE_SECONDS)),
-                None => menu.purchases.push(name),
+                None => {
+                    menu.purchases.push(name);
+                    menu.loadout.remember(name);
+                }
             }
         }
+        Action::AutoBuy => {
+            menu.close();
+            for name in autobuy(buyer) {
+                menu.purchases.push(name);
+                menu.loadout.remember(name);
+            }
+        }
+        Action::Rebuy => {
+            menu.close();
+            let items = menu.loadout.items();
+            menu.purchases.extend(items);
+        }
+    }
+}
+
+/// CS:S's default `cl_autobuy` (without ammo and the defuse kit): the first gun of the list the
+/// player's side sells and can afford, if they have no primary yet, then kevlar and helmet, or
+/// kevlar alone when the helmet is too dear.
+const AUTOBUY: [&str; 8] = ["m4a1", "ak47", "famas", "galil", "p90", "mp5", "vesthelm", "vest"];
+
+fn autobuy(buyer: &Buyer) -> Vec<&'static str> {
+    let mut money = buyer.money;
+    let mut has_primary = buyer.has_primary;
+    let mut armoured = buyer.armor >= 100 && buyer.helmet;
+    let mut out = Vec::new();
+    for item in AUTOBUY {
+        let price = match item {
+            "vesthelm" if armoured => continue,
+            "vesthelm" if buyer.armor >= 100 => 350,
+            "vest" if armoured || buyer.armor >= 100 => continue,
+            "vesthelm" | "vest" => cs::buy_price(item).unwrap_or(i32::MAX),
+            _ if has_primary || !buyer.side_allows(item) => continue,
+            _ => cs::buy_price(item).unwrap_or(i32::MAX),
+        };
+        if price > money {
+            continue;
+        }
+        money -= price;
+        match item {
+            "vesthelm" | "vest" => armoured = true,
+            _ => has_primary = true,
+        }
+        out.push(item);
+    }
+    out
+}
+
+/// What `rebuy` buys again: the last primary, pistol, armour and grenades bought (CS:S keeps the
+/// same, `m_rebuyStruct`).
+#[derive(Default)]
+struct Loadout {
+    primary: Option<&'static str>,
+    secondary: Option<&'static str>,
+    armor: Option<&'static str>,
+    grenades: Vec<&'static str>,
+}
+
+impl Loadout {
+    fn remember(&mut self, name: &'static str) {
+        if let Some(gun) = cs::cs_weapon_by_name(name) {
+            if gun.pistol {
+                self.secondary = Some(name);
+            } else {
+                self.primary = Some(name);
+            }
+        } else if name == "vesthelm" || (name == "vest" && self.armor.is_none()) {
+            self.armor = Some(name);
+        } else if let Some(grenade) = cs::CS_GRENADES.iter().find(|g| g.name == name) {
+            let held = self.grenades.iter().filter(|g| **g == name).count();
+            if held < usize::try_from(grenade.carry).unwrap_or(1) {
+                self.grenades.push(name);
+            }
+        }
+    }
+
+    /// In CS:S's `cl_rebuy` order: primary, pistol, armour, then the grenades.
+    fn items(&self) -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = [self.primary, self.secondary, self.armor]
+            .into_iter()
+            .flatten()
+            .collect();
+        let mut grenades = self.grenades.clone();
+        grenades.sort_by_key(|g| match *g {
+            "hegrenade" => 0,
+            "flashbang" => 1,
+            _ => 2,
+        });
+        out.extend(grenades);
+        out
     }
 }
 
 /// A classic menu's lines as shown: items we don't sell greyed (`\d`), free-for-all's side
 /// switch on the first menu.
 fn classic_lines(name: &str, mut lines: Vec<String>, buyer: &Buyer) -> Vec<String> {
+    let key_of = |line: &str| {
+        line.trim_start_matches("\\w")
+            .trim_start_matches("\\d")
+            .split('.')
+            .next()
+            .and_then(|n| n.trim().parse::<u8>().ok())
+    };
+    if name.eq_ignore_ascii_case("buy") {
+        // No ammo for sale (guns come with full reserves): drop 1.6's "6." and "7." lines and the
+        // gap they leave.
+        lines.retain(|line| !matches!(key_of(line), Some(6 | 7)));
+        lines.dedup_by(|a, b| a.trim().is_empty() && b.trim().is_empty());
+    }
     for line in &mut lines {
         let body = line.trim_start_matches("\\w").trim_start_matches("\\d");
         let Some(key) = body

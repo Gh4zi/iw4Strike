@@ -220,11 +220,13 @@ const PATCHES: &[Patch] = &[
         times: 2,
         why: "no grey intro look during the countdowns",
     },
-    // Final killcam only for the kill that wins the match, not every round's last kill.
+    // Final killcam only for the kill that wins the match, not every round's last kill, and
+    // only while killcams are on (`scr_game_allowkillcam`, off in the CS fork for now).
     once(
         "maps/mp/gametypes/_damage",
         "if ( isDefined( attacker.finalKill ) && doKillcam && !isDefined( level.nukeDetonated ) )",
-        "if ( isDefined( attacker.finalKill ) && doKillcam && !isDefined( level.nukeDetonated ) \
+        "if ( level.killcam && isDefined( attacker.finalKill ) && doKillcam \
+         && !isDefined( level.nukeDetonated ) \
          && ( !level.teamBased || isLastRound() || ( isDefined( attacker.pers ) \
          && game[\"roundsWon\"][attacker.pers[\"team\"]] >= getWatchedDvar( \"winlimit\" ) - 1 ) ) )",
         "final killcam on the match-winning kill only",
