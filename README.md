@@ -30,7 +30,9 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 **Movement**
 - 100 Hz server tick (MW2 runs at 20 Hz)
 - CS:GO movement by default: bunny hopping, air strafing, duck-jumping, with CS:GO's own
-  stamina, crouch-spam fatigue, ground acceleration and 1.1x bunny-hop cap
+  stamina, crouch-spam fatigue, ground acceleration and 1.1x bunny-hop cap, built from the
+  measurements and technical reference of
+  [CSMovementRust](https://github.com/EduardoCalvoUribe/CSMovementRust)
 - Other presets: CS:S-style, surf, Momentum Mod bhop and CS 1.6 movement (`mv_mode`)
 - CS ladders: strafe onto a ladder to climb it, and your gun stays up
 - No sprint, no prone
@@ -181,7 +183,7 @@ Press **`** (the key under **Esc**) to open the console. Type a command and pres
 > Commands marked 🔧 need cheats. Cheats are **on by default** in your own matches. A lobby
 > host can turn them off in the game setup, or you can start the game with `--no-cheats`.
 
-### 🛒 Buy weapons and armor
+### Buy weapons and armor
 
 Press **B** for the buy menu, or type `buy <name>`. In Defusal it costs money and works only
 in your buy zone during the buy time; in the other modes it is free and works anywhere.
@@ -238,7 +240,7 @@ buy flashbang
 
 `buy` also takes CS 1.6's short names (`fn57`, `elites`, `hegren`, `sgren`, `flash`, `mp5navy`).
 
-### 🏃 Movement
+### Movement
 
 | Command | What it does |
 |---|---|
@@ -251,7 +253,7 @@ buy flashbang
 
 Your movement mode is saved, so you only set it once.
 
-### 🔫 Gun and crosshair
+### Gun and crosshair
 
 | Command | What it does |
 |---|---|
@@ -260,7 +262,7 @@ Your movement mode is saved, so you only set it once.
 | `cl_dynamiccrosshair 0` / `1` | Static crosshair, or one that opens when you move and shoot |
 | `thirdperson 1` / `0` | Third-person view on or off |
 
-### 🗺️ Maps and bots
+### Maps and bots
 
 | Command | What it does |
 |---|---|
@@ -290,7 +292,7 @@ Your movement mode is saved, so you only set it once.
 
 </details>
 
-### 🎯 Practice
+### Practice
 
 | Command | What it does |
 |---|---|
@@ -309,7 +311,7 @@ buy vesthelm
 god
 ```
 
-### ⌨️ Keys
+### Keys
 
 | Command | What it does |
 |---|---|
@@ -317,7 +319,7 @@ god
 | `unbind <key>` | Remove a key's bind |
 | `binddefaults` | Reset every key to the iw4Strike defaults |
 
-### 🎬 Demos and clips
+### Demos and clips
 
 | Command | What it does |
 |---|---|
