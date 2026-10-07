@@ -1889,6 +1889,9 @@ pub fn cs_weapon_by_name(name: &str) -> Option<&'static CsWeapon> {
 /// Rewrite an MW2 weapon's combat facts to play as `index`'s CS weapon. Returns the run-speed
 /// scales (hip, zoomed) relative to [`CS_BASE_SPEED`].
 pub fn apply_overrides(facts: &mut WeaponCombatFacts, index: u8) -> Option<(f32, f32)> {
+    if is_knife(index) || cs_grenade(index).is_some() || cs_weapon(index).is_some() {
+        apply_deploy(facts, deploy_seconds(index));
+    }
     if is_knife(index) {
         facts.cs_weapon = index;
         facts.can_hold_breath = false;
@@ -1956,6 +1959,27 @@ pub fn apply_overrides(facts: &mut WeaponCombatFacts, index: u8) -> Option<(f32,
         weapon.max_speed / CS_BASE_SPEED,
         weapon.max_speed_zoomed / CS_BASE_SPEED,
     ))
+}
+
+/// CS 1.6 `DefaultDeploy`: the drawn weapon can attack 0.75 s later (`m_flNextAttack`); the AWP
+/// (1.45 s) and Scout (1.25 s) take longer. The knife and grenades deploy like any gun.
+#[must_use]
+pub fn deploy_seconds(index: u8) -> f32 {
+    match cs_weapon(index).map(|weapon| weapon.name) {
+        Some("awp") => 1.45,
+        Some("scout") => 1.25,
+        _ => 0.75,
+    }
+}
+
+/// CS weapon switching: the held weapon goes away at once (CS has no put-away time) and the new
+/// one raises for its deploy time, quick (pistol) switches included.
+fn apply_deploy(facts: &mut WeaponCombatFacts, seconds: f32) {
+    let ms = (seconds * 1000.0 + 0.5) as i32;
+    facts.drop_time_ms = 1;
+    facts.quick_drop_time_ms = 1;
+    facts.raise_time_ms = ms;
+    facts.quick_raise_time_ms = ms;
 }
 
 /// Milliseconds between zoom steps, and before the first after the gun is drawn.
@@ -2422,6 +2446,24 @@ mod tests {
             Some((1.0, 1.0))
         );
         assert_eq!(slot_of(&facts), 3);
+    }
+
+    #[test]
+    fn weapons_deploy_like_cs() {
+        let deploy = |index: u8| {
+            let mut facts = WeaponCombatFacts::none();
+            apply_overrides(&mut facts, index).expect("cs weapon");
+            (facts.drop_time_ms, facts.raise_time_ms, facts.quick_raise_time_ms)
+        };
+        let index = |name: &str| {
+            CS_WEAPONS.iter().position(|w| w.name == name).expect("weapon") as u8 + 1
+        };
+        assert_eq!(deploy(index("ak47")), (1, 750, 750));
+        assert_eq!(deploy(index("deagle")), (1, 750, 750));
+        assert_eq!(deploy(index("awp")), (1, 1450, 1450));
+        assert_eq!(deploy(index("scout")), (1, 1250, 1250));
+        assert_eq!(deploy(CS_KNIFE_INDEX), (1, 750, 750));
+        assert_eq!(deploy(CS_GRENADE_INDEX), (1, 750, 750));
     }
 
     #[test]

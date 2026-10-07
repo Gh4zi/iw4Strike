@@ -5,6 +5,7 @@ mod chrome;
 mod compass;
 mod cs_crosshair;
 mod cs_hud;
+mod cs_scoreboard;
 mod draw2d;
 mod expr_cache;
 mod flash;

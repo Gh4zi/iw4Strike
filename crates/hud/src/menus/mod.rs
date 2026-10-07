@@ -223,7 +223,9 @@ pub(crate) fn update_script_menus(
             s.meta.objectives.time_left_ms(now_ms).div_euclid(1000)
         }),
         teams: teams.as_ref().map(|t| &t.0),
+        // Under CS rules TAB opens the CS scoreboard alone, not MW2's score HUD pieces.
         scores_open: in_game
+            && !crate::cs_hud::replaces_mw2_hud()
             && input
                 .actions
                 .as_ref()

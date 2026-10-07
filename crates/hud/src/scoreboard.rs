@@ -34,11 +34,11 @@ const COLUMNS: [(f32, f32, &str); 5] = [
 ];
 
 #[derive(Clone, Debug)]
-struct ScoreboardRow {
-    score: Score,
-    name: String,
+pub(crate) struct ScoreboardRow {
+    pub(crate) score: Score,
+    pub(crate) name: String,
     prestige: i32,
-    dead: bool,
+    pub(crate) dead: bool,
 }
 
 #[derive(Component)]
@@ -48,7 +48,7 @@ pub(crate) fn spawn_scoreboard(root: &mut ChildSpawnerCommands) {
     crate::font_overlay::spawn_overlay(root, ScoreboardRaster);
 }
 
-fn rows_from_parsed(snap: &Snapshot, parsed: &ParsedScores) -> Vec<ScoreboardRow> {
+pub(crate) fn rows_from_parsed(snap: &Snapshot, parsed: &ParsedScores) -> Vec<ScoreboardRow> {
     let mut rows = Vec::with_capacity(parsed.num);
     for entry in parsed.scores.iter().take(parsed.num) {
         let Some((_, meta)) = snap
@@ -288,6 +288,10 @@ pub(crate) fn update_scoreboard(
     mut pass: ResMut<HudTessPass>,
 ) {
     pass.scoreboard = TessJob::Hide;
+    // Under CS rules the Counter-Strike scoreboard (`cs_scoreboard`) shows instead.
+    if crate::cs_hud::replaces_mw2_hud() {
+        return;
+    }
     let Some(snap) = presented.snapshot() else {
         return;
     };

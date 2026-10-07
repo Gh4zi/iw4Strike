@@ -47,9 +47,13 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
   - Smoke lasts about 18 seconds, like CS:S
 - Kevlar and helmet
 - Drop your gun with **G**, walk over a gun to pick it up, or press **E** to swap
+- Weapon switching takes CS 1.6's deploy time: fire 0.75 s after switching (AWP 1.45 s, Scout
+  1.25 s), with no put-away delay
 
 **HUD and game**
 - Counter-Strike: Source HUD: health, armor, ammo, round timer, kill feed and crosshair
+- Counter-Strike scoreboard on **TAB**: Counter-Terrorists and Terrorists with score, deaths
+  and latency, in the CS:S look (or the CS 1.6 look when you play with CS 1.6)
 - MW2 minimap kept as the radar
 - MW2 perks, killstreaks, XP, challenges, class menu and exploding cars and barrels are
   turned off
