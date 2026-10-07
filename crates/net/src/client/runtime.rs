@@ -1786,6 +1786,7 @@ pub fn publish_presented(
         }
     }
 
+    let mut local_body_angles = predicted.viewangles;
     if archived {
         if let Some(seat) = remote_poses.remove(&local.0) {
             predicted = seat;
@@ -1805,6 +1806,7 @@ pub fn publish_presented(
                 unclamped_pitch_bit: false,
             },
         );
+        local_body_angles = predicted.viewangles;
         // CS weapons: the camera shows the recoil punch the next bullet will fire along.
         for (angle, punch) in predicted.viewangles.iter_mut().zip(predicted.cs_punch) {
             *angle += punch;
@@ -1837,6 +1839,20 @@ pub fn publish_presented(
                 crate::player_state_to_entity_state(sim::ClientId(number), ps),
                 sample_time,
             ));
+        } else if runtime.pose_e_type as i32 == entity_iw4::ET_PLAYER
+            && !archived
+            && armed
+            && predicted.pm_type == 0
+            && runtime.next_state.client_num == local.0.0 as i32
+        {
+            // Your own body (third person) moves with the predicted camera, not with the
+            // server's snapshot a tick behind it, which made it shake while moving fast.
+            let mut body = predicted;
+            body.viewangles = local_body_angles;
+            runtime.origin = body.origin;
+            runtime.angles = body.viewangles;
+            runtime.presented_player =
+                Some((crate::player_state_to_entity_state(local.0, &body), render_time_ms));
         } else {
             runtime.present_pose(body_time_ms);
         }
