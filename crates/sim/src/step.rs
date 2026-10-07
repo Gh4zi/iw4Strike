@@ -600,7 +600,6 @@ fn run_entity_types_system(ecs: &mut World) {
         crate::entity_run::phase_run_entity_thinks(&mut world, tick);
         if world.publishes_snapshot() {
             crate::equipment::refire_cs_smokes(&mut world, tick);
-            crate::cs_economy::update_buy_bits(&mut world, tick);
             world.world_objects_mut().glass_update(
                 i32::try_from(tick.0.saturating_mul(crate::MATCH_TICK_MS)).unwrap_or(i32::MAX),
             );
@@ -608,6 +607,10 @@ fn run_entity_types_system(ecs: &mut World) {
         }
     } else {
         crate::entity_run::phase_walk_entity_thinks(&mut world);
+    }
+    // Every round's freeze time is a warm-up phase until it ends, and it is the buy time too.
+    if world.publishes_snapshot() {
+        crate::cs_economy::update_buy_bits(&mut world, tick);
     }
 }
 

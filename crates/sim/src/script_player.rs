@@ -229,6 +229,15 @@ fn give_cs_round_loadout(world: &mut FrameWorld, id: ClientId) {
     }
     if let Some(carry) = world.client_meta_mut(id).cs_carry.take() {
         for &(weapon, clip, stock) in &carry.weapons {
+            // CS2 restocks every gun at the start of a round (a full magazine and reserve);
+            // grenades keep their count.
+            let (clip, stock) = match world.combat_facts_for(weapon) {
+                Some(facts) if weapon_iw4::cs::cs_grenade(facts.cs_weapon).is_none() => {
+                    let (clip, _, stock) = weapon_iw4::spawn_clip_stock(&facts, 0);
+                    (clip, stock)
+                }
+                _ => (clip, stock),
+            };
             give_cs_owned(world, id, weapon, clip, stock);
         }
         let Some(ps) = world.player_mut(id) else {

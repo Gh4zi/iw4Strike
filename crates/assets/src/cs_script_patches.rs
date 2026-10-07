@@ -90,15 +90,18 @@ const PATCHES: &[Patch] = &[
         "defusal: tell clients which team attacks (the Terrorists), each round",
     ),
     // CS's radio voice ends every round: "Terrorists win!", "Counter-Terrorists win!", "Round
-    // draw!". The client plays whichever install it has (`asset_audio::CS_EVENT_PREFIX`).
+    // draw!". The client plays whichever install it has (`asset_audio::CS_EVENT_PREFIX`). Only
+    // the call that decides the round speaks: a death after it (the other team's last player
+    // killed during the round end) calls this again, and `endGame` ignores that call.
     once(
         SD,
         "\tthread maps\\mp\\gametypes\\_gamelogic::endGame( winningTeam, endReasonText );",
-        "\tif ( isDefined( winningTeam ) && winningTeam == game[\"attackers\"] ) \
+        "\tif ( !level.gameEnded ) { \
+         if ( isDefined( winningTeam ) && winningTeam == game[\"attackers\"] ) \
          playSoundOnPlayers( \"cs_event_terwin\" ); \
          else if ( isDefined( winningTeam ) && winningTeam == game[\"defenders\"] ) \
          playSoundOnPlayers( \"cs_event_ctwin\" ); \
-         else playSoundOnPlayers( \"cs_event_rounddraw\" );\n\
+         else playSoundOnPlayers( \"cs_event_rounddraw\" ); }\n\
          \tthread maps\\mp\\gametypes\\_gamelogic::endGame( winningTeam, endReasonText );",
         "defusal: CS round-end radio voice",
     ),
@@ -129,6 +132,33 @@ const PATCHES: &[Patch] = &[
         "level.bombTimer = dvarFloatValue( \"bombtimer\", 40, 1, 300 );",
         "defusal: 40 s bomb",
     ),
+    // CS2 switches sides once, at halftime (after round 12); MW2 switched at every multiple of the
+    // round switch.
+    once(
+        GAMELOGIC,
+        "if ( game[\"roundsPlayed\"] % level.roundSwitch == 0 )",
+        "if ( game[\"roundsPlayed\"] == level.roundSwitch )",
+        "defusal: sides switch once, at halftime",
+    ),
+    // A team wiped out ends the round at once, as in CS. MW2 skipped the check for the first 15 s
+    // of a round (its grace period, which still lets round-start stragglers spawn); a team with a
+    // player yet to spawn still has lives, so it isn't counted as dead.
+    once(
+        GAMELOGIC,
+        "\tif ( level.inGracePeriod )\n\t\treturn;\n\n\tif ( level.teamBased )\n\t{\n\t\tlivesCount",
+        "\tif ( level.teamBased )\n\t{\n\t\tlivesCount",
+        "defusal: a team wiped out in the first 15 s ends the round at once",
+    ),
+    // A decided round is MW2's "postgame", where nobody takes damage and a death skips the kill
+    // feed and score. CS fights on until the next round (exit frags); only the match's end
+    // stops it.
+    Patch {
+        module: "maps/mp/gametypes/_damage",
+        find: "if ( game[ \"state\" ] == \"postgame\" )",
+        replace: "if ( game[ \"state\" ] == \"postgame\" && wasLastRound() )",
+        times: 2,
+        why: "round end: players can still be hurt and killed until the next round",
+    },
     // CS round ends: the round is decided, everyone keeps moving for 7 s (escape the bomb, save a
     // gun), no freeze, blur or outro look until the match itself is over.
     once(
@@ -140,8 +170,11 @@ const PATCHES: &[Patch] = &[
     once(
         GAMELOGIC,
         "player thread freezePlayerForRoundEnd( 1.0 );",
-        "if ( wasLastRound() ) player thread freezePlayerForRoundEnd( 1.0 );",
-        "round end: players move freely until the match is over",
+        "if ( wasLastRound() || ( level.teamBased && isDefined( level.roundSwitch ) && \
+         level.roundSwitch && game[\"roundsPlayed\"] == level.roundSwitch ) ) \
+         player thread freezePlayerForRoundEnd( 1.0 );",
+        "round end: players move freely, except at halftime (sides switch) and the match's end, \
+         where they stand frozen like CS's freeze time (look around, drop weapons)",
     ),
     Patch {
         module: GAMELOGIC,

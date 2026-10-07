@@ -201,6 +201,14 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         let mut last = world.get_resource_or_insert_with(CsSwitchedSides::default);
         std::mem::replace(&mut last.0, switched) != switched
     };
+    if halftime || sides_changed {
+        diag::info!(
+            Sim,
+            "cs rounds: sides switch after round {} (won so far {:?})",
+            round_end.won[1] + round_end.won[2],
+            round_end.won
+        );
+    }
     {
         let mut frame = FrameWorld::from_world(world);
         crate::script_player::capture_cs_carry(&mut frame, halftime || sides_changed);
