@@ -1636,7 +1636,8 @@ pub struct CsFlash {
 /// The flash a player gets at `distance` from it, `facing` = cosine between their view and the
 /// line to the flash. CS 1.6 numbers: in front (facing ≥ 0) full white, hold strength / 1.5,
 /// fade strength × 3; turned partly away (to -0.5) alpha 200, hold strength / 3.5, fade
-/// strength × 1.75. Looking away (CS:S/CS:GO) is not flashed at all.
+/// strength × 1.75. Behind you (facing below -0.5) it only lights the screen up: alpha 150,
+/// hold strength / 8, fade strength × 0.75 (at 350 units 0.4 s of white fading out over 2.3 s).
 #[must_use]
 pub fn flash_for(distance: f32, facing: f32) -> Option<CsFlash> {
     let strength = CS_FLASH_STRENGTH - distance * CS_FLASH_STRENGTH / CS_FLASH_RADIUS;
@@ -1657,7 +1658,11 @@ pub fn flash_for(distance: f32, facing: f32) -> Option<CsFlash> {
             alpha: 200,
         })
     } else {
-        None
+        Some(CsFlash {
+            hold_ms: ms(strength / 8.0),
+            fade_ms: ms(strength * 0.75),
+            alpha: 150,
+        })
     }
 }
 
@@ -2480,9 +2485,10 @@ mod tests {
         // Half way out: half of it.
         let half = flash_for(750.0, 1.0).expect("half");
         assert_eq!((half.hold_ms, half.fade_ms), (1333, 6000));
-        // Turned partly away: weaker; looking away or out of range: nothing.
+        // Turned partly away: weaker; behind you: a short light flash; out of range: nothing.
         assert_eq!(flash_for(0.0, -0.3).map(|f| f.alpha), Some(200));
-        assert!(flash_for(0.0, -0.8).is_none());
+        let behind = flash_for(0.0, -0.8).expect("behind");
+        assert_eq!((behind.hold_ms, behind.fade_ms, behind.alpha), (500, 3000, 150));
         assert!(flash_for(1500.0, 1.0).is_none());
         // The screen: full during the hold, half way through the fade half white.
         assert_eq!(flash_screen(full, 1000), Some((1.0, 1.0)));

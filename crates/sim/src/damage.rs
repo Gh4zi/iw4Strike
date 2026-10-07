@@ -639,7 +639,7 @@ pub(crate) fn apply_flashbang_blast(
 
 /// Counter-Strike's flashbang (`RadiusFlash`) instead of MW2's: everyone within 1500 units with
 /// a clear line from the flash to their eyes is blinded by distance and by where they look —
-/// looking away saves them. The client draws it from `PlayerState::cs_flash_*`; MW2's
+/// with their back to it, only a short light flash. The client draws it from `PlayerState::cs_flash_*`; MW2's
 /// script flash (shellshock) is not used.
 fn apply_cs_flash(world: &mut FrameWorld, origin: [f32; 3]) {
     use weapon_iw4::cs::{CS_FLASH_RADIUS, CsFlash, flash_for, stack_flash};
