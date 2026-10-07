@@ -179,6 +179,7 @@ pub(crate) fn update_cs_scoreboard(
                 build_board(
                     &rows,
                     snap.meta.kind.is_team(),
+                    crate::cs_hud::is_terrorist(Some(snap), TEAM_ALLIES) == Some(true),
                     snap.meta.objectives.scores,
                     local.0.0 as i32,
                     state.style,
@@ -217,6 +218,7 @@ pub(crate) fn update_cs_scoreboard(
 fn build_board(
     rows: &[ScoreboardRow],
     team_based: bool,
+    terrorist_allies: bool,
     team_scores: [i32; 3],
     local: i32,
     style: Style,
@@ -240,17 +242,23 @@ fn build_board(
     };
     let mut sections = Vec::new();
     if team_based {
+        // Counter-Terrorists first; which MW2 team that is follows the bomb mode's roles.
+        let (ct, t) = if terrorist_allies {
+            (TEAM_AXIS, TEAM_ALLIES)
+        } else {
+            (TEAM_ALLIES, TEAM_AXIS)
+        };
         sections.push(Section {
             name: "Counter-Terrorists",
             color: CT_COLOR,
-            score: Some(team_scores[TEAM_ALLIES as usize]),
-            rows: players(TEAM_ALLIES),
+            score: Some(team_scores[ct as usize]),
+            rows: players(ct),
         });
         sections.push(Section {
             name: "Terrorists",
             color: T_COLOR,
-            score: Some(team_scores[TEAM_AXIS as usize]),
-            rows: players(TEAM_AXIS),
+            score: Some(team_scores[t as usize]),
+            rows: players(t),
         });
     } else {
         sections.push(Section {

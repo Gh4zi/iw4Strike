@@ -446,12 +446,34 @@ fn kill_icon(weapon: &str) -> (IconFont, char) {
     (IconFont::Death, glyph)
 }
 
-fn team_color(team: i32, is_local: bool) -> Color {
-    match team {
-        entity_iw4::TEAM_AXIS => T_RED,
-        entity_iw4::TEAM_ALLIES => CT_BLUE,
-        _ if is_local => CT_BLUE,
-        _ => T_RED,
+/// The CS side an MW2 team plays. In the bomb mode it follows the role — the attackers (who plant)
+/// are the Terrorists, so it flips when the sides switch; elsewhere axis are the Terrorists and
+/// allies the Counter-Terrorists. `None` for no team.
+pub(crate) fn is_terrorist(snap: Option<&sim::Snapshot>, team: i32) -> Option<bool> {
+    if team != entity_iw4::TEAM_AXIS && team != entity_iw4::TEAM_ALLIES {
+        return None;
+    }
+    let attackers = snap.and_then(|snap| {
+        snap.meta
+            .objectives
+            .server_info
+            .iter()
+            .find(|(name, _)| name == "cs_attackers")
+            .map(|(_, value)| value.as_str())
+    });
+    Some(match attackers {
+        Some("axis") => team == entity_iw4::TEAM_AXIS,
+        Some("allies") => team == entity_iw4::TEAM_ALLIES,
+        _ => team == entity_iw4::TEAM_AXIS,
+    })
+}
+
+fn team_color(snap: Option<&sim::Snapshot>, team: i32, is_local: bool) -> Color {
+    match is_terrorist(snap, team) {
+        Some(true) => T_RED,
+        Some(false) => CT_BLUE,
+        None if is_local => CT_BLUE,
+        None => T_RED,
     }
 }
 
@@ -470,7 +492,11 @@ pub(crate) fn obituary(
     let player = |client: i32| {
         let name = crate::killfeed::snapshot_client_name(&presented, client);
         let team = crate::killfeed::snapshot_client_team(&presented, client);
-        let color = team_color(team, client >= 0 && client as u32 == local.0.0);
+        let color = team_color(
+            presented.snapshot(),
+            team,
+            client >= 0 && client as u32 == local.0.0,
+        );
         (name, color)
     };
     let has_attacker = (0..18).contains(&payload.attacker_entity_num)

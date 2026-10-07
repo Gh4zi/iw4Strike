@@ -1108,9 +1108,19 @@ fn preflight_match_install(
         // through `_tweakables`; 0 turns regeneration off (the match config sets 5).
         // An unranked (private) match: `level.rankedMatch` is false, so `_rank` gives no XP,
         // no "+50" popups or rank-ups, and `_missions` runs no challenges.
-        const CS_DVARS: [(&str, &str); 2] = [
+        const CS_DVARS: [(&str, &str); 10] = [
             ("scr_player_healthregentime", "0"),
             ("xblive_privatematch", "1"),
+            // Defusal (Search and Destroy), CS2 competitive format; the bounds MW2 registers
+            // these with are raised by `cs_script_patches`.
+            ("scr_sd_winlimit", "13"),
+            ("scr_sd_roundlimit", "24"),
+            ("scr_sd_roundswitch", "12"),
+            ("scr_sd_timelimit", "1.9167"),
+            ("scr_sd_planttime", "3"),
+            ("scr_sd_defusetime", "10"),
+            ("scr_sd_bombtimer", "40"),
+            ("scr_sd_numlives", "1"),
         ];
         for (name, value) in CS_DVARS {
             match script_dvars
