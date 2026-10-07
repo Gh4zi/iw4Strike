@@ -144,6 +144,21 @@ pub struct ClientMatchState {
     pub(crate) controls: ScriptControls,
 
     pub(crate) max_health: i32,
+
+    /// The CS loadout a player alive at a round restart takes into the next round.
+    pub(crate) cs_carry: Option<CsCarry>,
+}
+
+/// What a surviving CS player keeps from one round to the next: guns and grenades with their
+/// ammo, the held weapon, armour and the silencer/burst modes.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct CsCarry {
+    pub weapons: Vec<(u32, i32, i32)>,
+    pub held: u32,
+    pub armor: u32,
+    pub helmet: u32,
+    pub silencers: u32,
+    pub burst_modes: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

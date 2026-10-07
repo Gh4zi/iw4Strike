@@ -85,8 +85,8 @@ const PATCHES: &[Patch] = &[
     once(
         SD,
         "setClientNameMode( \"manual_change\" );",
-        "setClientNameMode( \"manual_change\" ); makeDvarServerInfo( \"cs_attackers\", \
-         game[\"attackers\"] );",
+        "setClientNameMode( \"manual_change\" ); setDvar( \"cs_attackers\", game[\"attackers\"] ); \
+         makeDvarServerInfo( \"cs_attackers\", game[\"attackers\"] );",
         "defusal: tell clients which team attacks (the Terrorists), each round",
     ),
     once(
@@ -122,6 +122,36 @@ const PATCHES: &[Patch] = &[
         replace: "if ( wasLastRound() ) visionSetNaked( \"mpOutro\", 0.5 );",
         times: 2,
         why: "round end: no outro look until the match is over",
+    },
+    // CS freeze time: every round after the first opens with `scr_cs_freezetime` seconds frozen in
+    // place (MW2's pre-match freeze; the engine still lets you look, switch, drop and buy), the
+    // round timer counting it down. No grey "intro" look on any countdown.
+    once(
+        GAMELOGIC,
+        "level.prematchPeriod = 0;",
+        "level.prematchPeriod = getDvarInt( \"scr_cs_freezetime\" );",
+        "freeze time at the start of every round",
+    ),
+    once(
+        GAMELOGIC,
+        "matchStartTimerPC();",
+        "if ( game[\"roundsPlayed\"] > 0 ) { setGameEndTime( getTime() + level.prematchPeriod \
+         * 1000 ); wait ( level.prematchPeriod ); } else matchStartTimerPC();",
+        "freeze time: a silent countdown after the first round",
+    ),
+    once(
+        GAMELOGIC,
+        "if ( !gameFlag( \"prematch_done\" ) )\n\t{\n\t\tsetGameEndTime( 0 );",
+        "if ( !gameFlag( \"prematch_done\" ) )\n\t{\n\t\tif ( game[\"roundsPlayed\"] == 0 ) \
+         setGameEndTime( 0 );",
+        "freeze time: the time-limit check leaves the freeze countdown on the round timer",
+    ),
+    Patch {
+        module: GAMELOGIC,
+        find: "visionSetNaked( \"mpIntro\", 0 );",
+        replace: "visionSetNaked( getDvar( \"mapname\" ), 0 );",
+        times: 2,
+        why: "no grey intro look during the countdowns",
     },
     // Final killcam only for the kill that wins the match, not every round's last kill.
     once(

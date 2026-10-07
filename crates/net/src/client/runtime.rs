@@ -764,11 +764,13 @@ pub fn sample_client_input(
         .predicted_local()
         .or_else(|| presented.player(local.0));
 
+    // A script freeze (`freezeControls`) under CS rules is CS's freeze time: the server keeps the
+    // player from moving and firing, but looking around, switching and dropping weapons stay live.
     let frozen = ps.is_some_and(|ps| (ps.pm_flags & 0x800) != 0)
         || presented
             .snapshot()
             .and_then(|snapshot| snapshot.meta.for_client(local.0))
-            .is_none_or(|meta| meta.controls.frozen);
+            .is_none_or(|meta| meta.controls.frozen && !movement_iw4::rules::CS_RULES);
 
     if frozen {
         actions.mouse_x = 0.0;

@@ -112,6 +112,7 @@ pub(crate) fn spawn(
     );
     world.link_player_standing_area(id);
     give_cs_knife(world, id);
+    give_cs_round_loadout(world, id);
 }
 
 /// The CS fork's knife: every living player owns it from spawn on, held when nothing else is,
@@ -145,6 +146,119 @@ fn give_cs_knife(world: &mut FrameWorld, id: ClientId) {
     if world.player(id).is_some_and(|ps| ps.weapon == 0) {
         let _ = set_spawn_weapon(world, id, knife);
     }
+}
+
+/// Gives a CS weapon the player does not own yet with `clip` and `stock` rounds.
+fn give_cs_owned(world: &mut FrameWorld, id: ClientId, weapon: u32, clip: i32, stock: i32) {
+    let Some(facts) = world.combat_facts_for(weapon) else {
+        return;
+    };
+    let Some(ps) = world.player_mut(id) else {
+        return;
+    };
+    if ps.weapons.contains(&(weapon as i32)) {
+        return;
+    }
+    inventory_add_weapon(ps, weapon, false);
+    if !ps.weapons.contains(&(weapon as i32)) {
+        return;
+    }
+    seed_ps_ammo_tables(ps, weapon, &facts, clip, 0, false, stock);
+    world.client_meta_mut(id).set_ammo(weapon, clip, stock);
+}
+
+/// The CS side a player plays in the bomb mode: `Some(true)` for the Terrorists (the attackers
+/// the S&D script names in `cs_attackers`), `Some(false)` for the Counter-Terrorists, `None`
+/// outside that mode or without a team.
+fn cs_bomb_side(world: &mut FrameWorld, id: ClientId) -> Option<bool> {
+    let attackers = world
+        .ecs()
+        .get_resource::<crate::script::Runtime>()?
+        .dvars
+        .get("cs_attackers")?
+        .clone();
+    let team = world.client_meta(id)?.client_state_team;
+    match (attackers.as_str(), team) {
+        ("axis", entity_iw4::TEAM_AXIS) | ("allies", entity_iw4::TEAM_ALLIES) => Some(true),
+        (_, entity_iw4::TEAM_AXIS | entity_iw4::TEAM_ALLIES) => Some(false),
+        _ => None,
+    }
+}
+
+/// Before a round restart: what every living CS player carries into the next round. At halftime
+/// (`reset`) nobody keeps anything, as CS starts the second half over.
+pub(crate) fn capture_cs_carry(world: &mut FrameWorld, reset: bool) {
+    if !SCRIPT_GIVES_NO_WEAPONS {
+        return;
+    }
+    for id in world.client_ids_sorted() {
+        let carry = world
+            .client_meta(id)
+            .filter(|meta| !reset && meta.lifecycle == ClientLifecycle::Alive)
+            .zip(world.player(id))
+            .map(|(meta, ps)| crate::match_state::CsCarry {
+                weapons: ps
+                    .weapons
+                    .iter()
+                    .filter_map(|&w| u32::try_from(w).ok().filter(|&w| w != 0))
+                    .map(|w| {
+                        let (clip, stock) = meta.ammo_for(w);
+                        (w, clip, stock)
+                    })
+                    .collect(),
+                held: ps.weapon,
+                armor: ps.cs_armor,
+                helmet: ps.cs_helmet,
+                silencers: ps.cs_silencers,
+                burst_modes: ps.cs_burst_modes,
+            });
+        world.client_meta_mut(id).cs_carry = carry;
+    }
+}
+
+/// A CS spawn in the bomb mode: a survivor of the last round gets their loadout back; anyone else
+/// starts with their side's pistol (Terrorists a Glock, Counter-Terrorists a USP) and the knife.
+fn give_cs_round_loadout(world: &mut FrameWorld, id: ClientId) {
+    if !SCRIPT_GIVES_NO_WEAPONS
+        || !world
+            .client_meta(id)
+            .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+    {
+        return;
+    }
+    if let Some(carry) = world.client_meta_mut(id).cs_carry.take() {
+        for &(weapon, clip, stock) in &carry.weapons {
+            give_cs_owned(world, id, weapon, clip, stock);
+        }
+        let Some(ps) = world.player_mut(id) else {
+            return;
+        };
+        ps.cs_armor = carry.armor;
+        ps.cs_helmet = carry.helmet;
+        ps.cs_silencers = carry.silencers;
+        ps.cs_burst_modes = carry.burst_modes;
+        if ps.weapons.contains(&(carry.held as i32)) {
+            let _ = set_spawn_weapon(world, id, carry.held);
+        }
+        return;
+    }
+    let Some(terrorist) = cs_bomb_side(world, id) else {
+        return;
+    };
+    let name = if terrorist { "glock" } else { "usp" };
+    let Some(pistol) = weapon_iw4::cs::CS_WEAPONS
+        .iter()
+        .find(|weapon| weapon.name == name)
+        .and_then(|cs| world.weapon_index_by_script_name(cs.mw2_name))
+    else {
+        return;
+    };
+    let Some(facts) = world.combat_facts_for(pistol) else {
+        return;
+    };
+    let (clip, _, stock) = weapon_iw4::spawn_clip_stock(&facts, 0);
+    give_cs_owned(world, id, pistol, clip, stock);
+    let _ = set_spawn_weapon(world, id, pistol);
 }
 
 fn is_cs_knife(world: &FrameWorld, weapon: u32) -> bool {
@@ -648,6 +762,11 @@ pub(crate) fn take_weapon(world: &mut FrameWorld, id: ClientId, weapon: u32) {
 }
 
 pub(crate) fn take_all_weapons(world: &mut FrameWorld, id: ClientId) {
+    // CS weapons belong to the engine (spawn loadout, buying, carrying across rounds); MW2's class
+    // code calls this right after every spawn and would wipe them.
+    if SCRIPT_GIVES_NO_WEAPONS {
+        return;
+    }
     let Some(ps) = world.player_mut(id) else {
         return;
     };
@@ -936,7 +1055,13 @@ pub(crate) fn constrain_cmd(
     if controls.frozen {
         cmd.forwardmove = 0;
         cmd.rightmove = 0;
-        cmd.buttons &= buttons::PRONE | buttons::CROUCH | buttons::STANCE_HELD;
+        // CS freeze time also lets you reload (and switch weapons, below).
+        let kept = if SCRIPT_GIVES_NO_WEAPONS {
+            buttons::PRONE | buttons::CROUCH | buttons::STANCE_HELD | buttons::RELOAD
+        } else {
+            buttons::PRONE | buttons::CROUCH | buttons::STANCE_HELD
+        };
+        cmd.buttons &= kept;
     }
     if controls.linked {
         cmd.forwardmove = 0;
@@ -957,7 +1082,7 @@ pub(crate) fn constrain_cmd(
     }
     if controls.switch_to != 0 {
         cmd.weapon = controls.switch_to as u16;
-    } else if controls.switch_disabled || controls.frozen {
+    } else if controls.switch_disabled || (controls.frozen && !SCRIPT_GIVES_NO_WEAPONS) {
         cmd.weapon = held as u16;
     }
 }

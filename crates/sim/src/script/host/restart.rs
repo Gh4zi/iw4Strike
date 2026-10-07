@@ -33,6 +33,11 @@ pub(crate) enum Detached {
 
 const MAX_DEPTH: usize = 64;
 
+/// `game["switchedsides"]` at the last round restart, to see the sides switch (it outlives the
+/// script runtime, which every restart replaces).
+#[derive(bevy_ecs::prelude::Resource, Default)]
+struct CsSwitchedSides(bool);
+
 /// GSC's `game` global (object 1; `level` is 0, `anim` 2), whose fields `map_restart(true)`
 /// keeps: rounds won and played, which side attacks, the match state.
 const GAME_OBJECT: u64 = 1;
@@ -136,6 +141,23 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         .filter_map(|e| e.presence)
         .collect();
 
+    // CS: survivors carry their loadout into the next round; nobody does once the sides switch
+    // (`game["switchedsides"]` flipped by the round switch) or at a halftime.
+    let halftime = game.iter().any(|(name, value)| {
+        &**name == "status"
+            && matches!(value, Detached::Value(Value::String(status)) if &**status == "halftime")
+    });
+    let switched = game.iter().any(|(name, value)| {
+        &**name == "switchedsides" && matches!(value, Detached::Value(Value::Int(n)) if *n != 0)
+    });
+    let sides_changed = {
+        let mut last = world.get_resource_or_insert_with(CsSwitchedSides::default);
+        std::mem::replace(&mut last.0, switched) != switched
+    };
+    crate::script_player::capture_cs_carry(
+        &mut FrameWorld::from_world(world),
+        halftime || sides_changed,
+    );
     for id in huds {
         super::hud::destroy(world, id);
     }
