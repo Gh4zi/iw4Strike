@@ -89,6 +89,21 @@ const PATCHES: &[Patch] = &[
          makeDvarServerInfo( \"cs_attackers\", game[\"attackers\"] );",
         "defusal: tell clients which team attacks (the Terrorists), each round",
     ),
+    // CS shows the bomb (carried or dropped) to the Terrorists on the radar only: no "escort" or
+    // bomb marker floating in the world.
+    once(
+        SD,
+        "self maps\\mp\\gametypes\\_gameobjects::set3DIcon( \"friendly\", \"waypoint_escort\" );",
+        "self maps\\mp\\gametypes\\_gameobjects::set3DIcon( \"friendly\", undefined );",
+        "defusal: no escort marker over the bomb carrier",
+    ),
+    Patch {
+        module: SD,
+        find: "_gameobjects::set3DIcon( \"friendly\", \"waypoint_bomb\" );",
+        replace: "_gameobjects::set3DIcon( \"friendly\", undefined );",
+        times: 2,
+        why: "defusal: no world marker over the dropped bomb",
+    },
     once(
         SD,
         "level.bombTimer = dvarFloatValue( \"bombtimer\", 45, 1, 300 );",
