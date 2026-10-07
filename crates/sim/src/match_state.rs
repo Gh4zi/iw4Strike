@@ -147,6 +147,8 @@ pub struct ClientMatchState {
 
     /// The CS loadout a player alive at a round restart takes into the next round.
     pub(crate) cs_carry: Option<CsCarry>,
+    /// CS money; `None` until it first changes (the start money).
+    pub(crate) cs_money: Option<i32>,
 }
 
 /// What a surviving CS player keeps from one round to the next: guns and grenades with their

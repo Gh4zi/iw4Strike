@@ -33,6 +33,37 @@ pub(crate) enum Detached {
 
 const MAX_DEPTH: usize = 64;
 
+/// A string field of the saved `game` array.
+fn game_string<'a>(game: &'a [(Arc<str>, Detached)], name: &str) -> Option<&'a str> {
+    game.iter().find_map(|(field, value)| match value {
+        Detached::Value(Value::String(text)) if &**field == name => Some(&**text),
+        _ => None,
+    })
+}
+
+/// `game["roundsWon"]` as `[_, axis, allies]`.
+fn round_wins(game: &[(Arc<str>, Detached)]) -> [i32; 3] {
+    let mut won = [0; 3];
+    let Some(Detached::Array(rows)) = game
+        .iter()
+        .find(|(field, _)| &**field == "roundsWon")
+        .map(|(_, value)| value)
+    else {
+        return won;
+    };
+    for (key, value) in rows {
+        let team = match key {
+            ArrayKey::String(text) if &**text == "axis" => entity_iw4::TEAM_AXIS,
+            ArrayKey::String(text) if &**text == "allies" => entity_iw4::TEAM_ALLIES,
+            _ => continue,
+        };
+        if let Detached::Value(Value::Int(n)) = value {
+            won[team as usize] = i32::try_from(*n).unwrap_or(0);
+        }
+    }
+    won
+}
+
 /// `game["switchedsides"]` at the last round restart, to see the sides switch (it outlives the
 /// script runtime, which every restart replaces).
 #[derive(bevy_ecs::prelude::Resource, Default)]
@@ -125,6 +156,19 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
             Some((*client, detach(runtime, &pers, 0)?))
         })
         .collect();
+    // How the bomb mode's round ended, for the CS round money: the `level` flags its script set.
+    let level_flag = |name: &str| matches!(field(runtime, 0, name), Some(Value::Int(n)) if n != 0);
+    let round_end = crate::cs_economy::RoundEnd {
+        won: round_wins(&game),
+        attackers: match game_string(&game, "attackers") {
+            Some("axis") => entity_iw4::TEAM_AXIS,
+            Some("allies") => entity_iw4::TEAM_ALLIES,
+            _ => 0,
+        },
+        bomb_planted: level_flag("bombPlanted"),
+        bomb_exploded: level_flag("bombExploded"),
+        bomb_defused: level_flag("bombDefused"),
+    };
     let dvars = runtime.dvars.clone();
     let local_presentation_dvars = runtime.local_presentation_dvars;
     let local_presentation_client = runtime.local_presentation_client;
@@ -154,10 +198,13 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         let mut last = world.get_resource_or_insert_with(CsSwitchedSides::default);
         std::mem::replace(&mut last.0, switched) != switched
     };
-    crate::script_player::capture_cs_carry(
-        &mut FrameWorld::from_world(world),
-        halftime || sides_changed,
-    );
+    {
+        let mut frame = FrameWorld::from_world(world);
+        crate::script_player::capture_cs_carry(&mut frame, halftime || sides_changed);
+        if round_end.attackers != 0 {
+            crate::cs_economy::settle_round(&mut frame, round_end, halftime || sides_changed);
+        }
+    }
     for id in huds {
         super::hud::destroy(world, id);
     }

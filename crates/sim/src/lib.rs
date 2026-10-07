@@ -17,6 +17,7 @@ mod gentity;
 pub mod hudelem;
 pub mod identities;
 pub mod input;
+mod cs_economy;
 mod item;
 mod local_profile;
 pub use local_profile::LocalPlayerProfile;

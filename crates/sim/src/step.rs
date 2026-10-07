@@ -865,6 +865,9 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
             ClientAction::BuyArmor { helmet, .. } => {
                 crate::script_player::cs_buy_armor(world, *id, helmet);
             }
+            ClientAction::BuyWeapon { request_id, weapon } => {
+                apply_buy_weapon(world, tick, *id, request_id, weapon);
+            }
             ClientAction::ActionSlot {
                 request_id: _,
                 slot,
@@ -1409,6 +1412,53 @@ fn apply_configuration_change(
             to,
         },
     );
+}
+
+/// A CS purchase: the gun or grenade's price comes out of the player's money, as in CS refused
+/// when they can't pay it, already own that gun, or carry all of that grenade they may.
+fn apply_buy_weapon(world: &mut FrameWorld, tick: Tick, id: ClientId, request_id: u32, weapon: u32) {
+    if !world
+        .client_meta(id)
+        .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+    {
+        return;
+    }
+    let Some(facts) = world.combat_facts_for(weapon) else {
+        return;
+    };
+    let index = facts.cs_weapon;
+    let (price, carry) = match (weapon_iw4::cs::cs_weapon(index), weapon_iw4::cs::cs_grenade(index)) {
+        (Some(gun), _) => (gun.price, None),
+        (None, Some(grenade)) => (grenade.price, Some(grenade.carry)),
+        (None, None) => return,
+    };
+    let owned = world
+        .player(id)
+        .is_some_and(|ps| ps.weapons.contains(&(weapon as i32)));
+    let full = match carry {
+        None => owned,
+        Some(carry) => {
+            owned
+                && world
+                    .client_meta(id)
+                    .is_some_and(|meta| meta.ammo_for(weapon).0 >= carry)
+        }
+    };
+    if full {
+        diag::info!(Sim, "cs buy: client {} already carries {}", id.0, world.weapon_script_name(weapon));
+        return;
+    }
+    if !crate::cs_economy::pay(world, id, price) {
+        let has = crate::cs_economy::money(world, id);
+        diag::info!(
+            Sim,
+            "cs buy: client {} can't afford {} (${price}, has ${has})",
+            id.0,
+            world.weapon_script_name(weapon)
+        );
+        return;
+    }
+    apply_give_weapon(world, tick, id, request_id, weapon);
 }
 
 fn apply_give_weapon(

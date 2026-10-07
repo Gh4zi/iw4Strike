@@ -397,6 +397,7 @@ ps_netfields! {
     cs_fire_gate_ms: i32 = Replication::Replicated, Validation::Exact;
     cs_burst_shot: u32 = Replication::Replicated, Validation::Exact;
     cs_helmet: u32 = Replication::Replicated, Validation::Exact;
+    cs_money: u32 = Replication::Replicated, Validation::Exact;
 }
 
 pub const PS_FIELD_COUNT: usize = PS_NETFIELDS.len();

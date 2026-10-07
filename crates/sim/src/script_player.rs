@@ -113,6 +113,7 @@ pub(crate) fn spawn(
     world.link_player_standing_area(id);
     give_cs_knife(world, id);
     give_cs_round_loadout(world, id);
+    crate::cs_economy::show_money(world, id);
 }
 
 /// The CS fork's knife: every living player owns it from spawn on, held when nothing else is,
@@ -493,6 +494,21 @@ pub(crate) fn cs_buy_armor(world: &mut FrameWorld, id: ClientId, helmet: bool) {
     {
         return;
     }
+    // CS prices: kevlar $650, kevlar and helmet $1000 — or $350 for just the helmet over full
+    // kevlar. Nothing is sold that the player already has.
+    let Some((armor, has_helmet)) = world.player(id).map(|ps| (ps.cs_armor, ps.cs_helmet != 0))
+    else {
+        return;
+    };
+    let price = match (helmet, armor >= 100, has_helmet) {
+        (false, true, _) | (true, true, true) => return,
+        (true, true, false) => 350,
+        (true, false, _) => 1000,
+        (false, false, _) => 650,
+    };
+    if !crate::cs_economy::pay(world, id, price) {
+        return;
+    }
     if let Some(ps) = world.player_mut(id) {
         ps.cs_armor = 100;
         ps.cs_helmet = u32::from(helmet || ps.cs_helmet != 0);
@@ -564,6 +580,9 @@ pub(crate) fn kill(
         meta.life_sequence
     };
     crate::script::host::triggers::release_client_claims(world.ecs(), victim.0);
+    if SCRIPT_GIVES_NO_WEAPONS {
+        crate::cs_economy::reward_kill(world, victim, attacker);
+    }
     crate::damage::play_death(world, victim, attacker, commit.as_ref());
     if let Some(ps) = world.player_mut(victim) {
         ps.health = 0;

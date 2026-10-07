@@ -58,6 +58,17 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 - MW2 perks, killstreaks, XP, challenges, class menu and exploding cars and barrels are
   turned off
 
+**Defusal** (Search and Destroy, `IW4L_GAMETYPE=sd` or Create Game)
+- First to 13 rounds, sides switch after 12, 1:55 rounds, 6 s freeze time at the start of each
+  round (look around and drop weapons for teammates; no moving or shooting)
+- Survivors keep their weapons and armor into the next round; everyone else respawns with the
+  knife and their side's pistol (Terrorists a Glock, Counter-Terrorists a USP)
+- CS 1.6 money: $800 to start, $300 per kill, round rewards and the losing-streak bonus, $16000
+  at most; `buy` takes the price from your money. The money panel shows in this mode only
+  (free-for-all and team deathmatch buy for free)
+- 3 s plant, 10 s defuse, 40 s bomb; the round ends 7 s after it is decided so you can still
+  get away; the final killcam plays only for the kill that wins the match
+
 ---
 
 ## What you need
@@ -319,8 +330,9 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [ ] A per-player mix-and-match in the game options for every installed game (CS:S, CS 1.6,
   CS:CZ): pick weapon models, HUD, player hands and sounds separately, for example CZ weapons
   with the CS 1.6 HUD and CS:S hands
-- [ ] Rounds, money and buy menu
-- [ ] C4 bomb plant and defuse
+- [x] Defusal rounds (CS2 format), freeze time, kept loadouts and CS 1.6 money
+- [ ] Buy menu (buy zones and buy time)
+- [ ] C4 as a CS weapon (slot 5, plant by holding fire in a bomb site, defuse kit)
 - [ ] Shooting through walls (CS penetration)
 - [ ] Better FPS
 - [ ] CoD4 maps (Crossfire, Citystreets)

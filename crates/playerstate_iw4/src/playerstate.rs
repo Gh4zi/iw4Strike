@@ -181,6 +181,8 @@ pub struct PlayerState {
     pub cs_fire_gate_ms: i32,
     /// The burst bullet the gate let through this command: 1 first, 2 a later one, 0 none.
     pub cs_burst_shot: u32,
+    /// The player's CS money (a copy of the server's account, for the HUD).
+    pub cs_money: u32,
 }
 
 pub mod cs_grenade {
@@ -454,6 +456,7 @@ impl PlayerState {
         cs_burst_next_ms: 0,
         cs_fire_gate_ms: 0,
         cs_burst_shot: 0,
+        cs_money: 0,
     };
 
     pub fn anim(&self) -> AnimPair {

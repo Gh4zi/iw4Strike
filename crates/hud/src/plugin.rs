@@ -46,6 +46,7 @@ impl Plugin for HudPlugin {
             .init_resource::<crate::cs_scoreboard::CsBoardState>()
             .init_resource::<crate::cs_hud::CsHudAssets>()
             .init_resource::<crate::cs_hud::CsKillFeed>()
+            .init_resource::<crate::cs_hud::CsMoneyFlash>()
             .init_resource::<IrisLetterboxFill>()
             .init_resource::<BloodOverlayLatch>()
             .init_resource::<BloodGpuJob>()

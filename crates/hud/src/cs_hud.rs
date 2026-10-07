@@ -38,6 +38,19 @@ const T_RED: Color = Color::srgb(1.0, 64.0 / 255.0, 64.0 / 255.0);
 const LOW_HEALTH: i32 = 25;
 /// Seconds left under which the round timer turns red.
 const LOW_TIME_S: i32 = 10;
+/// `HudIcon_Green` / `HudIcon_Red`: the money flashes these on a gain or a loss.
+const MONEY_GAIN: Color = Color::srgb(0.0, 160.0 / 255.0, 0.0);
+const MONEY_LOSS: Color = Color::srgb(160.0 / 255.0, 0.0, 0.0);
+/// How long a money change shows (`Accel 0.0 3.0` in CS:S's HUD animations).
+const MONEY_FLASH_MS: i32 = 3000;
+
+/// The money panel's last account and its latest change, for the gain/loss flash.
+#[derive(Resource, Default)]
+pub(crate) struct CsMoneyFlash {
+    last: Option<i32>,
+    delta: i32,
+    since_ms: i32,
+}
 
 /// `HudNumbers` / `Icons` (`cstrike.ttf`, tall 28).
 const NUMBER_TALL: f32 = 28.0;
@@ -66,9 +79,19 @@ pub(crate) enum Panel {
     Armor,
     Timer,
     Ammo,
+    Money,
 }
 
-const PANELS: [Panel; 4] = [Panel::Health, Panel::Armor, Panel::Timer, Panel::Ammo];
+const PANELS: [Panel; 5] = [
+    Panel::Health,
+    Panel::Armor,
+    Panel::Timer,
+    Panel::Ammo,
+    Panel::Money,
+];
+
+/// `HudAccount` `digit_xpos`: the money is right-aligned on this edge.
+const MONEY_DIGITS_RIGHT: f32 = 100.0;
 
 impl Panel {
     /// `xpos`, `ypos`, `wide`, `tall` in 640x480 units; `x` already resolved against the screen
@@ -79,21 +102,26 @@ impl Panel {
             Self::Armor => [148.0, 446.0, 80.0, 25.0],
             Self::Timer => [w * 0.5 - 28.0, 446.0, 98.0, 25.0],
             Self::Ammo => [w - 157.0, 446.0, 142.0, 25.0],
+            Self::Money => [w - 123.0, 394.0, 108.0, 45.0],
         }
     }
 
     /// `icon_xpos`/`icon_ypos`.
     fn icon(self) -> [f32; 2] {
-        [8.0, -4.0]
+        match self {
+            Self::Money => [9.0, 16.0],
+            _ => [8.0, -4.0],
+        }
     }
 
-    /// `digit_xpos`/`digit_ypos`.
+    /// `digit_xpos`/`digit_ypos` (the money's x is its right edge).
     fn digits(self) -> [f32; 2] {
         match self {
             Self::Health => [35.0, -4.0],
             Self::Armor => [34.0, -4.0],
             Self::Timer => [42.0, -4.0],
             Self::Ammo => [8.0, -4.0],
+            Self::Money => [MONEY_DIGITS_RIGHT, 16.0],
         }
     }
 }
@@ -112,6 +140,8 @@ pub(crate) enum CsHudPart {
     AmmoReserve,
     AmmoSprite,
     AmmoGlyph,
+    /// The last money change above the account (`digit2`).
+    MoneyDelta,
     FeedRow(u8),
     FeedAttacker(u8),
     FeedWeapon(u8),
@@ -322,8 +352,13 @@ pub(crate) fn spawn_cs_hud(
                     BackgroundColor(PANEL_BG),
                 ));
                 hud.spawn(text_bundle(CsHudPart::Icon(panel), numbers));
-                hud.spawn(text_bundle(CsHudPart::Digits(panel), numbers));
+                let mut digits = hud.spawn(text_bundle(CsHudPart::Digits(panel), numbers));
+                if panel == Panel::Money {
+                    digits.insert(TextLayout::new(Justify::Right, LineBreak::NoWrap));
+                }
             }
+            hud.spawn(text_bundle(CsHudPart::MoneyDelta, numbers))
+                .insert(TextLayout::new(Justify::Right, LineBreak::NoWrap));
             hud.spawn((
                 CsHudPart::AmmoBar,
                 Node {
@@ -525,6 +560,7 @@ struct PanelValues {
     armor: Option<(i32, bool)>,
     timer_s: Option<i32>,
     ammo: Option<Ammo>,
+    money: Option<i32>,
 }
 
 struct Ammo {
@@ -580,6 +616,24 @@ fn set_px(slot: &mut Val, px: f32) -> bool {
 }
 
 /// Places `node` at `left`/`top` (and `size` when given), only touching what changed.
+/// Places a text node so that its right edge sits `right` pixels from the screen's right edge
+/// (the text then grows to the left).
+fn place_right(node: &mut Mut<Node>, right: f32, top: f32) {
+    let mut next = Node::clone(node);
+    let mut changed = set_px(&mut next.right, right) | set_px(&mut next.top, top);
+    if next.left != Val::Auto {
+        next.left = Val::Auto;
+        changed = true;
+    }
+    if next.display != Display::Flex {
+        next.display = Display::Flex;
+        changed = true;
+    }
+    if changed {
+        **node = next;
+    }
+}
+
 fn place(node: &mut Mut<Node>, left: f32, top: f32, size: Option<[f32; 2]>) {
     let mut next = Node::clone(node);
     let mut changed = set_px(&mut next.left, left) | set_px(&mut next.top, top);
@@ -642,6 +696,7 @@ pub(crate) fn update_cs_hud(
     view: Res<ViewSubject>,
     assets: Res<CsHudAssets>,
     mut feed: ResMut<CsKillFeed>,
+    mut flash: ResMut<CsMoneyFlash>,
     mut parts: PartQuery,
 ) {
     if !replaces_mw2_hud() {
@@ -664,6 +719,16 @@ pub(crate) fn update_cs_hud(
     if ps.pm_type < playerstate_iw4::PM_TYPE_DEAD {
         values.health = Some(ps.health.max(0));
         values.armor = Some((ps.cs_armor as i32, ps.cs_helmet != 0));
+        // Money only means something in the bomb mode (free-for-all and team deathmatch buy
+        // for free), so the account shows there alone.
+        let bomb_mode = presented.snapshot().is_some_and(|snap| {
+            snap.meta
+                .objectives
+                .server_info
+                .iter()
+                .any(|(name, _)| name == "cs_attackers")
+        });
+        values.money = bomb_mode.then_some(ps.cs_money as i32);
         values.ammo = weapons
             .as_deref()
             .and_then(|w| ammo_values(ps, w, &presented, &local));
@@ -675,6 +740,24 @@ pub(crate) fn update_cs_hud(
             values.timer_s = Some((left + 999) / 1000);
         }
     }
+    // A money change flashes the account green or red and shows the amount above it for 3 s.
+    if let Some(money) = values.money {
+        if let Some(last) = flash.last
+            && last != money
+        {
+            flash.delta = money - last;
+            flash.since_ms = now_ms;
+        }
+        flash.last = Some(money);
+    }
+    let flash_left = (1.0
+        - now_ms.saturating_sub(flash.since_ms) as f32 / MONEY_FLASH_MS as f32)
+        .clamp(0.0, 1.0);
+    let flash_color = if flash.delta >= 0 {
+        MONEY_GAIN
+    } else {
+        MONEY_LOSS
+    };
 
     let unit = surface.height() / crate::presentation_scale::VIRTUAL_HEIGHT;
     let width_units = surface.width() / unit;
@@ -695,6 +778,10 @@ pub(crate) fn update_cs_hud(
                         (format!("{}:{:02}", s / 60, s % 60), 'e', tint)
                     }),
                     Panel::Ammo => values.ammo.as_ref().map(|a| (a.clip.to_string(), ' ', ORANGE)),
+                    Panel::Money => values.money.map(|money| {
+                        let tint = flash_color.mix(&ORANGE, 1.0 - flash_left);
+                        (money.to_string(), '$', tint)
+                    }),
                 };
                 let Some((digits, glyph, tint)) = value else {
                     adopt_display(&mut node, Display::None);
@@ -728,7 +815,16 @@ pub(crate) fn update_cs_hud(
                     }
                     _ => {
                         let [dx, dy] = panel.digits();
-                        place(&mut node, (x + dx) * unit, (y + dy) * unit, None);
+                        if panel == Panel::Money {
+                            // Right-aligned on `digit_xpos`.
+                            place_right(
+                                &mut node,
+                                surface.width() - (x + dx) * unit,
+                                (y + dy) * unit,
+                            );
+                        } else {
+                            place(&mut node, (x + dx) * unit, (y + dy) * unit, None);
+                        }
                         if let Some(mut text) = text {
                             set_text(&mut text, &digits);
                         }
@@ -739,6 +835,29 @@ pub(crate) fn update_cs_hud(
                             set_size(&mut font, NUMBER_TALL * unit);
                         }
                     }
+                }
+            }
+            CsHudPart::MoneyDelta => {
+                // `digit2`: the last change, above the account, fading out.
+                if values.money.is_none() || flash_left <= 0.0 || flash.delta == 0 {
+                    adopt_display(&mut node, Display::None);
+                    continue;
+                }
+                let [x, y, ..] = Panel::Money.rect(width_units);
+                place_right(
+                    &mut node,
+                    surface.width() - (x + MONEY_DIGITS_RIGHT) * unit,
+                    (y - 4.0) * unit,
+                );
+                if let Some(mut text) = text {
+                    let sign = if flash.delta >= 0 { '+' } else { '-' };
+                    set_text(&mut text, &format!("{sign}{}", flash.delta.abs()));
+                }
+                if let Some(mut color) = color {
+                    set_color(&mut color, flash_color.with_alpha(flash_left));
+                }
+                if let Some(mut font) = font {
+                    set_size(&mut font, NUMBER_TALL * unit);
                 }
             }
             CsHudPart::AmmoBar | CsHudPart::AmmoReserve => {

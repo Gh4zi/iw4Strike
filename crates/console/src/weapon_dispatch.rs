@@ -249,11 +249,22 @@ pub(crate) fn route_weapon_commands(
                     echo("buy: not Alive".into(), &mut console, &mut line);
                     continue;
                 }
+                let money = presented
+                    .player(local.0)
+                    .map_or(0, |ps| ps.cs_money as i32);
+                if money < price {
+                    echo(
+                        format!("buy: {name} costs ${price}, you have ${money}"),
+                        &mut console,
+                        &mut line,
+                    );
+                    continue;
+                }
                 match resolve_give_id(&weapons.0, mw2_name, &[]) {
                     Ok(weapon) => {
                         let request_id = seq.allocate();
                         let message = match inbox
-                            .push(local.0, ClientAction::GiveWeapon { request_id, weapon })
+                            .push(local.0, ClientAction::BuyWeapon { request_id, weapon })
                         {
                             Ok(()) => format!("buy: {name} (${price})"),
                             Err(error) => format!("buy: {error}"),
