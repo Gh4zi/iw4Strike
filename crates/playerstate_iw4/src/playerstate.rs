@@ -141,6 +141,9 @@ pub struct PlayerState {
     pub cs_move_accum: f32,
     pub cs_move_buttons: u32,
     pub cs_move_latched: u32,
+    /// Fixed-tick movement: the origin before the last movement step; players are drawn between
+    /// it and the origin, one step behind, so they glide instead of jumping step to step.
+    pub cs_move_prev_origin: [f32; 3],
     /// CS weapons: recoil punch (pitch, yaw, roll) bullets and the view follow (`punchangle`).
     pub cs_punch: [f32; 3],
     /// CS weapons: shots in the current spray (`m_iShotsFired`).
@@ -455,6 +458,7 @@ impl PlayerState {
         cs_move_accum: 0.0,
         cs_move_buttons: 0,
         cs_move_latched: 0,
+        cs_move_prev_origin: [0.0; 3],
         cs_punch: [0.0; 3],
         cs_shots_fired: 0,
         cs_accuracy: 0.0,

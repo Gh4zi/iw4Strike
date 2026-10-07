@@ -406,7 +406,12 @@ fn lerp_player_state(a: &PlayerState, b: &PlayerState, alpha: f32) -> PlayerStat
     if (a.e_flags ^ b.e_flags) & playerstate_iw4::eflags::TELEPORT != 0 || a.pm_type != b.pm_type {
         return out;
     }
-    out.origin = lerp3(a.origin, b.origin, alpha);
+    let at = lerp3(
+        crate::client::predict::between_steps(a),
+        crate::client::predict::between_steps(b),
+        alpha,
+    );
+    crate::client::predict::settle_between_steps(&mut out, at);
     out.velocity = lerp3(a.velocity, b.velocity, alpha);
     for axis in 0..3 {
         out.viewangles[axis] = a.viewangles[axis]

@@ -1816,7 +1816,7 @@ pub fn publish_presented(
             && let Ok(number) = u32::try_from(runtime.next_state.client_num)
             && let Some(ps) = remote_poses.get(&sim::ClientId(number))
         {
-            runtime.origin = ps.origin;
+            runtime.origin = crate::client::predict::between_steps(ps);
             runtime.angles = ps.viewangles;
             let provenance = remote_provenance[&sim::ClientId(number)];
             let sample_time = match provenance.outcome {

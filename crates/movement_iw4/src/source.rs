@@ -437,6 +437,7 @@ pub(crate) fn pmove<C: CollisionBackend>(
                     step_cmd.buttons |= ps.cs_move_latched;
                 }
                 let old_buttons = ps.cs_move_buttons;
+                ps.cs_move_prev_origin = ps.origin;
                 let step = move_step(
                     ps,
                     &mut step_cmd,

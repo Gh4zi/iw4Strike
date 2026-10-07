@@ -361,8 +361,15 @@ pub(crate) fn interpolate_player_state(
     out.aim_spread_scale = lerp(previous.aim_spread_scale, next.aim_spread_scale);
     out.f_weapon_pos_frac = lerp(previous.f_weapon_pos_frac, next.f_weapon_pos_frac);
     out.view_height_current = lerp(previous.view_height_current, next.view_height_current);
+    let (from, to) = (
+        crate::client::predict::between_steps(previous),
+        crate::client::predict::between_steps(next),
+    );
+    crate::client::predict::settle_between_steps(
+        &mut out,
+        [0, 1, 2].map(|axis| lerp(from[axis], to[axis])),
+    );
     for axis in 0..3 {
-        out.origin[axis] = lerp(previous.origin[axis], next.origin[axis]);
         out.velocity[axis] = lerp(previous.velocity[axis], next.velocity[axis]);
         out.viewangles[axis] = previous.viewangles[axis]
             + math_iw4::angle_subtract(next.viewangles[axis], previous.viewangles[axis]) * f;

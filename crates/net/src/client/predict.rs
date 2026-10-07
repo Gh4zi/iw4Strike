@@ -326,11 +326,11 @@ impl ClientPrediction {
         // move more or less than its 10 ms: present where the player is between steps.
         let (from_at, current_at) = (between_steps(&from), between_steps(&current));
         for axis in 0..3 {
-            blended.origin[axis] =
-                from_at[axis] + (current_at[axis] - from_at[axis]) * alpha;
             blended.velocity[axis] =
                 from.velocity[axis] + (current.velocity[axis] - from.velocity[axis]) * alpha;
         }
+        let at = [0, 1, 2].map(|axis| from_at[axis] + (current_at[axis] - from_at[axis]) * alpha);
+        settle_between_steps(&mut blended, at);
         blended.view_height_current = from.view_height_current
             + (current.view_height_current - from.view_height_current) * alpha;
         Some(blended)
@@ -698,8 +698,31 @@ pub fn snapshot_ground_e_type(snapshot: &Snapshot, mover_num: i32) -> Option<i32
     None
 }
 
-/// Where the player is between fixed movement steps: the last step's origin carried on by the
-/// time the command has not moved yet (0 outside `mv_mode csgo64`/`csgo128`).
+/// Where to draw a player under fixed-tick movement (`mv_mode csgo64`/`csgo128`): one step
+/// behind, between the origin before the last step and after it, by how much of the next step
+/// has gone by. It never runs ahead into a floor or wall, unlike carrying the velocity on. A
+/// gap wider than a step could cover (a teleport or spawn) shows the origin itself, as does any
+/// other mode.
 pub(crate) fn between_steps(ps: &PlayerState) -> [f32; 3] {
-    [0, 1, 2].map(|axis| ps.origin[axis] + ps.velocity[axis] * ps.cs_move_accum)
+    const TELEPORT: f32 = 64.0;
+    let step = match movement_iw4::rules::active() {
+        Some(movement_iw4::rules::Ruleset::Source(profile)) => profile.step_seconds,
+        _ => None,
+    };
+    let Some(step) = step.filter(|seconds| *seconds > 0.0) else {
+        return ps.origin;
+    };
+    let from = ps.cs_move_prev_origin;
+    let gap = [0, 1, 2].map(|axis| ps.origin[axis] - from[axis]);
+    if gap.iter().map(|g| g * g).sum::<f32>() > TELEPORT * TELEPORT {
+        return ps.origin;
+    }
+    let through = (ps.cs_move_accum / step).clamp(0.0, 1.0);
+    [0, 1, 2].map(|axis| from[axis] + gap[axis] * through)
+}
+
+/// `ps` drawn at `origin`, already resolved between steps: `between_steps` keeps it there.
+pub(crate) fn settle_between_steps(ps: &mut PlayerState, origin: [f32; 3]) {
+    ps.origin = origin;
+    ps.cs_move_prev_origin = origin;
 }
