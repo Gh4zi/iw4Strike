@@ -226,6 +226,7 @@ pub(crate) fn update_hud_elems(
     mut ui_sound: MessageWriter<UiPlaySound>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     entities: Query<(&CEntity, &CEntityRuntime)>,
+    settings: Res<frame::GameSettings>,
 ) {
     if !surface.is_ready() {
         hide(&mut pass);
@@ -241,12 +242,15 @@ pub(crate) fn update_hud_elems(
         return;
     };
     let dead = client.lifecycle != ClientLifecycle::Alive;
+    // A CS round-end banner stands in for MW2's round outcome (tagged by the script).
+    let outcome = crate::cs_round_banner::mw2_outcome_shows(&settings);
     let mut elems: Vec<&HudElem> = copy_in_use_prefix(&client.hud_current)
         .iter()
         .chain(copy_in_use_prefix(&client.hud_archival).iter())
         .filter(|e| {
             !(e.flags & HUDELEM_FLAG_HIDEWHENINMENU != 0 && input.script_menu_open
-                || e.flags & HUDELEM_FLAG_HIDEWHENDEAD != 0 && dead)
+                || e.flags & HUDELEM_FLAG_HIDEWHENDEAD != 0 && dead
+                || !outcome && e.sort == crate::cs_round_banner::CS_OUTCOME_SORT)
         })
         .collect();
     if elems.is_empty() {

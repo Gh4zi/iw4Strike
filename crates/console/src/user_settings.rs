@@ -335,6 +335,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("master_volume={:.3}", settings.master_volume),
         format!("snd_ambient_volume={:.2}", settings.ambient_volume),
         format!("_vgui_menus={}", u8::from(settings.vgui_menus)),
+        format!("cl_roundbanner={}", settings.round_banner),
         format!("brightness={:.3}", settings.brightness),
         format!("fov={:.0}", settings.fov),
         format!("viewmodel_fov={:.0}", settings.viewmodel_fov),
@@ -432,6 +433,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             }
             "sv_destructibles" => settings.destructibles = value.trim() == "1",
             "_vgui_menus" => settings.vgui_menus = value.trim() != "0",
+            "cl_roundbanner" => {
+                if hud::RoundBanner::parse(value).is_some() {
+                    settings.round_banner = value.trim().to_ascii_lowercase();
+                }
+            }
             "mv_mode" => {
                 if movement_iw4::rules::MovementMode::from_name(value).is_some() {
                     value.trim().clone_into(&mut settings.mv_mode);
@@ -569,6 +575,11 @@ pub(crate) fn native_menu_settings(
                 }
             }
             "ui_player_name" => settings.player_name = value.clone(),
+            "ui_round_banner" => {
+                if hud::RoundBanner::parse(value).is_some() {
+                    settings.round_banner = value.trim().to_ascii_lowercase();
+                }
+            }
             "ui_sensitivity" => {
                 if let Ok(v) = value.parse::<f32>()
                     && v.is_finite()
@@ -631,6 +642,7 @@ pub(crate) fn native_menu_settings(
         dvars.set(name, if settings.third_person { "1" } else { "0" });
     }
     dvars.set("ui_player_name", settings.player_name.clone());
+    dvars.set("ui_round_banner", settings.round_banner.clone());
     dvars.set("ui_shadows", if settings.shadows { "1" } else { "0" });
     dvars.set("ui_dof", if settings.depth_of_field { "1" } else { "0" });
     dvars.set("ui_bloom", if settings.bloom { "1" } else { "0" });

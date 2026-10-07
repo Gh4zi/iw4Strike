@@ -48,6 +48,7 @@ impl Plugin for HudPlugin {
             .init_resource::<crate::cs_hud::CsHudAssets>()
             .init_resource::<crate::cs_hud::CsKillFeed>()
             .init_resource::<crate::cs_hud::CsMoneyFlash>()
+            .init_resource::<crate::cs_round_banner::CsRoundBanner>()
             .init_resource::<IrisLetterboxFill>()
             .init_resource::<BloodOverlayLatch>()
             .init_resource::<BloodGpuJob>()
@@ -88,6 +89,8 @@ impl Plugin for HudPlugin {
                         crate::cs_hud::spawn_cs_hud,
                         crate::cs_scoreboard::spawn_cs_scoreboard,
                         crate::cs_buymenu::spawn_cs_buymenu,
+                        crate::cs_round_banner::spawn_cs_round_banner
+                            .after(crate::cs_hud::spawn_cs_hud),
                     ),
                     sync_frontend_camera,
                     hud_stamp_setup,
@@ -112,6 +115,7 @@ impl Plugin for HudPlugin {
                                 crate::cs_hud::update_cs_hud,
                                 crate::cs_scoreboard::update_cs_scoreboard,
                                 crate::cs_buymenu::update_cs_buymenu,
+                                crate::cs_round_banner::update_cs_round_banner,
                             ),
                             hud_stage_close::<0>,
                             update_iris,

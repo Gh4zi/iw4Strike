@@ -42,6 +42,9 @@ pub struct GameSettings {
     /// `_vgui_menus`: the buy menu as a window you click (CS:S, or CS 1.6 VGUI), or 0 for
     /// CS 1.6's old numbered text menu.
     pub vgui_menus: bool,
+    /// `cl_roundbanner`: the round-end banner, `css` (CS:S win panel), `cs16` (CS 1.6 centre
+    /// message) or `mw2` (MW2's round outcome).
+    pub round_banner: String,
     pub brightness: f32,
     pub shadows: bool,
     pub depth_of_field: bool,
@@ -85,6 +88,7 @@ impl Default for GameSettings {
             master_volume: 1.0,
             ambient_volume: Self::AMBIENT_VOLUME_DEFAULT,
             vgui_menus: true,
+            round_banner: "css".to_owned(),
             brightness: 0.0,
             shadows: true,
             depth_of_field: true,

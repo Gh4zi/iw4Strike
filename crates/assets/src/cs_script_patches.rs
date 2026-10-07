@@ -97,13 +97,35 @@ const PATCHES: &[Patch] = &[
         SD,
         "\tthread maps\\mp\\gametypes\\_gamelogic::endGame( winningTeam, endReasonText );",
         "\tif ( !level.gameEnded ) { \
-         if ( isDefined( winningTeam ) && winningTeam == game[\"attackers\"] ) \
-         playSoundOnPlayers( \"cs_event_terwin\" ); \
-         else if ( isDefined( winningTeam ) && winningTeam == game[\"defenders\"] ) \
-         playSoundOnPlayers( \"cs_event_ctwin\" ); \
-         else playSoundOnPlayers( \"cs_event_rounddraw\" ); }\n\
+         csWin = \"draw\"; \
+         if ( isDefined( winningTeam ) && winningTeam == game[\"attackers\"] ) csWin = \"t\"; \
+         else if ( isDefined( winningTeam ) && winningTeam == game[\"defenders\"] ) csWin = \"ct\"; \
+         if ( csWin == \"t\" ) playSoundOnPlayers( \"cs_event_terwin\" ); \
+         else if ( csWin == \"ct\" ) playSoundOnPlayers( \"cs_event_ctwin\" ); \
+         else playSoundOnPlayers( \"cs_event_rounddraw\" ); \
+         csWhy = \"\"; \
+         if ( level.bombExploded ) csWhy = \"target_bombed\"; \
+         else if ( level.bombDefused ) csWhy = \"bomb_defused\"; \
+         else if ( csWin == \"t\" ) csWhy = \"cts_eliminated\"; \
+         else if ( csWin == \"ct\" && isDefined( level.aliveCount[game[\"attackers\"]] ) \
+         && level.aliveCount[game[\"attackers\"]] > 0 ) csWhy = \"target_saved\"; \
+         else if ( csWin == \"ct\" ) csWhy = \"ts_eliminated\"; \
+         csEnd = getTime() + \" \" + csWin + \" \" + csWhy; \
+         setDvar( \"cs_round_end\", csEnd ); makeDvarServerInfo( \"cs_round_end\", csEnd ); }\n\
          \tthread maps\\mp\\gametypes\\_gamelogic::endGame( winningTeam, endReasonText );",
-        "defusal: CS round-end radio voice",
+        "defusal: CS round-end radio voice, and the round's winner and reason for the CS banner \
+         (`cs_round_end`)",
+    ),
+    once(
+        "maps/mp/gametypes/_hud_message",
+        "\tself thread resetTeamOutcomeNotify( outcomeTitle, outcomeText, leftIcon, rightIcon, \
+         leftScore, rightScore, matchBonus );",
+        "\toutcomeTitle.sort = 4242; outcomeText.sort = 4242; leftIcon.sort = 4242; \
+         rightIcon.sort = 4242; leftScore.sort = 4242; rightScore.sort = 4242; \
+         if ( isDefined( matchBonus ) ) matchBonus.sort = 4242;\n\
+         \tself thread resetTeamOutcomeNotify( outcomeTitle, outcomeText, leftIcon, rightIcon, \
+         leftScore, rightScore, matchBonus );",
+        "MW2's round outcome tagged (sort 4242) so a CS round-end banner can stand in for it",
     ),
     once(
         "maps/mp/gametypes/_music_and_dialog",

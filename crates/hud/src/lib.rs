@@ -6,6 +6,7 @@ mod compass;
 mod cs_buymenu;
 mod cs_crosshair;
 mod cs_hud;
+mod cs_round_banner;
 mod cs_scoreboard;
 mod draw2d;
 mod expr_cache;
@@ -45,6 +46,7 @@ pub use gpu_list::{
 };
 pub use hudelem::HudElemSoundLatch;
 pub use cs_buymenu::CsBuyMenu;
+pub use cs_round_banner::RoundBanner;
 pub use menus::ScriptMenus;
 pub use overhead_names::{
     OverheadPosedHead, OverheadPosedModelFrame, OverheadPosedPlayerFrame,

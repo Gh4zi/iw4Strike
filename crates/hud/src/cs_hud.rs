@@ -167,6 +167,13 @@ pub(crate) struct CsHudAssets {
     sprites: Option<Handle<Image>>,
 }
 
+impl CsHudAssets {
+    /// The proportional text font (Verdana bold, or the fallback).
+    pub(crate) fn name_font(&self) -> Handle<Font> {
+        self.names.clone()
+    }
+}
+
 /// Which font a kill icon is drawn in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum IconFont {

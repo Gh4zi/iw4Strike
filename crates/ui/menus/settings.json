@@ -124,6 +124,10 @@
       {"name": "keyBindStatus", "optional": true, "fields": {"vis_exp": "0"}},
       {"dvar": "ui_name", "fields": {"dvar": "ui_player_name", "vis_exp": "1", "disabled_exp": "0", "edit_field": {"max_chars": 16}, "rect": {"x": 420, "y": 28, "w": 156, "h": 20}, "text_key": "", "text_exp": "", "text_align_x": -8, "text_align_mode": 10, "text_align_y": 0, "handlers": {"action": [], "accept": []}}},
       {"text_key": "@MENU_PLAYER_NAME", "fields": {"vis_exp": "1", "rect": {"x": 232, "y": 28, "w": 344, "h": 20}}}
+    ],
+    "item_copies": [
+      {"dvar": "ui_name", "fields": {"item_type": 12, "static_flags": 0, "dvar": "ui_round_banner", "edit_field": null, "choices": [["Counter-Strike: Source", "css"], ["Counter-Strike 1.6", "cs16"], ["Modern Warfare 2", "mw2"]], "vis_exp": "1", "disabled_exp": "0", "text_key": "", "text_exp": "", "text_align_mode": 10, "text_align_x": -8, "text_align_y": 0, "fore_color": [1, 1, 1, 1], "rect": {"x": 232, "y": 48, "w": 344, "h": 20}, "handlers": {"action": [{"Script": "play mouse_click;"}], "accept": [], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0 0 0 1;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}, "text_scale": 0.375, "style": 1, "background": "menu_button_selection_bar", "back_color": [0, 0, 0, 0], "font_enum": 3, "name": "ui_round_banner"}},
+      {"text_key": "@MENU_PLAYER_NAME", "fields": {"vis_exp": "1", "text_key": "Round End Banner", "rect": {"x": 232, "y": 48, "w": 344, "h": 20}, "name": "round_banner_label"}}
     ]
   }
 ]

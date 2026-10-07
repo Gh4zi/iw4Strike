@@ -78,6 +78,9 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
   get away. Killcams are off for now
 - CS's radio voice ends each round ("Terrorists win!", "Counter-Terrorists win!", "Round
   draw!"), from your CS:S or CS 1.6 install
+- Round-end banner in the look you pick under **Options > Multiplayer Options** (or
+  `cl_roundbanner css|cs16|mw2`, saved): CS:S's win panel (default), CS 1.6's centre message,
+  or MW2's round outcome
 
 ---
 

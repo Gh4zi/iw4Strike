@@ -31,6 +31,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "_vgui_menus [0|1] — buy menu: 1 the window you click (CS:S / CS 1.6 VGUI), 0 CS 1.6's old numbered text menu",
         ));
     }
+    if registry.resolve("cl_roundbanner").is_none() {
+        registry.register(crate::CommandSpec::new("cl_roundbanner").usage(
+            "cl_roundbanner [css|cs16|mw2] — round-end banner: CS:S win panel, CS 1.6 centre message or MW2's round outcome",
+        ));
+    }
     if registry.resolve("snd_ambient_volume").is_none() {
         registry.register(crate::CommandSpec::new("snd_ambient_volume").usage(
             "snd_ambient_volume [0-1] — how loud the map's own ambience plays (wind, engines, hum)",
@@ -136,6 +141,15 @@ pub(crate) fn route_movement_commands(
                     format!("_vgui_menus = {arg}")
                 }
                 _ => "usage: _vgui_menus [0|1]".to_owned(),
+            },
+            "cl_roundbanner" => match cmd.args.as_slice() {
+                [] => format!("cl_roundbanner = {}", game.round_banner),
+                [arg] if hud::RoundBanner::parse(arg).is_some() => {
+                    game.round_banner = arg.trim().to_ascii_lowercase();
+                    game.touch();
+                    format!("cl_roundbanner = {}", game.round_banner)
+                }
+                _ => "usage: cl_roundbanner [css|cs16|mw2]".to_owned(),
             },
             "snd_ambient_volume" => match cmd.args.as_slice() {
                 [] => format!("snd_ambient_volume = {:.2}", game.ambient_volume),
