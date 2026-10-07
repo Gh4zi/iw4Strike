@@ -48,6 +48,9 @@ pub fn emit_footstep_on_bob_wrap(
         origin_inches,
         snd_ent,
     });
+    if crate::aliases::cs_quiet_gear(surface_flags) {
+        return true;
+    }
     weapon_sounds.write(WeaponSound {
         event: None,
         namespace: asset_core::AssetNamespace::Iw4,

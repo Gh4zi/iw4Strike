@@ -445,6 +445,9 @@ fn movement_sound(
         origin_inches,
         snd_ent: Some(u32::from(identity.number())),
     });
+    if crate::aliases::cs_quiet_gear(surface_flags) {
+        return;
+    }
     gear.write(WeaponSound {
         event: Some(crate::AudioEvent::from_entity(
             *generation,

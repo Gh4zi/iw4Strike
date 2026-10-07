@@ -4,6 +4,8 @@
 //! Each borrows its mixing settings (volume, distance falloff, channel) from MW2's own gunshot
 //! aliases, so CS sounds sit in the mix like MW2's did. Nothing is copied out of the install.
 
+use std::path::Path;
+
 use crate::{LooseClip, SoundCatalog};
 
 /// Alias prefix of Counter-Strike: Source sound script entries (`css/weapon_ak47.single`).
@@ -22,6 +24,43 @@ pub const CS_RADIO_SOUND_PREFIX: &str = "cs/radio/";
 /// `cs_event_bombdefused`): the bomb mode's script plays these, and whichever game is
 /// installed fills them with its own voice (CS:S `Event.*`, CS 1.6 `radio/*.wav`).
 pub const CS_EVENT_PREFIX: &str = "cs_event_";
+/// Ladder steps under install-free names, for your own (`cs_ladder_plr_step`, flat) and other
+/// players' (`cs_ladder_step`, positional), modelled on MW2's ladder steps: CS:S's
+/// `player/footsteps/ladder1-4`, else CS 1.6's `player/pl_ladder1-4`.
+pub const CS_LADDER_STEP: &str = "cs_ladder_step";
+pub const CS_LADDER_STEP_PLR: &str = "cs_ladder_plr_step";
+
+/// Register the ladder step waves (`rate, channels, pcm16`) under both ladder step names.
+fn add_ladder_steps(catalog: &mut SoundCatalog, waves: &[(u32, i32, Vec<u8>)]) -> bool {
+    if waves.is_empty() {
+        return false;
+    }
+    let mut added = true;
+    for (name, templates) in [
+        (CS_LADDER_STEP, ["step_run_ladder", "step_run_default"]),
+        (CS_LADDER_STEP_PLR, ["step_run_plr_ladder", "step_run_plr_default"]),
+    ] {
+        let Some(template) = templates
+            .into_iter()
+            .find(|name| catalog.has_alias(crate::AssetNamespace::Iw4, name))
+        else {
+            return false;
+        };
+        let clips = waves
+            .iter()
+            .enumerate()
+            .map(|(i, (rate, channels, pcm))| LooseClip {
+                name: format!("{name}#{i}"),
+                rate: *rate,
+                channels: *channels,
+                pcm16: pcm.clone(),
+            })
+            .collect();
+        added &= catalog.add_loose_alias(name, &template, clips);
+    }
+    added
+}
+
 /// The CS 1.6 radio wave behind each announcement.
 const CS16_EVENTS: [(&str, &str); 5] = [
     ("ctwin", "ctwin"),
@@ -162,6 +201,17 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             }
         }
     }
+    // Ladder steps: CS 1.6's own, else Half-Life's (the same waves).
+    let ladder: Vec<_> = (1..=4)
+        .filter_map(|i| {
+            [&cstrike, &half_life]
+                .into_iter()
+                .map(|game| game.join("sound").join("player").join(format!("pl_ladder{i}.wav")))
+                .find_map(|path| std::fs::read(path).ok())
+                .and_then(|bytes| decode_wav(&bytes))
+        })
+        .collect();
+    add_ladder_steps(catalog, &ladder);
     diag::info!(
         Audio,
         "cs sounds: {added} weapon sounds from {} (modelled on `{player}` / `{world}`)",
@@ -273,6 +323,23 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         if let Some((event, clips)) = event {
             catalog.add_loose_alias(&event, &player, clips);
         }
+    }
+    // Ladder steps: Half-Life 2's, in CS:S's own pack or the `hl2` sound pack beside it.
+    let hl2 = pak
+        .parent()
+        .and_then(Path::parent)
+        .map(|game| game.join("hl2").join("hl2_sound_misc_dir.vpk"))
+        .and_then(|dir| mdl_source::Vpk::open(&dir).ok());
+    let ladder: Vec<_> = (1..=4)
+        .filter_map(|i| {
+            let wave = format!("sound/player/footsteps/ladder{i}.wav");
+            vpk.read(&wave)
+                .or_else(|| hl2.as_ref().and_then(|hl2| hl2.read(&wave)))
+                .and_then(|bytes| decode_wav(&bytes))
+        })
+        .collect();
+    if !add_ladder_steps(catalog, &ladder) {
+        diag::info!(Audio, "css sounds: no ladder steps found, CS 1.6's or MW2's are used");
     }
     diag::info!(
         Audio,

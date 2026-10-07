@@ -220,6 +220,27 @@ const PATCHES: &[Patch] = &[
         times: 2,
         why: "no grey intro look during the countdowns",
     },
+    // CS has no medals or killstreaks: no MW2 splash chime after a kill (the splash itself is
+    // hidden by the CS HUD), and no killstreak rewards, so no "Predator missile ready" voice.
+    once(
+        "maps/mp/gametypes/_hud_message",
+        "if ( isDefined( actionData.sound ) )",
+        "if ( 0 )",
+        "no medal / splash chime",
+    ),
+    once(
+        "maps/mp/gametypes/_hud_message",
+        "if ( isDefined( actionData.leaderSound ) )",
+        "if ( 0 )",
+        "no announcer on splashes (killstreak earned)",
+    ),
+    once(
+        "maps/mp/gametypes/_damage",
+        "attacker thread maps\\mp\\killstreaks\\_killstreaks::checkKillstreakReward( \
+         attacker.pers[\"cur_kill_streak\"] );",
+        "attacker notify( \"got_killstreak\", attacker.pers[\"cur_kill_streak\"] );",
+        "no killstreak rewards",
+    ),
     // Final killcam only for the kill that wins the match, not every round's last kill, and
     // only while killcams are on (`scr_game_allowkillcam`, off in the CS fork for now).
     once(

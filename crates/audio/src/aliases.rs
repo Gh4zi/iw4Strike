@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-use movement_iw4::{SURFACE_TYPE_NAMES, surface_type_index};
+use movement_iw4::{LADDER_SURFACE_TYPE, SURFACE_TYPE_NAMES, surface_type_index};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepGait {
@@ -148,6 +148,16 @@ fn build_bank() -> SurfaceBank {
                         alias = build_quiet_owned(&alias).unwrap_or(alias);
                         fallback = build_quiet_owned(&fallback).unwrap_or(fallback);
                     }
+                    // Counter-Strike's ladder steps, MW2's when no CS install has them.
+                    if movement_iw4::rules::CS_RULES && si == LADDER_SURFACE_TYPE as usize {
+                        fallback = alias;
+                        alias = if local {
+                            asset_audio::CS_LADDER_STEP_PLR
+                        } else {
+                            asset_audio::CS_LADDER_STEP
+                        }
+                        .to_owned();
+                    }
                     footstep[gi][li][qi][si] = intern_pick(
                         alias,
                         fallback,
@@ -267,6 +277,11 @@ pub fn quiet_surface_alias(alias: &str) -> Option<&'static str> {
 
 pub fn surface_alias_candidates(alias: &str, _fallback: &str) -> &'static [&'static str] {
     BANK.by_alias.get(alias).copied().unwrap_or(&[])
+}
+
+/// Counter-Strike climbs ladders without MW2's gear rattle under each step.
+pub(crate) fn cs_quiet_gear(surface_flags: u32) -> bool {
+    movement_iw4::rules::CS_RULES && surf_slot(surface_flags) == LADDER_SURFACE_TYPE as usize
 }
 
 pub fn gear_rattle_alias(gait: StepGait, local_player: bool) -> &'static str {
