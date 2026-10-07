@@ -736,7 +736,13 @@ fn step_authority(
     );
     // A terminal script error drops the match to the lobby;
     // the world stays frozen until the swap replaces it.
-    let Ok(snapshot) = stepped else {
+    let snapshot = stepped.inspect_err(|error| {
+        // A step that keeps failing freezes the match for every client; say so once a second.
+        if clock.tick % sim::ticks_for_ms(1000) == 0 {
+            diag::warn!(Net, "authority step failed: {}", error.message);
+        }
+    });
+    let Ok(snapshot) = snapshot else {
         if let Some(fault) = world.0.take_script_fault() {
             diag::error!(Sim, "GSC execution failed: {fault}");
             diag::script_boundary(

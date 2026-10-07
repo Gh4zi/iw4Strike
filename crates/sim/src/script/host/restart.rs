@@ -33,6 +33,10 @@ pub(crate) enum Detached {
 
 const MAX_DEPTH: usize = 64;
 
+/// GSC's `game` global (object 1; `level` is 0, `anim` 2), whose fields `map_restart(true)`
+/// keeps: rounds won and played, which side attacks, the match state.
+const GAME_OBJECT: u64 = 1;
+
 fn detach(runtime: &Runtime, value: &Value, depth: usize) -> Option<Detached> {
     match value {
         Value::Undefined
@@ -102,7 +106,7 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     };
     let game: Vec<(Arc<str>, Detached)> = runtime
         .objects
-        .get(&2)
+        .get(&GAME_OBJECT)
         .into_iter()
         .flatten()
         .filter_map(|(id, value)| Some((symbol_name(runtime, *id)?, detach(runtime, value, 0)?)))
@@ -170,8 +174,11 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         runtime.local_presentation_client = local_presentation_client;
         runtime.pending_local_dvars = pending_local_dvars;
     }
-    let mut plan = (*plan).clone();
-    let entries = std::mem::take(&mut plan.entries);
+    // The entries stay in the plan the next restart reads: they are recorded only at the first
+    // start, so taking them out here left every later restart without the level's `main` (the
+    // script runtime stopped after the second round restart and the match stalled).
+    let plan = (*plan).clone();
+    let entries = plan.entries.clone();
     if let Err(fault) = install_level(world, program, plan) {
         world.resource_mut::<Runtime>().fault = Some(fault);
         return;
@@ -184,7 +191,7 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     runtime.restored_pers = pers;
     for (name, value) in game {
         match attach(&mut runtime, value) {
-            Ok(value) => runtime.set_object_field(2, &name, value),
+            Ok(value) => runtime.set_object_field(GAME_OBJECT, &name, value),
             Err(message) => {
                 runtime.fault = Some(Fault::at(
                     &Location {
