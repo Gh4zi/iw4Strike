@@ -21,8 +21,11 @@ pub const CS_RULES: bool = true;
 /// The movement presets `mv_mode` picks between.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MovementMode {
-    /// Competitive CS:GO (Momentum's CS:GO mode): stamina, no autohop, airaccelerate 12.
+    /// CS:GO competitive: CS:GO's stamina, crouch fatigue, ground acceleration and speed clamp,
+    /// 1.1x anti-bhop cap, airaccelerate 12, no autohop.
     Csgo,
+    /// CS:S-style (Momentum's CS mode): CS:S stamina, airaccelerate 12, no autohop.
+    Css,
     /// Surf servers: airaccelerate 150, autohop.
     Surf,
     /// Momentum Mod bhop: airaccelerate 1000, autohop, no stamina, 260 run speed.
@@ -32,12 +35,13 @@ pub enum MovementMode {
 }
 
 impl MovementMode {
-    pub const ALL: [Self; 4] = [Self::Csgo, Self::Surf, Self::Mmod, Self::Cs16];
+    pub const ALL: [Self; 5] = [Self::Csgo, Self::Css, Self::Surf, Self::Mmod, Self::Cs16];
 
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::Csgo => "csgo",
+            Self::Css => "css",
             Self::Surf => "surf",
             Self::Mmod => "mmod",
             Self::Cs16 => "cs16",
@@ -48,8 +52,10 @@ impl MovementMode {
     pub fn from_name(name: &str) -> Option<Self> {
         let name = name.trim();
         let is = |names: &[&str]| names.iter().any(|n| n.eq_ignore_ascii_case(name));
-        if is(&["csgo", "cs:go", "source", "css"]) {
+        if is(&["csgo", "cs:go", "vanilla", "vnl"]) {
             Some(Self::Csgo)
+        } else if is(&["css", "cs:s", "source"]) {
+            Some(Self::Css)
         } else if is(&["surf"]) {
             Some(Self::Surf)
         } else if is(&["mmod", "momentum", "bhop"]) {
@@ -64,7 +70,8 @@ impl MovementMode {
     #[must_use]
     pub fn describe(self) -> &'static str {
         match self {
-            Self::Csgo => "CS:GO competitive (airaccelerate 12, stamina, no autohop)",
+            Self::Csgo => "CS:GO competitive (CS:GO stamina and crouch fatigue, 1.1x bhop cap)",
+            Self::Css => "CS:S style (airaccelerate 12, CS:S stamina, no autohop)",
             Self::Surf => "surf (airaccelerate 150, autohop)",
             Self::Mmod => "Momentum bhop (airaccelerate 1000, autohop, no stamina, 260 speed)",
             Self::Cs16 => "CS 1.6 (GoldSrc movement, 1.6 hull and jump)",
@@ -75,6 +82,7 @@ impl MovementMode {
     pub fn ruleset(self) -> Ruleset {
         match self {
             Self::Csgo => Ruleset::Source(source::CSGO),
+            Self::Css => Ruleset::Source(source::CSS),
             Self::Surf => Ruleset::Source(source::MOMENTUM_SURF),
             Self::Mmod => Ruleset::Source(source::MOMENTUM_BHOP),
             Self::Cs16 => Ruleset::GoldSrc(cs::CS16),

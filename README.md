@@ -29,8 +29,9 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 
 **Movement**
 - 100 Hz server tick (MW2 runs at 20 Hz)
-- CS:GO-style movement by default: bunny hopping, air strafing, stamina, duck-jumping
-- Other presets: surf, Momentum Mod bhop and CS 1.6 movement (`mv_mode`)
+- CS:GO movement by default: bunny hopping, air strafing, duck-jumping, with CS:GO's own
+  stamina, crouch-spam fatigue, ground acceleration and 1.1x bunny-hop cap
+- Other presets: CS:S-style, surf, Momentum Mod bhop and CS 1.6 movement (`mv_mode`)
 - CS ladders: strafe onto a ladder to climb it, and your gun stays up
 - No sprint, no prone
 
@@ -241,7 +242,8 @@ buy flashbang
 
 | Command | What it does |
 |---|---|
-| `mv_mode csgo` | CS:GO competitive movement, the default (stamina, no auto-hop) |
+| `mv_mode csgo` | CS:GO competitive movement, the default (CS:GO stamina and crouch fatigue, 1.1x bhop cap, no auto-hop) |
+| `mv_mode css` | CS:S-style movement (CS:S stamina, Momentum's slope fix, no auto-hop) |
 | `mv_mode cs16` | Counter-Strike 1.6 movement (smaller player, lower jump) |
 | `mv_mode surf` | Surf settings (very high air control, auto-hop) |
 | `mv_mode mmod` | Momentum Mod bhop (auto-hop, no stamina, 260 speed) |
@@ -413,6 +415,7 @@ read to get the behaviour and numbers right. None of their source code is includ
 | **[Momentum Mod](https://github.com/momentum-mod/game)** | Source / CS:GO movement (`mom_gamemovement.cpp`): move order, jumping, friction, air acceleration, step-up, ramp and slope fixes, ducking. The bhop, surf and KZ stamina settings behind `mv_mode`. The dynamic crosshair (`hud_crosshair.cpp`). |
 | **[ReGameDLL_CS](https://github.com/s1lentq/ReGameDLL_CS)** | Counter-Strike 1.6 rules: weapon stats (`wpn_*.cpp`, `weapons.h`), damage, range and hitgroups, spread and recoil, kevlar and helmet, knife, grenades, flashbang blinding (`RadiusFlash`), AWP zoom, dropping and picking up weapons, CS 1.6 movement numbers and fall damage. |
 | **[hlsdk-portable](https://github.com/FWGS/hlsdk-portable)** | GoldSrc player movement (`pm_shared`) and the Half-Life model format (`studio.h`), used by the CS 1.6 movement mode and the CS 1.6 model fallback. |
+| **[CSMovementRust](https://github.com/EduardoCalvoUribe/CSMovementRust)** | CS:GO movement numbers and its technical reference: stamina as a penalty, crouch fatigue, CS:GO ground acceleration and speed clamp, the duck-reset jump, the anti-bhop cap, ladder speed (`mv_mode csgo`). |
 | **[Source SDK 2013](https://github.com/ValveSoftware/source-sdk-2013)** | Source engine movement (`gamemovement.cpp`) and the public headers for Source model files, used to load Counter-Strike: Source models. |
 
 ### Games

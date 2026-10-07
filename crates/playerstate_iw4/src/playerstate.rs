@@ -129,6 +129,13 @@ pub struct PlayerState {
     pub cs_duck_state: u32,
     /// CS movement: downward speed while airborne, kept for landing damage (GoldSrc `flFallVelocity`).
     pub cs_fall_velocity: f32,
+    /// CS:GO movement: how far down the duck is, 0 standing to 1 fully crouched (`m_flDuckAmount`).
+    pub cs_duck_amount: f32,
+    /// CS:GO movement: crouch fatigue, how far the duck speed is below its ideal (0 rested).
+    pub cs_duck_fatigue: f32,
+    /// CS:GO movement: where the duck speed was last fully rested (x, y; z unused); moving away
+    /// from it recovers faster.
+    pub cs_duck_anchor: [f32; 3],
     /// CS weapons: recoil punch (pitch, yaw, roll) bullets and the view follow (`punchangle`).
     pub cs_punch: [f32; 3],
     /// CS weapons: shots in the current spray (`m_iShotsFired`).
@@ -437,6 +444,9 @@ impl PlayerState {
         cs_duck_time: 0.0,
         cs_duck_state: 0,
         cs_fall_velocity: 0.0,
+        cs_duck_amount: 0.0,
+        cs_duck_fatigue: 0.0,
+        cs_duck_anchor: [0.0; 3],
         cs_punch: [0.0; 3],
         cs_shots_fired: 0,
         cs_accuracy: 0.0,

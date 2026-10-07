@@ -4,8 +4,9 @@
 //! walk (with step-up and stay-on-ground) or air move, ground categorisation, the other half of
 //! gravity. Ground categorisation carries Momentum's slope fix (landing on a downhill keeps the
 //! speed the slope would give) and its quadrant probe for ledges; the slide move clips with no
-//! overbounce, as surfing needs. Numbers live in [`SourceProfile`]: [`CSGO`] is the competitive
-//! default, [`MOMENTUM_BHOP`] and [`MOMENTUM_SURF`] are Momentum's mode settings.
+//! overbounce, as surfing needs. Numbers live in [`SourceProfile`]: [`CSS`] is the CS:S-style
+//! base, [`CSGO`] adds CS:GO's own rules ([`CsgoRules`]: its stamina, crouch fatigue, ground
+//! acceleration and clamp), [`MOMENTUM_BHOP`] and [`MOMENTUM_SURF`] are Momentum's modes.
 //!
 //! Source keeps the player origin at the feet, like IW4, so hull heights map one to one.
 
@@ -80,11 +81,75 @@ pub struct SourceProfile {
     pub fall_safe_speed: f32,
     pub fall_fatal_speed: f32,
     pub fall_damage_scale: f32,
+    /// Ladder climb speed scale (CS:GO climbs at 0.78 of 200).
+    pub ladder_scale: f32,
+    /// CS:GO's own rules over the shared Source movement; `None` keeps Momentum's CS:S-style ones.
+    pub csgo: Option<CsgoRules>,
 }
 
-/// CS:GO competitive movement on Momentum's Source code: CS:GO speeds, hull and eye heights, the
-/// 57 unit jump, CS:S stamina, no autohop.
-pub const CSGO: SourceProfile = SourceProfile {
+/// What CS:GO's movement does differently from the CS:S-style Source code: its stamina is a
+/// penalty accumulator, crouching has a duck amount and a fatigue that punishes crouch spam,
+/// ground acceleration scales with the weapon, walking and ducking, and the ground clamps the total
+/// speed. Numbers from CS:GO's movement as `CSMovementRust` measured and documented it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CsgoRules {
+    /// Stamina penalty: a jump adds `jump_cost` per unit of its impulse, a landing `land_cost` per
+    /// unit of fall speed; it recovers `recovery` a second, is capped at `max`, and slows movement
+    /// by `(1 - S/range)^2` and jumps by `1 - S/range`.
+    pub stamina_jump_cost: f32,
+    pub stamina_land_cost: f32,
+    pub stamina_recovery: f32,
+    pub stamina_max: f32,
+    pub stamina_range: f32,
+    /// Duck speed: rested at `duck_speed_ideal`; every press or release costs `duck_speed_penalty`
+    /// (not below `duck_speed_min`); it recovers `duck_speed_recovery` a second, or
+    /// `duck_speed_recovery_far` once the player is `duck_recovery_far_distance` from where it was
+    /// last rested. A press below `duck_refuse_below` is ignored.
+    pub duck_speed_ideal: f32,
+    pub duck_speed_penalty: f32,
+    pub duck_speed_min: f32,
+    pub duck_speed_recovery: f32,
+    pub duck_recovery_far_distance: f32,
+    pub duck_speed_recovery_far: f32,
+    pub duck_refuse_below: f32,
+    /// Ground duck rate is `duck_speed * duck_down_scale` a second; unducking runs at
+    /// `max(duck_speed, unduck_speed_min)`, and the standing hull returns at `unduck_hull_amount`.
+    pub duck_down_scale: f32,
+    pub unduck_speed_min: f32,
+    pub unduck_hull_amount: f32,
+    /// Inputs and the speed cap scale by `1 - duck_crop * duck_amount`.
+    pub duck_crop: f32,
+    /// Ground acceleration multiplier while ducked or ducking.
+    pub duck_accel_modifier: f32,
+    /// The player's own max speed the anti-bhop cap multiplies (not the weapon's).
+    pub player_max_speed: f32,
+}
+
+/// CS:GO's numbers for [`CsgoRules`].
+pub const CSGO_RULES: CsgoRules = CsgoRules {
+    stamina_jump_cost: 0.080,
+    stamina_land_cost: 0.050,
+    stamina_recovery: 60.0,
+    stamina_max: 80.0,
+    stamina_range: 100.0,
+    duck_speed_ideal: 8.0,
+    duck_speed_penalty: 2.0,
+    duck_speed_min: 0.0,
+    duck_speed_recovery: 3.0,
+    duck_recovery_far_distance: 64.0,
+    duck_speed_recovery_far: 9.0,
+    duck_refuse_below: 1.5,
+    duck_down_scale: 0.8,
+    unduck_speed_min: 1.5,
+    unduck_hull_amount: 0.75,
+    duck_crop: 0.66,
+    duck_accel_modifier: 0.34,
+    player_max_speed: 250.0,
+};
+
+/// CS:S-style movement on Momentum's Source code (`mv_mode css`): CS:GO speeds, hull and eye
+/// heights and the 57 unit jump, with CS:S stamina, Momentum's slope fix, no autohop.
+pub const CSS: SourceProfile = SourceProfile {
     max_speed: 250.0,
     forward_speed: 450.0,
     back_speed: 450.0,
@@ -121,6 +186,21 @@ pub const CSGO: SourceProfile = SourceProfile {
     fall_safe_speed: 580.0,
     fall_fatal_speed: 1024.0,
     fall_damage_scale: 1.25,
+    ladder_scale: 1.0,
+    csgo: None,
+};
+
+/// CS:GO competitive movement (`mv_mode csgo`): the CS:S-style base with CS:GO's own stamina,
+/// crouch fatigue, ground acceleration and speed clamp, its 1.1x anti-bhop cap, 0.78 ladders, no
+/// jump lift and no slope fix.
+pub const CSGO: SourceProfile = SourceProfile {
+    jump_z_offset: 0.0,
+    bhop_cap_factor: Some(1.1),
+    stamina: None,
+    slope_fix: false,
+    ladder_scale: 0.78,
+    csgo: Some(CSGO_RULES),
+    ..CSS
 };
 
 /// Momentum Mod's bhop mode on CS:GO's hull: autohop, airaccelerate 1000, no stamina.
@@ -134,7 +214,7 @@ pub const MOMENTUM_BHOP: SourceProfile = SourceProfile {
     stamina: None,
     ground_probe: 1.0,
     max_velocity: 100_000.0,
-    ..CSGO
+    ..CSS
 };
 
 /// Momentum Mod's surf mode on CS:GO's hull: autohop, airaccelerate 150.
@@ -171,6 +251,8 @@ const LADDER_CLIMB_SPEED: f32 = 200.0;
 
 /// Speed a jump pushes the player straight off a ladder.
 const LADDER_JUMP_OFF_SPEED: f32 = 270.0;
+/// CS:GO's acceleration measures weapon speed and wish speed against the knife's 250.
+const CSGO_BASE_SPEED: f32 = 250.0;
 
 /// Momentum's `sv_ramp_initial_retrace_length`: how far a bad trace on a ramp nudges off it.
 const RAMP_RETRACE_LENGTH: f32 = 0.2;
@@ -256,6 +338,10 @@ struct Move<'a, C: CollisionBackend> {
     /// Source's `m_surfaceFriction`: 0.25 while sliding up off a surface that is not ground.
     surface_friction: f32,
     landing_speed: f32,
+    /// The walk key is held.
+    walking: bool,
+    /// The held weapon's run speed, before walk, duck and stamina scale it (CS:GO acceleration).
+    weapon_speed: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -291,7 +377,9 @@ pub(crate) fn pmove<C: CollisionBackend>(
     let _ads = update_ads_intent(ps, cmd, context.old_buttons, context.ads_intent);
     update_ads_frac(ps, pml.msec, context.ads_frac);
     crate::breath::update_hold_breath(ps, cmd.buttons, pml.msec, context.can_hold_breath);
-    reduce_timers(ps, pml.msec);
+    // CS:GO slows this command by the stamina penalty as it stood before recovering.
+    let stamina_before = ps.cs_stamina;
+    reduce_timers(ps, pml.msec, &profile);
 
     let was_crouched = ps.pm_flags & pm_flags::CROUCH != 0;
     let mut mv = Move {
@@ -302,6 +390,8 @@ pub(crate) fn pmove<C: CollisionBackend>(
         frametime: pml.frametime,
         surface_friction: 1.0,
         landing_speed: 0.0,
+        walking: walk_key,
+        weapon_speed: profile.max_speed,
     };
 
     let unstuck = mv.unstick(ps);
@@ -311,7 +401,16 @@ pub(crate) fn pmove<C: CollisionBackend>(
     }
     drop_timers(ps, &pml);
 
-    let mut wish = command_wish(cmd, &profile, walk_key);
+    let mut wish = match profile.csgo {
+        Some(rules) => {
+            let ducked = ps.cs_duck_state & cs_duck::DUCKED != 0;
+            let (wish, max_speed) =
+                csgo_command_wish(cmd, &profile, &rules, walk_key, ducked, stamina_before);
+            mv.profile.max_speed = max_speed;
+            wish
+        }
+        None => command_wish(cmd, &profile, walk_key),
+    };
     mv.duck(ps, &mut pml, cmd, context.old_buttons, &mut wish);
 
     {
@@ -374,10 +473,15 @@ pub(crate) fn pmove<C: CollisionBackend>(
     }
 }
 
-fn reduce_timers(ps: &mut PlayerState, msec: i32) {
+fn reduce_timers(ps: &mut PlayerState, msec: i32, profile: &SourceProfile) {
     let msec = msec as f32;
     ps.cs_duck_time = (ps.cs_duck_time - msec).max(0.0);
-    ps.cs_stamina = (ps.cs_stamina - msec).max(0.0);
+    ps.cs_stamina = match profile.csgo {
+        // CS:GO: a penalty that recovers so much a second.
+        Some(rules) => (ps.cs_stamina - rules.stamina_recovery * msec / 1000.0).max(0.0),
+        // CS:S: milliseconds of stamina left to recover.
+        None => (ps.cs_stamina - msec).max(0.0),
+    };
 }
 
 /// Key movement in Source units: a full stick is `cl_forwardspeed`, the total is clamped to the
@@ -403,6 +507,49 @@ fn command_wish(cmd: &UserCmd, profile: &SourceProfile, walk_key: bool) -> Wish 
         wish.side *= profile.walk_scale;
     }
     wish
+}
+
+/// CS:GO's `CheckParameters`: the walk key (standing only) and the stamina penalty scale the key
+/// speeds and the speed cap alike, then the total is clamped to that cap. Returns the wish and the
+/// command's speed cap.
+fn csgo_command_wish(
+    cmd: &UserCmd,
+    profile: &SourceProfile,
+    rules: &CsgoRules,
+    walk_key: bool,
+    ducked: bool,
+    stamina: f32,
+) -> (Wish, f32) {
+    let forward_speed = if cmd.forwardmove < 0 {
+        profile.back_speed
+    } else {
+        profile.forward_speed
+    };
+    let mut wish = Wish {
+        forward: f32::from(cmd.forwardmove) / 127.0 * forward_speed,
+        side: f32::from(cmd.rightmove) / 127.0 * profile.side_speed,
+    };
+    let mut max_speed = profile.max_speed;
+    let mut scales = [1.0_f32; 2];
+    if walk_key && !ducked {
+        scales[0] = profile.walk_scale;
+    }
+    if stamina > 0.0 {
+        let left = 1.0 - stamina / rules.stamina_range;
+        scales[1] = left * left;
+    }
+    for scale in scales {
+        wish.forward *= scale;
+        wish.side *= scale;
+        max_speed *= scale;
+    }
+    let speed = libm::sqrtf(wish.forward * wish.forward + wish.side * wish.side);
+    if speed > max_speed && speed > 0.0 {
+        let ratio = max_speed / speed;
+        wish.forward *= ratio;
+        wish.side *= ratio;
+    }
+    (wish, max_speed)
 }
 
 impl<C: CollisionBackend> Move<'_, C> {
@@ -449,6 +596,14 @@ impl<C: CollisionBackend> Move<'_, C> {
             ps.velocity[2] = 0.0;
             self.landing_speed = ps.cs_fall_velocity.max(0.0);
             ps.cs_fall_velocity = 0.0;
+            // CS:GO: a landing adds to the stamina penalty by how fast it fell.
+            if let Some(rules) = self.profile.csgo
+                && self.landing_speed > 0.0
+            {
+                ps.cs_stamina = (ps.cs_stamina
+                    + rules.stamina_land_cost * self.landing_speed * stamina_scale())
+                .clamp(0.0, rules.stamina_max);
+            }
         }
     }
 
@@ -585,7 +740,9 @@ impl<C: CollisionBackend> Move<'_, C> {
             return;
         }
         if let Some(factor) = profile.bhop_cap_factor {
-            let cap = factor * profile.max_speed;
+            // CS:GO caps against the player's own max speed field, not the weapon's.
+            let base = profile.csgo.map_or(profile.max_speed, |rules| rules.player_max_speed);
+            let cap = factor * base;
             let speed = length(&ps.velocity);
             if cap > 0.0 && speed > cap {
                 let fraction = cap / speed;
@@ -598,25 +755,48 @@ impl<C: CollisionBackend> Move<'_, C> {
         ps.jump_origin_z = ps.origin[2];
         ps.jump_time = cmd.server_time;
 
-        ps.velocity[2] += profile.jump_impulse;
-        if let Some(stamina) = profile.stamina {
-            if ps.cs_stamina > 0.0 {
-                ps.velocity[2] *= stamina_ratio(&stamina, ps.cs_stamina);
+        if let Some(rules) = profile.csgo {
+            // A ducking or ducked jump sets the upward speed; a standing one adds to it. The
+            // stamina penalty scales it, and the jump's impulse adds to the penalty.
+            let start_z = ps.velocity[2];
+            if ps.cs_duck_state != 0 {
+                ps.velocity[2] = profile.jump_impulse;
+            } else {
+                ps.velocity[2] += profile.jump_impulse;
             }
-            // Scaling the cost scales both how hard and how long the slowdown bites.
-            ps.cs_stamina = stamina.jump_cost * stamina_scale() / stamina.recover_rate * 1000.0;
+            if ps.cs_stamina > 0.0 {
+                ps.velocity[2] *= (1.0 - ps.cs_stamina / rules.stamina_range).clamp(0.0, 1.0);
+            }
+            self.finish_gravity(ps);
+            let impulse = ps.velocity[2] - start_z;
+            ps.cs_stamina = (ps.cs_stamina + rules.stamina_jump_cost * impulse * stamina_scale())
+                .clamp(0.0, rules.stamina_max);
+        } else {
+            ps.velocity[2] += profile.jump_impulse;
+            if let Some(stamina) = profile.stamina {
+                if ps.cs_stamina > 0.0 {
+                    ps.velocity[2] *= stamina_ratio(&stamina, ps.cs_stamina);
+                }
+                // Scaling the cost scales both how hard and how long the slowdown bites.
+                ps.cs_stamina = stamina.jump_cost * stamina_scale() / stamina.recover_rate * 1000.0;
+            }
+            self.finish_gravity(ps);
         }
-        self.finish_gravity(ps);
 
-        // Lift the feet off the ground so the next categorisation cannot re-catch them.
+        // Lift the feet off the ground so the next categorisation cannot re-catch them
+        // (Momentum's; CS:GO has no lift).
         let origin = ps.origin;
         let probe = [
             origin[0],
             origin[1],
             origin[2] - (profile.ground_probe + 0.1),
         ];
-        let down = self.player_trace(origin, probe);
-        if down.fraction < 1.0 && down.startsolid == 0 && down.allsolid == 0 {
+        let down = (profile.jump_z_offset > 0.0).then(|| self.player_trace(origin, probe));
+        if let Some(down) = down
+            && down.fraction < 1.0
+            && down.startsolid == 0
+            && down.allsolid == 0
+        {
             let raised = [
                 down.endpos[0],
                 down.endpos[1],
@@ -664,6 +844,49 @@ impl<C: CollisionBackend> Move<'_, C> {
         }
     }
 
+    /// CS:GO's ground `Accelerate`: the budget scales from `max(250, wish)` by the weapon's speed
+    /// (unless walking or ducking), by the duck or walk modifier, and walking tapers off over the
+    /// last 5 units below its goal speed.
+    fn csgo_accelerate(
+        &self,
+        ps: &mut PlayerState,
+        dir: [f32; 3],
+        wish_speed: f32,
+        rules: &CsgoRules,
+    ) {
+        let current = dot(&ps.velocity, &dir);
+        let add = wish_speed - current;
+        if add <= 0.0 {
+            return;
+        }
+        let ducking = ps.cs_duck_state != 0;
+        let walking = self.walking && !ducking;
+        let weapon = (self.weapon_speed / CSGO_BASE_SPEED).min(1.0);
+        let mut accel_scale = wish_speed.max(CSGO_BASE_SPEED);
+        let mut goal_speed = accel_scale * weapon;
+        if !walking && !ducking {
+            accel_scale *= weapon;
+        }
+        if ducking {
+            accel_scale *= rules.duck_accel_modifier;
+            goal_speed *= rules.duck_accel_modifier;
+        }
+        if walking {
+            accel_scale *= self.profile.walk_scale;
+            goal_speed *= self.profile.walk_scale;
+            let speed = length(&ps.velocity);
+            if speed > goal_speed - 5.0 {
+                accel_scale *= ((goal_speed - speed) / 5.0).clamp(0.0, 1.0);
+            }
+        }
+        let budget =
+            self.profile.accelerate * self.frametime * accel_scale * self.surface_friction;
+        let step = budget.min(add);
+        for (axis, component) in ps.velocity.iter_mut().zip(dir) {
+            *axis += step * component;
+        }
+    }
+
     fn air_accelerate(&self, ps: &mut PlayerState, dir: [f32; 3], wish_speed: f32) {
         let capped = wish_speed.min(self.profile.air_speed_cap);
         let current = dot(&ps.velocity, &dir);
@@ -694,7 +917,20 @@ impl<C: CollisionBackend> Move<'_, C> {
 
         let (dir, wish_speed) = wish_direction(pml, wish);
         let wish_speed = wish_speed.min(self.profile.max_speed);
-        self.accelerate(ps, dir, wish_speed, self.profile.accelerate);
+        match self.profile.csgo {
+            Some(rules) => {
+                self.csgo_accelerate(ps, dir, wish_speed, &rules);
+                // CS:GO's ground clamps the total speed to the command's cap, so speed carried in
+                // from the air is lost on a ground command (a bhop must leave first).
+                let speed = libm::sqrtf(flat_length_sq(&ps.velocity));
+                if speed > self.profile.max_speed {
+                    let scale = self.profile.max_speed / speed;
+                    ps.velocity[0] *= scale;
+                    ps.velocity[1] *= scale;
+                }
+            }
+            None => self.accelerate(ps, dir, wish_speed, self.profile.accelerate),
+        }
 
         if length(&ps.velocity) < 0.0001 {
             ps.velocity = [0.0; 3];
@@ -807,7 +1043,7 @@ impl<C: CollisionBackend> Move<'_, C> {
     /// looking down while pressing forward goes down. Jump pushes straight off. No gravity.
     fn ladder_move(&mut self, ps: &mut PlayerState, pml: &mut Pml, cmd: &UserCmd) {
         let normal = ps.v_ladder_vec;
-        let mut climb = LADDER_CLIMB_SPEED;
+        let mut climb = LADDER_CLIMB_SPEED * self.profile.ladder_scale;
         if cmd.buttons & buttons::CROUCH != 0 {
             climb *= self.profile.duck_scale;
         }
@@ -980,6 +1216,11 @@ impl<C: CollisionBackend> Move<'_, C> {
         old_buttons: u32,
         wish: &mut Wish,
     ) {
+        if let Some(rules) = self.profile.csgo {
+            self.csgo_duck(ps, pml, cmd, old_buttons, wish, &rules);
+            crouch_flags(ps);
+            return;
+        }
         let profile = self.profile;
         let held = cmd.buttons & buttons::CROUCH != 0;
         let pressed = held && old_buttons & buttons::CROUCH == 0;
@@ -1052,18 +1293,102 @@ impl<C: CollisionBackend> Move<'_, C> {
         } else {
             set_eye(ps, &profile, 0.0);
         }
+        crouch_flags(ps);
+    }
 
-        let crouched = ps.cs_duck_state != 0;
-        if crouched {
-            ps.pm_flags |= pm_flags::CROUCH;
-            ps.e_flags |= eflags::DUCK;
-            ps.view_height_target = VIEW_HEIGHT_CROUCH;
-        } else {
-            ps.pm_flags &= !pm_flags::CROUCH;
-            ps.e_flags &= !eflags::DUCK;
-            ps.view_height_target = VIEW_HEIGHT_STAND;
+    /// CS:GO's `Duck`: the duck amount moves toward 1 while crouch is held (on the ground at the
+    /// duck speed, in the air at once with the feet pulled up), back toward 0 when released
+    /// (the standing hull returns at `unduck_hull_amount`, or at once in the air), and the
+    /// inputs and speed cap shrink with it. Every press or release costs duck speed, which
+    /// recovers over time; a press while too tired is ignored (crouch spam).
+    #[allow(clippy::too_many_arguments)]
+    fn csgo_duck(
+        &mut self,
+        ps: &mut PlayerState,
+        pml: &mut Pml,
+        cmd: &UserCmd,
+        old_buttons: u32,
+        wish: &mut Wish,
+        rules: &CsgoRules,
+    ) {
+        let profile = self.profile;
+        let held = cmd.buttons & buttons::CROUCH != 0;
+        let was_held = old_buttons & buttons::CROUCH != 0;
+        let in_air = pml.walking == 0;
+        let shift = profile.duck_air_shift * (profile.stand_height - profile.duck_height);
+
+        let mut speed = rules.duck_speed_ideal - ps.cs_duck_fatigue;
+        if held != was_held {
+            speed = (speed - rules.duck_speed_penalty).max(rules.duck_speed_min);
         }
-        ps.view_height_lerp_time = 0;
+        let wants_duck = held && speed >= rules.duck_refuse_below;
+        let moved = flat_distance_sq(&ps.origin, &ps.cs_duck_anchor);
+        let recovery = if moved > rules.duck_recovery_far_distance * rules.duck_recovery_far_distance
+        {
+            rules.duck_speed_recovery_far
+        } else {
+            rules.duck_speed_recovery
+        };
+        speed = approach(rules.duck_speed_ideal, speed, recovery * self.frametime);
+        if speed >= rules.duck_speed_ideal {
+            ps.cs_duck_anchor = [ps.origin[0], ps.origin[1], 0.0];
+        }
+        ps.cs_duck_fatigue = rules.duck_speed_ideal - speed;
+
+        let mut amount = ps.cs_duck_amount;
+        let ducking;
+        if wants_duck {
+            if in_air {
+                if ps.cs_duck_state & cs_duck::DUCKED == 0 {
+                    self.finish_duck(ps, pml, true, shift);
+                }
+                amount = 1.0;
+                ducking = false;
+            } else {
+                amount = approach(1.0, amount, speed * rules.duck_down_scale * self.frametime);
+                ducking = amount < 1.0;
+                if ps.cs_duck_state & cs_duck::DUCKED == 0 && amount >= 1.0 {
+                    self.finish_duck(ps, pml, false, shift);
+                }
+            }
+        } else {
+            let rate = speed.max(rules.unduck_speed_min) * self.frametime;
+            if ps.cs_duck_state & cs_duck::DUCKED != 0 {
+                if in_air {
+                    if self.can_unduck(ps, true, shift) {
+                        self.finish_unduck(ps, pml, true, shift);
+                        amount = 0.0;
+                    }
+                    ducking = false;
+                } else if !self.can_unduck(ps, false, shift) {
+                    // No room to stand: stay down.
+                    amount = approach(1.0, amount, rate);
+                    ducking = false;
+                } else {
+                    amount = approach(0.0, amount, rate);
+                    ducking = amount > 0.0;
+                    if amount <= rules.unduck_hull_amount {
+                        self.finish_unduck(ps, pml, false, shift);
+                    }
+                }
+            } else {
+                amount = approach(0.0, amount, rate);
+                ducking = amount > 0.0;
+            }
+        }
+        ps.cs_duck_amount = amount;
+        let ducked = ps.cs_duck_state & cs_duck::DUCKED;
+        ps.cs_duck_state = ducked | if ducking { cs_duck::IN_DUCK } else { 0 };
+        ps.cs_duck_time = 0.0;
+        set_eye(ps, &profile, simple_spline(amount));
+
+        // CS:GO crops the inputs and the speed cap with this command's duck amount.
+        if amount > 0.0 {
+            let crop = 1.0 - rules.duck_crop * amount;
+            wish.forward *= crop;
+            wish.side *= crop;
+            self.profile.max_speed *= crop;
+        }
     }
 
     fn finish_duck(&mut self, ps: &mut PlayerState, pml: &mut Pml, in_air: bool, shift: f32) {
@@ -1132,6 +1457,7 @@ impl<C: CollisionBackend> Move<'_, C> {
             if self.fits(ps.origin, duck) {
                 ps.cs_duck_state = cs_duck::DUCKED;
                 ps.cs_duck_time = DUCK_TIMER_MS;
+                ps.cs_duck_amount = 1.0;
                 set_eye(ps, &self.profile, 1.0);
                 self.bounds = duck;
                 return true;
@@ -1151,6 +1477,32 @@ impl<C: CollisionBackend> Move<'_, C> {
 fn set_eye(ps: &mut PlayerState, profile: &SourceProfile, duck_fraction: f32) {
     ps.view_height_current =
         profile.duck_eye * duck_fraction + profile.stand_eye * (1.0 - duck_fraction);
+}
+
+/// The IW4 crouch flags and view height target for the duck state (animations, third person).
+fn crouch_flags(ps: &mut PlayerState) {
+    if ps.cs_duck_state != 0 {
+        ps.pm_flags |= pm_flags::CROUCH;
+        ps.e_flags |= eflags::DUCK;
+        ps.view_height_target = VIEW_HEIGHT_CROUCH;
+    } else {
+        ps.pm_flags &= !pm_flags::CROUCH;
+        ps.e_flags &= !eflags::DUCK;
+        ps.view_height_target = VIEW_HEIGHT_STAND;
+    }
+    ps.view_height_lerp_time = 0;
+}
+
+/// `value` moved toward `target` by at most `step`.
+fn approach(target: f32, value: f32, step: f32) -> f32 {
+    let delta = target - value;
+    if delta > step {
+        value + step
+    } else if delta < -step {
+        value - step
+    } else {
+        target
+    }
 }
 
 fn simple_spline(value: f32) -> f32 {
@@ -1289,13 +1641,14 @@ mod tests {
 
     const TICK_MS: i32 = 10;
 
-    const RULES: Option<crate::rules::Ruleset> = Some(crate::rules::Ruleset::Source(CSGO));
+    const RULES: Option<crate::rules::Ruleset> = Some(crate::rules::Ruleset::Source(CSS));
 
     struct Sim<C: CollisionBackend> {
         ps: PlayerState,
         time: i32,
         old_buttons: u32,
         world: C,
+        rules: Option<crate::rules::Ruleset>,
     }
 
     impl<C: CollisionBackend> Sim<C> {
@@ -1311,6 +1664,14 @@ mod tests {
                 time: 0,
                 old_buttons: 0,
                 world,
+                rules: RULES,
+            }
+        }
+
+        fn csgo(world: C) -> Self {
+            Self {
+                rules: Some(crate::rules::Ruleset::Source(CSGO)),
+                ..Self::new(world)
             }
         }
 
@@ -1331,7 +1692,7 @@ mod tests {
                 &self.world,
                 &crate::FlatMantleAnimLength::default(),
                 &crate::ZeroMantleRootDelta,
-                RULES,
+                self.rules,
             );
             self.old_buttons = buttons;
         }
@@ -1360,8 +1721,151 @@ mod tests {
         sim.flat_speed()
     }
 
+    fn csgo_steady_speed(buttons: u32) -> f32 {
+        let mut sim = Sim::csgo(Floor);
+        sim.settle();
+        for _ in 0..300 {
+            sim.tick(127, 0, buttons, 0.0);
+        }
+        sim.flat_speed()
+    }
+
+    /// Highest the feet get on one jump from the floor, `crouched` first if asked.
+    fn csgo_jump_apex(crouched: bool) -> f32 {
+        let mut sim = Sim::csgo(Floor);
+        sim.settle();
+        let hold = if crouched { buttons::CROUCH } else { 0 };
+        for _ in 0..60 {
+            sim.tick(0, 0, hold, 0.0);
+        }
+        let mut apex = sim.ps.origin[2];
+        sim.tick(0, 0, hold | buttons::JUMP, 0.0);
+        for _ in 0..100 {
+            apex = apex.max(sim.ps.origin[2]);
+            sim.tick(0, 0, hold | buttons::JUMP, 0.0);
+        }
+        apex
+    }
+
     #[test]
-    fn csgo_run_walk_and_duck_speeds() {
+    fn csgo_runs_walks_and_ducks_at_csgo_speeds() {
+        let run = csgo_steady_speed(0);
+        assert!((run - 250.0).abs() < 1.0, "run {run}");
+        let walk = csgo_steady_speed(buttons::SPRINT);
+        assert!((walk - 130.0).abs() < 1.0, "walk {walk}");
+        let duck = csgo_steady_speed(buttons::CROUCH);
+        assert!((duck - 85.0).abs() < 1.0, "duck {duck}");
+    }
+
+    #[test]
+    fn csgo_stamina_is_a_penalty_from_jumps_and_landings() {
+        let mut sim = Sim::csgo(Floor);
+        sim.settle();
+        sim.tick(0, 0, buttons::JUMP, 0.0);
+        // 0.08 of the jump's ~298 unit/s impulse.
+        let after_jump = sim.ps.cs_stamina;
+        assert!((after_jump - 23.84).abs() < 0.5, "after jump {after_jump}");
+        let mut on_landing = None;
+        for _ in 0..200 {
+            sim.tick(0, 0, 0, 0.0);
+            if sim.grounded() {
+                on_landing = Some(sim.ps.cs_stamina);
+                break;
+            }
+        }
+        // The jump's penalty recovered in the air (60 a second); the landing adds 0.05 of the
+        // ~300 unit/s fall.
+        let on_landing = on_landing.expect("lands");
+        assert!((on_landing - 15.0).abs() < 1.5, "on landing {on_landing}");
+    }
+
+    #[test]
+    fn csgo_back_to_back_jumps_lose_height_to_stamina() {
+        let mut sim = Sim::csgo(Floor);
+        sim.settle();
+        let mut apexes = [0.0_f32; 2];
+        let mut landings = 0;
+        let mut was_grounded = true;
+        let mut apex = 0.0_f32;
+        let mut pressed = buttons::JUMP;
+        for _ in 0..400 {
+            sim.tick(0, 0, pressed, 0.0);
+            apex = apex.max(sim.ps.origin[2]);
+            let grounded = sim.grounded();
+            if grounded && !was_grounded {
+                if landings < 2 {
+                    apexes[landings] = apex;
+                }
+                landings += 1;
+                apex = 0.0;
+            }
+            was_grounded = grounded;
+            pressed = if grounded { buttons::JUMP } else { 0 };
+        }
+        assert!(landings >= 2);
+        assert!(apexes[1] < apexes[0] - 5.0, "{apexes:?}");
+    }
+
+    #[test]
+    fn csgo_crouch_spam_tires_the_duck() {
+        let rested = {
+            let mut sim = Sim::csgo(Floor);
+            sim.settle();
+            for _ in 0..20 {
+                sim.tick(0, 0, buttons::CROUCH, 0.0);
+            }
+            sim.ps.cs_duck_amount
+        };
+        assert!(rested > 0.99, "rested duck {rested}");
+
+        let mut sim = Sim::csgo(Floor);
+        sim.settle();
+        for i in 0..40 {
+            sim.tick(0, 0, if i % 2 == 0 { buttons::CROUCH } else { 0 }, 0.0);
+        }
+        assert!(sim.ps.cs_duck_fatigue > 7.0, "fatigue {}", sim.ps.cs_duck_fatigue);
+        for _ in 0..20 {
+            sim.tick(0, 0, buttons::CROUCH, 0.0);
+        }
+        assert!(sim.ps.cs_duck_amount < 0.2, "tired duck {}", sim.ps.cs_duck_amount);
+        assert_eq!(sim.ps.cs_duck_state & cs_duck::DUCKED, 0);
+    }
+
+    #[test]
+    fn csgo_bhop_is_capped_to_1_1_times_the_player_speed() {
+        let mut sim = Sim::csgo(Floor);
+        sim.settle();
+        sim.ps.velocity = [400.0, 0.0, 0.0];
+        sim.tick(0, 0, buttons::JUMP, 0.0);
+        let speed = sim.flat_speed();
+        assert!(speed > 270.0 && speed < 275.5, "after the jump {speed}");
+    }
+
+    #[test]
+    fn csgo_ground_clamps_speed_carried_in() {
+        let mut sim = Sim::csgo(Floor);
+        sim.settle();
+        sim.ps.velocity = [400.0, 0.0, 0.0];
+        sim.tick(127, 0, 0, 0.0);
+        assert!(sim.flat_speed() <= 250.01, "csgo {}", sim.flat_speed());
+
+        let mut css = Sim::new(Floor);
+        css.settle();
+        css.ps.velocity = [400.0, 0.0, 0.0];
+        css.tick(127, 0, 0, 0.0);
+        assert!(css.flat_speed() > 300.0, "css {}", css.flat_speed());
+    }
+
+    #[test]
+    fn csgo_crouched_jump_goes_higher_than_a_standing_one() {
+        let standing = csgo_jump_apex(false);
+        let crouched = csgo_jump_apex(true);
+        assert!((standing - 55.5).abs() < 1.0, "standing {standing}");
+        assert!(crouched > standing + 1.0, "crouched {crouched} standing {standing}");
+    }
+
+    #[test]
+    fn css_run_walk_and_duck_speeds() {
         assert!(
             (steady_speed(0) - 250.0).abs() < 1.0,
             "run {}",
@@ -1468,13 +1972,13 @@ mod tests {
         }
         assert_eq!(sim.ps.cs_duck_state, cs_duck::DUCKED);
         assert!(sim.ps.origin[2].abs() < 0.5);
-        assert!((sim.ps.view_height_current - CSGO.duck_eye).abs() < 0.01);
+        assert!((sim.ps.view_height_current - CSS.duck_eye).abs() < 0.01);
         for _ in 0..30 {
             sim.tick(0, 0, 0, 0.0);
         }
         assert_eq!(sim.ps.cs_duck_state, 0);
         assert!(sim.ps.origin[2].abs() < 0.5);
-        assert!((sim.ps.view_height_current - CSGO.stand_eye).abs() < 0.01);
+        assert!((sim.ps.view_height_current - CSS.stand_eye).abs() < 0.01);
     }
 
     #[test]
@@ -1487,7 +1991,7 @@ mod tests {
         sim.ps.velocity = [0.0, 600.0, 0.0];
         for _ in 0..100 {
             sim.tick(0, 127, 0, 180.0);
-            let bounds = hull(&sim.ps, &CSGO, context(0).bounds);
+            let bounds = hull(&sim.ps, &CSS, context(0).bounds);
             assert!(
                 sim.world.clearance(sim.ps.origin, bounds.mins, bounds.maxs) > -0.01,
                 "fell into the ramp at {:?}",
@@ -1520,8 +2024,8 @@ mod tests {
 
     #[test]
     fn fall_damage_follows_source_rules() {
-        assert_eq!(fall_damage(&CSGO, 580.0), 0);
-        assert_eq!(fall_damage(&CSGO, 1024.0), 125);
+        assert_eq!(fall_damage(&CSS, 580.0), 0);
+        assert_eq!(fall_damage(&CSS, 1024.0), 125);
     }
 
     /// Infinite planes, each solid on its negative side: `dot(p, normal) < offset`.
