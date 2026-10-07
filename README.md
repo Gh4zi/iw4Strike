@@ -14,6 +14,8 @@ files are included in this repository.
 > **Work in progress.** Rounds, money, the buy menu and the bomb are not in yet. See
 > [Roadmap](#roadmap).
 
+![Desert Eagle on Rust with the Counter-Strike: Source HUD](docs/screenshots/mp_rust-deagle.webp)
+
 ## Download
 
 **Just want to play?** Get the Windows build from
