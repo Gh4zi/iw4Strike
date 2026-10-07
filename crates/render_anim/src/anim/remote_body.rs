@@ -431,6 +431,8 @@ pub struct PreparedRemoteKit {
     pub dobj: Option<std::sync::Arc<xmodel_runtime::DObj>>,
     pub bolt_bones: [Option<u16>; 4],
     pub head_bone: Option<usize>,
+    /// The weapon hand (`tag_weapon_right`), when the weapon shows as a CS:S world model there.
+    pub cs_weapon_tag: Option<usize>,
 }
 
 impl PreparedRemoteKit {
@@ -548,6 +550,18 @@ impl PreparedRemoteKits {
                                 .and_then(|bone| u16::try_from(bone).ok())
                         }),
                         head_bone: dobj.as_ref().and_then(|dobj| dobj.find("j_head")),
+                        cs_weapon_tag: dobj
+                            .as_ref()
+                            .filter(|_| {
+                                crate::occupancy::cs_world_model::shows_cs_world_model(
+                                    &weapons.0, weapon,
+                                )
+                            })
+                            .and_then(|dobj| {
+                                xmodel_runtime::TP_WEAPON_ATTACH_TAGS
+                                    .iter()
+                                    .find_map(|tag| dobj.find(tag))
+                            }),
                         dobj,
                     },
                 );
@@ -635,20 +649,37 @@ pub fn occupy_remote_kit_dobj<'a>(
                     entry.skel.pose.as_ref(),
                     xmodel_runtime::tp_weapon_attach_tag(&body.skel.bone_names),
                 ) {
+                    // A CS weapon shown as its CS:S world model hides its MW2 twin (every
+                    // part; the tags stay for muzzle flashes).
+                    let cs_model = with_hide_tags
+                        && crate::occupancy::cs_world_model::shows_cs_world_model(
+                            &registry.0,
+                            weapon,
+                        );
                     skels.push(KitModel {
                         name: entry.skel.name.as_str(),
                         skel: &entry.skel,
-                        hide_tags: weapons
-                            .filter(|_| with_hide_tags)
-                            .map(|registry| asset_game::effective_hide_tags(&registry.0, weapon))
-                            .unwrap_or_else(Vec::new),
+                        hide_tags: if cs_model {
+                            entry.skel.bone_names.clone()
+                        } else {
+                            weapons
+                                .filter(|_| with_hide_tags)
+                                .map(|registry| {
+                                    asset_game::effective_hide_tags(&registry.0, weapon)
+                                })
+                                .unwrap_or_else(Vec::new)
+                        },
                         source: KitSource::World(gun_index),
                     });
                     for attachment in world_attachments(&registry.0, &catalog.0, weapon) {
                         skels.push(KitModel {
                             name: attachment.entry.skel.name.as_str(),
                             skel: &attachment.entry.skel,
-                            hide_tags: Vec::new(),
+                            hide_tags: if cs_model {
+                                attachment.entry.skel.bone_names.clone()
+                            } else {
+                                Vec::new()
+                            },
                             source: KitSource::World(attachment.index.order()),
                         });
                     }

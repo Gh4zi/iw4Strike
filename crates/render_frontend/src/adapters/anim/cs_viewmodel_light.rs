@@ -21,11 +21,50 @@ const SUN_FADE_PER_SECOND: f32 = 6.0;
 const CONTENTS_SOLID: u32 = 0x1;
 const SURF_SKY: u32 = 0x4;
 
+/// Linear light-grid colour → ambient light on a CS world model (third-person guns).
+const WORLD_GRID_AMBIENT: f32 = 3.0;
+
 pub fn register_cs_viewmodel_light(app: &mut App) {
     app.add_systems(
         Update,
-        light_cs_viewmodel.after(render_anim::occupancy::cs_viewmodel::update_cs_viewmodel),
+        (
+            light_cs_viewmodel.after(render_anim::occupancy::cs_viewmodel::update_cs_viewmodel),
+            light_cs_world_models
+                .after(render_anim::occupancy::cs_world_model::update_cs_world_models),
+        ),
     );
+}
+
+/// Lights each CS world model (a gun in a player's hand) from the light grid where it is, and
+/// the sun when the sky is open above it.
+fn light_cs_world_models(
+    scene: Option<Res<WorldScene>>,
+    sun: Option<Res<MapDirPrimaryLight>>,
+    clip: Res<DynEntPhysClip>,
+    mut frame: ResMut<render_gpu::CsWorldModelsFrame>,
+) {
+    let Some(grid) = scene.as_ref().and_then(|s| s.light_grid.as_ref()) else {
+        return;
+    };
+    let sun = sun.filter(|s| s.direction.iter().any(|v| *v != 0.0));
+    for instance in &mut frame.instances {
+        let origin = [
+            instance.world_from_model[3][0],
+            instance.world_from_model[3][1],
+            instance.world_from_model[3][2],
+        ];
+        if let Ok(sample) = asset_model::sample_light_grid(&grid.view(), origin) {
+            instance.ambient = sample
+                .compressed
+                .map(|c| srgb_to_linear(f32::from(c) / 255.0) * WORLD_GRID_AMBIENT);
+        }
+        if let Some(sun) = sun.as_ref()
+            && sees_sun(&clip, origin, sun.direction) == Some(true)
+        {
+            instance.sun_dir = sun.direction;
+            instance.sun = sun.color.map(|c| c * sun.diffuse_color_scale * SUN_SCALE);
+        }
+    }
 }
 
 fn srgb_to_linear(v: f32) -> f32 {

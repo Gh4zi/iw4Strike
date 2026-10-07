@@ -295,6 +295,11 @@ pub struct CsViewmodels {
 
 static NEXT_MODEL_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Ids for CS models handed to the GPU (viewmodels and world models share them).
+pub(super) fn next_model_id() -> &'static AtomicU64 {
+    &NEXT_MODEL_ID
+}
+
 fn image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     let mut image = Image::new(
         Extent3d {

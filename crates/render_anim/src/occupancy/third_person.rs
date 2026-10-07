@@ -11,6 +11,18 @@ use render_scene::WorldCameraPose;
 
 pub const CG_THIRD_PERSON_ANGLE_MP: f32 = 356.0;
 
+/// `IW4L_THIRDPERSON_ANGLE`: orbits the live third-person camera around the player (degrees; 180
+/// looks at them from the front), for checking what a player holds.
+fn third_person_angle() -> f32 {
+    static ANGLE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *ANGLE.get_or_init(|| {
+        std::env::var("IW4L_THIRDPERSON_ANGLE")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0.0)
+    })
+}
+
 pub fn presented_is_third_person(
     presented: &PresentedSnapshot,
     local: ClientId,
@@ -131,7 +143,7 @@ pub fn third_person_camera(
             cg_third_person_angle: if ps.pm_type > 7 {
                 CG_THIRD_PERSON_ANGLE_MP
             } else {
-                0.0
+                third_person_angle()
             },
             cg_third_person_range: CG_THIRD_PERSON_RANGE_DEFAULT,
         },

@@ -37,6 +37,6 @@ pub use drawsurf::{
 };
 pub use drawsurf::{
     CS_VIEWMODEL_MAX_BONES, CsScopeFrame, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelModel,
-    CsViewmodelShading, CsViewmodelVertex,
+    CsViewmodelShading, CsViewmodelVertex, CsWorldModelInstance, CsWorldModelsFrame,
 };
 pub use plugin::RenderGpuPlugin;

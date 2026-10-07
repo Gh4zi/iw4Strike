@@ -3,6 +3,7 @@ mod backend;
 mod colour_submit;
 mod cs_scope;
 mod cs_viewmodel;
+mod cs_world_model;
 mod depth_range;
 mod draw;
 mod exact_pipeline;
@@ -35,6 +36,7 @@ pub use cs_viewmodel::{
     CS_VIEWMODEL_MAX_BONES, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelModel, CsViewmodelShading,
     CsViewmodelVertex,
 };
+pub use cs_world_model::{CsWorldModelInstance, CsWorldModelsFrame};
 pub use products::ExtractedRenderFrameProducts;
 pub use render_backend::overlay::{
     CODE_BASE_LIGHTING_COORDS, CODE_SHADOWMAP_POLYGON_OFFSET, CODE_TEXTURE_OUTDOOR,

@@ -74,6 +74,14 @@ pub fn register_remote_body_systems(app: &mut App) {
         .init_resource::<RemoteBodySkinnedQueue>()
         .init_resource::<RemoteBodyLightingBinds>()
         .init_resource::<PreparedRemoteKits>()
+        .init_resource::<crate::occupancy::cs_world_model::CsHeldWeaponTags>()
+        .init_resource::<crate::occupancy::cs_world_model::CsWorldModels>()
+        .add_systems(
+            Update,
+            crate::occupancy::cs_world_model::update_cs_world_models
+                .after(pose_remote_bodies)
+                .in_set(ClientSet::Present),
+        )
         .add_systems(Update, prepare_remote_kits.in_set(ClientSet::Load))
         .init_resource::<crate::anim::dobj_pose::HostDObjPoseFrame>()
         .init_resource::<crate::anim::dobj_pose::PosedPlayerFrame>()
@@ -457,6 +465,8 @@ struct RemotePoseFrame<'a> {
     scene: &'a render_scene::GfxScene,
     last_cache_hits: &'a HashSet<u32>,
     pending: Vec<PendingBodySkin<'a>>,
+    /// Weapon hands of bodies holding a CS weapon drawn as its CS:S world model.
+    held: &'a mut Vec<crate::occupancy::cs_world_model::CsHeldWeaponTag>,
 
     world_gun_gap: Option<WorldGunGap>,
 }
@@ -498,6 +508,7 @@ fn pose_remote_bodies(
     mut trees: ResMut<RemoteBodyTrees>,
     mut pose_hashes: ResMut<RemoteSkinPoseHashes>,
     mut submit: ResMut<RemoteBodySkinnedQueue>,
+    mut held: ResMut<crate::occupancy::cs_world_model::CsHeldWeaponTags>,
     dpvs: (
         Query<&GlobalTransform, With<render_scene::FpvLens>>,
         Res<render_scene::LodRampSkinnedDvar>,
@@ -524,6 +535,7 @@ fn pose_remote_bodies(
 ) {
     let (cameras, lod_skinned, mut dobj_poses, mut posed_players, gfx, cg_clock) = dpvs;
     submit.clear();
+    held.0.clear();
     for (_, _, _, mut bolts, _) in &mut roots {
         *bolts = RemoteFxBolts::default();
     }
@@ -634,6 +646,7 @@ fn pose_remote_bodies(
         scene: &gfx.scene,
         last_cache_hits: &last_cache_hits,
         pending: Vec::new(),
+        held: &mut held.0,
         world_gun_gap: None,
     };
     for (identity, runtime, transform, mut bolts, remote) in &mut roots {
@@ -774,6 +787,7 @@ impl<'a> RemotePoseFrame<'a> {
         let dobj_poses = &mut *self.dobj_poses;
         let posed_players = &mut *self.posed_players;
         let world_gun_gap = &mut self.world_gun_gap;
+        let held = &mut *self.held;
         let result = (|| {
             let origin = transform.translation.to_array();
             let model_set =
@@ -844,6 +858,19 @@ impl<'a> RemotePoseFrame<'a> {
                 bolts,
                 dobj_poses,
             )?;
+            if !is_corpse
+                && let Some(bone) = kit.cs_weapon_tag.and_then(|tag| world.get(tag))
+            {
+                // The MW2 twin's muzzle on the tag lines the CS model up.
+                let muzzle = kit.bolt_bones[0]
+                    .and_then(|flash| world.get(usize::from(flash)))
+                    .map(|flash| bone.inverse() * *flash);
+                held.push(crate::occupancy::cs_world_model::CsHeldWeaponTag {
+                    weapon,
+                    world_from_tag: transform.to_matrix() * *bone,
+                    muzzle,
+                });
+            }
             if !is_corpse {
                 publish_posed_player_head(
                     kit.head_bone,

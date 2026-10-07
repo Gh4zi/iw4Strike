@@ -50,6 +50,7 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
   - Smoke lasts about 18 seconds, like CS:S
 - Kevlar and helmet
 - Drop your gun with **G**, walk over a gun to pick it up, or press **E** to swap
+- Other players (and you, in third person) hold the CS:S weapon models
 - Weapon switching takes CS 1.6's deploy time: fire 0.75 s after switching (AWP 1.45 s, Scout
   1.25 s), with no put-away delay
 
@@ -350,7 +351,8 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [x] Counter-Strike: Source HUD
 - [x] M4A1 and USP silencers, Glock and FAMAS burst fire
 - [x] The rest of the CS weapons (pistols, shotguns, SMGs, rifles, snipers, M249)
-- [ ] Other players holding the CS weapon models in third person
+- [x] Other players holding the CS weapon models in third person (CS:S models; with CS 1.6 only
+  they still hold the MW2 gun)
 - [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
   player moves the same way
 - [ ] Valve-style menus (CS:S look, read from your install), step by step: the panel system,
