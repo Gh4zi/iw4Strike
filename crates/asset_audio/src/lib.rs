@@ -14,8 +14,8 @@ pub use asset_core::*;
 pub use asset_transport::*;
 pub use createfx::*;
 pub use cs_sounds::{
-    CS_PLAYER_SOUND_PREFIX, CS_SOUND_PLAYER_SUFFIX, CS_SOUND_PREFIX, CSS_SOUND_PREFIX,
-    append_cs_weapon_sounds,
+    CS_EVENT_PREFIX, CS_PLAYER_SOUND_PREFIX, CS_RADIO_SOUND_PREFIX, CS_SOUND_PLAYER_SUFFIX,
+    CS_SOUND_PREFIX, CSS_SOUND_PREFIX, append_cs_weapon_sounds,
     append_css_weapon_sounds, decode_wav,
 };
 pub use ent_channel::*;

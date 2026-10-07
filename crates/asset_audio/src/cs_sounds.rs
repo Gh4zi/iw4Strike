@@ -15,6 +15,21 @@ pub const CS_SOUND_PREFIX: &str = "cs/weapons/";
 pub const CS_PLAYER_SOUND_PREFIX: &str = "cs/player/";
 /// Suffix of the non-positional alias for the local player's own sounds.
 pub const CS_SOUND_PLAYER_SUFFIX: &str = "/plr";
+/// Alias prefix of the CS 1.6 radio voice (`sound/radio/ctwin.wav` → `cs/radio/ctwin`).
+pub const CS_RADIO_SOUND_PREFIX: &str = "cs/radio/";
+/// Round and bomb announcements under names that don't depend on the install
+/// (`cs_event_ctwin`, `cs_event_terwin`, `cs_event_rounddraw`, `cs_event_bombplanted`,
+/// `cs_event_bombdefused`): the bomb mode's script plays these, and whichever game is
+/// installed fills them with its own voice (CS:S `Event.*`, CS 1.6 `radio/*.wav`).
+pub const CS_EVENT_PREFIX: &str = "cs_event_";
+/// The CS 1.6 radio wave behind each announcement.
+const CS16_EVENTS: [(&str, &str); 5] = [
+    ("ctwin", "ctwin"),
+    ("terwin", "terwin"),
+    ("rounddraw", "rounddraw"),
+    ("bombpl", "bombplanted"),
+    ("bombdef", "bombdefused"),
+];
 
 /// Decode a RIFF/WAVE PCM file (8-bit unsigned or 16-bit signed) to 16-bit little-endian.
 #[must_use]
@@ -84,7 +99,9 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         return 0;
     };
     let dir = cstrike.join("sound").join("weapons");
-    // Every gun and grenade wave, and the fall pain sounds of the player folder.
+    // Every gun and grenade wave, the fall pain sounds of the player folder, the radio voice,
+    // and Half-Life's own explosions that CS 1.6's HE grenade uses (`valve/sound/weapons`).
+    let half_life = cstrike.parent().map(|dir| dir.join("valve")).unwrap_or_default();
     let folders = [
         (dir.clone(), CS_SOUND_PREFIX, ""),
         (
@@ -92,6 +109,8 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             CS_PLAYER_SOUND_PREFIX,
             "pl_fallpain",
         ),
+        (cstrike.join("sound").join("radio"), CS_RADIO_SOUND_PREFIX, ""),
+        (half_life.join("sound").join("weapons"), CS_SOUND_PREFIX, "explode"),
     ];
     let mut added = 0;
     for (folder, prefix, wanted) in folders {
@@ -135,6 +154,12 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             if both {
                 added += 1;
             }
+            if prefix == CS_RADIO_SOUND_PREFIX
+                && let Some((_, event)) = CS16_EVENTS.iter().find(|(wave, _)| *wave == stem)
+            {
+                let event = format!("{CS_EVENT_PREFIX}{event}");
+                catalog.add_loose_alias(&event, &player, vec![clip(event.clone())]);
+            }
         }
     }
     diag::info!(
@@ -150,7 +175,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
 /// variants. Returns how many entries were added; 0 when CS:S is not installed.
 /// The CS:S sound script entries (lowercase name prefixes) loaded into the bank: guns and their
 /// zoom/dry-fire, radio calls, grenades, and the player's fall and armour hits.
-const CSS_SOUND_GROUPS: [&str; 11] = [
+const CSS_SOUND_GROUPS: [&str; 12] = [
     "weapon_",
     "default.",
     "radio.",
@@ -159,6 +184,7 @@ const CSS_SOUND_GROUPS: [&str; 11] = [
     "smokegrenade.",
     "basegrenade.",
     "basesmokeeffect.",
+    "event.",
     "player.fall",
     "player.damage",
     "player.death",
@@ -215,6 +241,19 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             continue;
         }
         let alias = format!("{CSS_SOUND_PREFIX}{name}");
+        // Round and bomb announcements also go under their install-free names.
+        let event = name.strip_prefix("event.").map(|event| {
+            let event = format!("{CS_EVENT_PREFIX}{event}");
+            let clips: Vec<LooseClip> = clips
+                .iter()
+                .enumerate()
+                .map(|(i, c)| LooseClip {
+                    name: format!("{event}#{i}"),
+                    ..c.clone()
+                })
+                .collect();
+            (event, clips)
+        });
         let player_clips = clips
             .iter()
             .map(|c| LooseClip {
@@ -230,6 +269,9 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             )
         {
             added += 1;
+        }
+        if let Some((event, clips)) = event {
+            catalog.add_loose_alias(&event, &player, clips);
         }
     }
     diag::info!(

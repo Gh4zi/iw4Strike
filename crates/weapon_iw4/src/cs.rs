@@ -1559,8 +1559,9 @@ pub const CS_GRENADES: [CsGrenade; 3] = [
         css_view_model: "v_eq_fraggrenade",
         price: 300,
         carry: 1,
-        css_explode_sound: None,
-        explode_sounds: &[],
+        css_explode_sound: Some("BaseGrenade.Explode"),
+        // Half-Life's `weapons/explode3-5.wav`, CS 1.6's HE blast.
+        explode_sounds: &["explode3", "explode4", "explode5"],
     },
     CsGrenade {
         name: "flashbang",

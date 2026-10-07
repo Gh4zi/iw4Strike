@@ -48,8 +48,10 @@ const BOB_CYCLE: f64 = 0.45;
 const BOB_UP: f64 = 0.5;
 /// How fast the bob follows the player's speed (per second), so landings and take-offs ease in.
 const BOB_SPEED_EASE: f32 = 6.0;
-/// The radio call on every grenade throw (CS:S `Radio.FireInTheHole`).
+/// The radio call on every grenade throw (CS:S `Radio.FireInTheHole`, else CS 1.6's
+/// `radio/ct_fireinhole.wav`).
 const FIRE_IN_THE_HOLE: &str = "css/radio.fireinthehole";
+const FIRE_IN_THE_HOLE_GOLDSRC: &str = "cs/radio/ct_fireinhole";
 /// How long a muzzle flash shows, seconds (CS:S flashes for about two frames).
 const FLASH_SECONDS: f64 = 0.05;
 /// Flash tint (warm), scaled down as it fades.
@@ -779,11 +781,20 @@ pub fn cs_zoom_sound(
 }
 
 fn play_local(sounds: &mut MessageWriter<audio::AliasCommand>, alias: &str) {
+    play_alias(sounds, alias, None);
+}
+
+/// `alias`, or `fallback` when the bank has no `alias` (the other install's sound).
+fn play_local_or(sounds: &mut MessageWriter<audio::AliasCommand>, alias: &str, fallback: &str) {
+    play_alias(sounds, alias, Some(fallback));
+}
+
+fn play_alias(sounds: &mut MessageWriter<audio::AliasCommand>, alias: &str, fallback: Option<&str>) {
     sounds.write(audio::AliasCommand::Play(audio::PlayAlias {
         event: None,
         namespace: asset_core::AssetNamespace::Iw4,
         alias: format!("{alias}{}", asset_audio::CS_SOUND_PLAYER_SUFFIX),
-        fallback: None,
+        fallback: fallback.map(|f| format!("{f}{}", asset_audio::CS_SOUND_PLAYER_SUFFIX)),
         origin_inches: None,
         snd_ent: Some(audio::SND_ENT_LOCAL),
     }));
@@ -975,7 +986,7 @@ pub fn update_cs_viewmodel(
                 }
                 // CS radios every grenade throw (`Radio("%!MRAD_FIREINHOLE")`).
                 if playing.grenade_state != THROWN && ps.cs_grenade == THROWN {
-                    play_local(&mut sounds, FIRE_IN_THE_HOLE);
+                    play_local_or(&mut sounds, FIRE_IN_THE_HOLE, FIRE_IN_THE_HOLE_GOLDSRC);
                 }
                 playing.grenade_state = ps.cs_grenade;
             } else if silenced != playing.silenced

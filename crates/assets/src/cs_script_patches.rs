@@ -89,6 +89,25 @@ const PATCHES: &[Patch] = &[
          makeDvarServerInfo( \"cs_attackers\", game[\"attackers\"] );",
         "defusal: tell clients which team attacks (the Terrorists), each round",
     ),
+    // CS's radio voice ends every round: "Terrorists win!", "Counter-Terrorists win!", "Round
+    // draw!". The client plays whichever install it has (`asset_audio::CS_EVENT_PREFIX`).
+    once(
+        SD,
+        "\tthread maps\\mp\\gametypes\\_gamelogic::endGame( winningTeam, endReasonText );",
+        "\tif ( isDefined( winningTeam ) && winningTeam == game[\"attackers\"] ) \
+         playSoundOnPlayers( \"cs_event_terwin\" ); \
+         else if ( isDefined( winningTeam ) && winningTeam == game[\"defenders\"] ) \
+         playSoundOnPlayers( \"cs_event_ctwin\" ); \
+         else playSoundOnPlayers( \"cs_event_rounddraw\" );\n\
+         \tthread maps\\mp\\gametypes\\_gamelogic::endGame( winningTeam, endReasonText );",
+        "defusal: CS round-end radio voice",
+    ),
+    once(
+        "maps/mp/gametypes/_music_and_dialog",
+        "\tlevel waittill ( \"round_win\", winner );",
+        "\tlevel waittill ( \"round_win\", winner );\n\treturn;",
+        "no MW2 \"round won/lost\" announcer over CS's radio voice",
+    ),
     // CS shows the bomb (carried or dropped) to the Terrorists on the radar only: no "escort" or
     // bomb marker floating in the world.
     once(

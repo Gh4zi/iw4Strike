@@ -73,6 +73,8 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
   slot drops the old one, so you can buy for a teammate
 - 3 s plant, 10 s defuse, 40 s bomb; the round ends 7 s after it is decided so you can still
   get away; the final killcam plays only for the kill that wins the match
+- CS's radio voice ends each round ("Terrorists win!", "Counter-Terrorists win!", "Round
+  draw!"), from your CS:S or CS 1.6 install
 
 ---
 
