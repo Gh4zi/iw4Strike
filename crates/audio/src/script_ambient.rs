@@ -1,5 +1,5 @@
 use crate::aliases::namespace_alias;
-use crate::ambient::{MAP_BED_SLOT, MapSources};
+use crate::ambient::{MAP_BED_GAIN, MAP_BED_SLOT, MapSources};
 use crate::cue::CueHandle;
 use crate::cue_execution::CueTrigger;
 use crate::{SoundBank, SoundClass};
@@ -10,7 +10,13 @@ pub(crate) struct ScriptAmbientPlayback {
     epoch: u64,
     target: Option<(bool, sim::ScriptAmbient)>,
     started: bool,
+    /// The level the bed was last faded to (`MAP_BED_GAIN` × `snd_ambient_volume`).
+    level: f32,
     voices: Vec<CueHandle>,
+}
+
+fn bed_level() -> f32 {
+    MAP_BED_GAIN * crate::ambient::ambient_volume()
 }
 
 pub(crate) fn update_script_ambient(
@@ -79,7 +85,7 @@ pub(crate) fn update_script_ambient(
             && playback
                 .voices
                 .last()
-                .is_some_and(|handle| handle.fade_to(now, 1.0, frames));
+                .is_some_and(|handle| handle.fade_to(now, bed_level(), frames));
         if !retained {
             for handle in &playback.voices {
                 handle.release(now, frames);
@@ -87,6 +93,16 @@ pub(crate) fn update_script_ambient(
         }
         playback.started = retained;
         playback.target = Some(selected);
+        if retained {
+            playback.level = bed_level();
+        }
+    }
+    // `snd_ambient_volume` changed while the bed plays: follow it within a tenth of a second.
+    if playback.started && playback.level != bed_level() {
+        playback.level = bed_level();
+        if let Some(handle) = playback.voices.last() {
+            handle.fade_to(now, playback.level, u64::from(crate::render_core::SAMPLE_RATE) / 10);
+        }
     }
     let Some(alias) = plan.alias.as_ref().filter(|_| !playback.started) else {
         return;
@@ -113,6 +129,9 @@ pub(crate) fn update_script_ambient(
         },
         frames,
     );
+    // Fade in to the bed's level, not full volume (the engine-started bed's 0.55).
+    playback.level = bed_level();
+    handle.fade_to(now, playback.level, frames);
     feedback.push(CueHandle(handle.0.clone()));
     playback.voices.push(handle);
     playback.started = true;

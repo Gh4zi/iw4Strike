@@ -15,7 +15,33 @@ use crate::playback::SoundBank;
 use crate::sources::{DesiredSource, SourceCueRequest, SourceKey, SourceRenderGroup};
 
 pub(crate) const MAP_BED_SLOT: u32 = 2;
-const MAP_EMITTER_SLOT: u32 = 3;
+/// Level of the map's ambient bed, whether the map's scripts start it (`ambientPlay`, every MW2
+/// map) or the engine does.
+pub(crate) const MAP_BED_GAIN: f32 = 0.55;
+
+/// `snd_ambient_volume`: how loud the map's own ambience plays (its bed and looping emitters),
+/// applied live. MW2's emitters stack (Terminal's tarmac loops 8 and 6 times over, Highrise's
+/// wind beds at full volume across the map) to about −13 dBFS, only ~8 dB under a CS rifle and
+/// clipping; the default sits them ~9 dB lower.
+static AMBIENT_VOLUME: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(frame::GameSettings::AMBIENT_VOLUME_DEFAULT.to_bits());
+
+pub fn set_ambient_volume(volume: f32) {
+    let volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { 1.0 };
+    AMBIENT_VOLUME.store(volume.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn ambient_volume() -> f32 {
+    f32::from_bits(AMBIENT_VOLUME.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// A source's level: the map's ambience scaled by `snd_ambient_volume`, anything else as is.
+pub(crate) fn source_level(source: &crate::sources::DesiredSource) -> f32 {
+    let ambience = matches!(source.key.slot, MAP_BED_SLOT | MAP_EMITTER_SLOT);
+    source.gain * if ambience { ambient_volume() } else { 1.0 }
+}
+pub(crate) const MAP_EMITTER_SLOT: u32 = 3;
 
 #[derive(Resource, Default)]
 pub(crate) struct MapSources {
@@ -424,7 +450,7 @@ pub(crate) fn boot_map_ambient_once(
     sources.desired.clear();
     let rows = ambient_alias
         .into_iter()
-        .map(|alias| (0, MAP_BED_SLOT, alias.to_owned(), None, 0.55, None))
+        .map(|alias| (0, MAP_BED_SLOT, alias.to_owned(), None, MAP_BED_GAIN, None))
         .chain(
             bank.0
                 .createfx_loop_sounds(namespace.namespace, &identity.zone)

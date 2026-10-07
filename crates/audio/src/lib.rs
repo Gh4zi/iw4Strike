@@ -23,7 +23,7 @@ pub use aliases::{
     select_cg_fire_alias, select_fire_alias, step_prefix, surface_alias_candidates,
     world_surface_alias,
 };
-pub use ambient::{MapAmbientBooted, SoundIwd};
+pub use ambient::{MapAmbientBooted, SoundIwd, ambient_volume, set_ambient_volume};
 pub use clip_store::{ClipPath, ClipPathCost, ClipPrepCost, ClipStore, PREP_BATCH, clip_prep_cost};
 pub use emit::{BobCycleTracker, emit_footstep_on_bob_wrap, emit_weapon_fire};
 pub use frontend::FrontendAudio;

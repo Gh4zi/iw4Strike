@@ -37,6 +37,8 @@ pub struct GameSettings {
     pub destructibles: bool,
     pub third_person: bool,
     pub master_volume: f32,
+    /// `snd_ambient_volume`: the map's own ambience (background bed and looping emitters), 0-1.
+    pub ambient_volume: f32,
     pub brightness: f32,
     pub shadows: bool,
     pub depth_of_field: bool,
@@ -78,6 +80,7 @@ impl Default for GameSettings {
             destructibles: false,
             third_person: false,
             master_volume: 1.0,
+            ambient_volume: Self::AMBIENT_VOLUME_DEFAULT,
             brightness: 0.0,
             shadows: true,
             depth_of_field: true,
@@ -109,6 +112,7 @@ impl GameSettings {
     pub const FOV_MIN: f32 = 65.0;
     pub const FOV_MAX: f32 = 120.0;
     pub const VIEWMODEL_FOV_DEFAULT: f32 = 68.0;
+    pub const AMBIENT_VOLUME_DEFAULT: f32 = 0.35;
     pub const VIEWMODEL_FOV_MIN: f32 = 54.0;
     pub const VIEWMODEL_FOV_MAX: f32 = 90.0;
     pub const PAD_SENSITIVITY_PRESETS: [f32; 10] =

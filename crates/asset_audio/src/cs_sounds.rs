@@ -11,6 +11,8 @@ pub const CSS_SOUND_PREFIX: &str = "css/";
 
 /// Alias prefix every CS sound is registered under.
 pub const CS_SOUND_PREFIX: &str = "cs/weapons/";
+/// Alias prefix of the CS 1.6 player sounds (`sound/player/pl_fallpain1.wav` → `cs/player/...`).
+pub const CS_PLAYER_SOUND_PREFIX: &str = "cs/player/";
 /// Suffix of the non-positional alias for the local player's own sounds.
 pub const CS_SOUND_PLAYER_SUFFIX: &str = "/plr";
 
@@ -82,42 +84,57 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         return 0;
     };
     let dir = cstrike.join("sound").join("weapons");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return 0;
-    };
+    // Every gun and grenade wave, and the fall pain sounds of the player folder.
+    let folders = [
+        (dir.clone(), CS_SOUND_PREFIX, ""),
+        (
+            cstrike.join("sound").join("player"),
+            CS_PLAYER_SOUND_PREFIX,
+            "pl_fallpain",
+        ),
+    ];
     let mut added = 0;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
-        {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+    for (folder, prefix, wanted) in folders {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
             continue;
         };
-        let stem = stem.to_ascii_lowercase();
-        let Some((rate, channels, pcm)) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b))
-        else {
-            diag::warn!(Audio, "cs sounds: {} is not PCM wave", path.display());
-            continue;
-        };
-        let alias = format!("{CS_SOUND_PREFIX}{stem}");
-        let clip = |name: String| LooseClip {
-            name,
-            rate,
-            channels,
-            pcm16: pcm.clone(),
-        };
-        let both = catalog.add_loose_alias(&alias, &world, vec![clip(alias.clone())])
-            && catalog.add_loose_alias(
-                &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
-                &player,
-                vec![clip(format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"))],
-            );
-        if both {
-            added += 1;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
+            {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let stem = stem.to_ascii_lowercase();
+            if !stem.starts_with(wanted) {
+                continue;
+            }
+            let Some((rate, channels, pcm)) =
+                std::fs::read(&path).ok().and_then(|b| decode_wav(&b))
+            else {
+                diag::warn!(Audio, "cs sounds: {} is not PCM wave", path.display());
+                continue;
+            };
+            let alias = format!("{prefix}{stem}");
+            let clip = |name: String| LooseClip {
+                name,
+                rate,
+                channels,
+                pcm16: pcm.clone(),
+            };
+            let both = catalog.add_loose_alias(&alias, &world, vec![clip(alias.clone())])
+                && catalog.add_loose_alias(
+                    &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
+                    &player,
+                    vec![clip(format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"))],
+                );
+            if both {
+                added += 1;
+            }
         }
     }
     diag::info!(
@@ -131,6 +148,22 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
 /// Add Counter-Strike: Source's weapon sound script entries (`weapon_*`, `default.*`) from its
 /// pack as aliases `css/<entry>` and `css/<entry>/plr`, each with the entry's random waves as
 /// variants. Returns how many entries were added; 0 when CS:S is not installed.
+/// The CS:S sound script entries (lowercase name prefixes) loaded into the bank: guns and their
+/// zoom/dry-fire, radio calls, grenades, and the player's fall and armour hits.
+const CSS_SOUND_GROUPS: [&str; 11] = [
+    "weapon_",
+    "default.",
+    "radio.",
+    "flashbang.",
+    "hegrenade.",
+    "smokegrenade.",
+    "basegrenade.",
+    "basesmokeeffect.",
+    "player.fall",
+    "player.damage",
+    "player.death",
+];
+
 pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     let Some(pak) = asset_transport::find_css_pak() else {
         return 0;
@@ -152,7 +185,7 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     let scripts = mdl_source::SoundScripts::load(&vpk);
     let mut names: Vec<String> = scripts
         .names()
-        .filter(|n| n.starts_with("weapon_") || n.starts_with("default.") || n.starts_with("radio."))
+        .filter(|n| CSS_SOUND_GROUPS.iter().any(|group| n.starts_with(group)))
         .map(str::to_owned)
         .collect();
     names.sort();
@@ -161,7 +194,9 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         let mut clips = Vec::new();
         for (i, wave) in scripts.waves(&name).iter().enumerate() {
             let data = vpk.read(&format!("sound/{wave}")).or_else(|| {
-                loose.as_ref().and_then(|dir| std::fs::read(dir.join(wave)).ok())
+                loose
+                    .as_ref()
+                    .and_then(|dir| std::fs::read(dir.join(wave)).ok())
             });
             match data.as_deref().and_then(decode_wav) {
                 Some((rate, channels, pcm16)) => {
@@ -188,7 +223,11 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             })
             .collect();
         if catalog.add_loose_alias(&alias, &world, clips)
-            && catalog.add_loose_alias(&format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"), &player, player_clips)
+            && catalog.add_loose_alias(
+                &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
+                &player,
+                player_clips,
+            )
         {
             added += 1;
         }

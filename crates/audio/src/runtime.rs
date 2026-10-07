@@ -172,6 +172,21 @@ impl AudioRuntime {
         self.rejections[reason as usize - 1].load(Ordering::Relaxed)
     }
 
+    /// The output level since the last call: RMS and peak (full scale = 1, the peak before
+    /// clipping), and how many samples clipped out of how many.
+    pub fn take_meter(&self) -> (f32, f32, u64, u64) {
+        let energy = f64::from_bits(self.shared.meter_energy.swap(0, Ordering::Relaxed));
+        let samples = self.shared.meter_samples.swap(0, Ordering::Relaxed);
+        let clipped = self.shared.meter_clipped.swap(0, Ordering::Relaxed);
+        let peak = f32::from_bits(self.shared.meter_peak.swap(0, Ordering::Relaxed));
+        let rms = if samples == 0 {
+            0.0
+        } else {
+            (energy / samples as f64).sqrt() as f32
+        };
+        (rms, peak, clipped, samples)
+    }
+
     pub fn set_master_volume(&self, gain: f32) {
         let gain = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
         self.shared.master.store(gain.to_bits(), Ordering::Release);
@@ -491,7 +506,7 @@ fn control(
                 let executable = executable_source(&desired, binding.key, binding.version);
                 set_parameters(
                     &logical.request.instance,
-                    source.gain * binding.gain,
+                    crate::ambient::source_level(source) * binding.gain,
                     source.rate * binding.rate,
                     if binding.group.is_some() {
                         logical.request.instance.audible.load(Ordering::Acquire)
@@ -649,7 +664,7 @@ fn control(
                     });
                     set_parameters(
                         &instance,
-                        start.gain * source.map_or(1.0, |source| source.gain),
+                        start.gain * source.map_or(1.0, crate::ambient::source_level),
                         start.rate * source.map_or(1.0, |source| source.rate),
                         source.is_none_or(|source| source.audible),
                     );

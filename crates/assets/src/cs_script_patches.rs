@@ -9,12 +9,21 @@ struct Patch {
     why: &'static str,
 }
 
-const PATCHES: &[Patch] = &[Patch {
-    module: "maps/mp/gametypes/_gamescore",
-    find: "if ( !player rankingEnabled() && !level.hardcoreMode )",
-    replace: "if ( 0 )",
-    why: "no \"+50\" score popups (CS shows none)",
-}];
+const PATCHES: &[Patch] = &[
+    Patch {
+        module: "maps/mp/gametypes/_gamescore",
+        find: "if ( !player rankingEnabled() && !level.hardcoreMode )",
+        replace: "if ( 0 )",
+        why: "no \"+50\" score popups (CS shows none)",
+    },
+    Patch {
+        module: "maps/mp/_utility",
+        find: "if ( isDefined( self.perks[perkName] ) )",
+        replace: "if ( 0 )",
+        why: "no perks: `_hasPerk` is always false (the class perks the scripts still record \
+              cancelled fall damage through Commando Pro, among others)",
+    },
+];
 
 /// Applies every patch for `module` to its source.
 pub(crate) fn apply(module: &str, bytes: &mut Vec<u8>) {
@@ -22,19 +31,24 @@ pub(crate) fn apply(module: &str, bytes: &mut Vec<u8>) {
         return;
     }
     for patch in PATCHES.iter().filter(|p| p.module.eq_ignore_ascii_case(module)) {
-        let Ok(text) = std::str::from_utf8(bytes) else {
-            diag::warn!(Zone, "cs script patch: {module} is not text");
-            return;
-        };
-        match text.matches(patch.find).count() {
-            1 => {
-                *bytes = text.replacen(patch.find, patch.replace, 1).into_bytes();
+        // Byte-wise: some MW2 scripts carry stray non-UTF-8 bytes in their comments.
+        let find = patch.find.as_bytes();
+        let hits = bytes
+            .windows(find.len())
+            .enumerate()
+            .filter(|(_, window)| *window == find)
+            .map(|(at, _)| at)
+            .collect::<Vec<_>>();
+        match hits[..] {
+            [at] => {
+                bytes.splice(at..at + find.len(), patch.replace.bytes());
                 diag::info!(Zone, "cs script patch: {module} — {}", patch.why);
             }
-            n => diag::warn!(
+            _ => diag::warn!(
                 Zone,
-                "cs script patch: {module} — `{}` found {n} times, not applied ({})",
+                "cs script patch: {module} — `{}` found {} times, not applied ({})",
                 patch.find,
+                hits.len(),
                 patch.why
             ),
         }

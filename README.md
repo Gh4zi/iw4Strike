@@ -231,6 +231,8 @@ Your movement mode is saved, so you only set it once.
 | `bot add <count>` | Add bots that move and fight, for example `bot add 5` |
 | `bot dummy <count>` | Add bots that stand still (for aim practice) |
 | `force_match_start` | 🔧 Skip the pre-match countdown |
+| `snd_ambient_volume <0-1>` | How loud the map's own ambience is (wind, engines, hum). Default `0.35` |
+| `game_paths` | Close the game and open the game folders window |
 | `disconnect` | Leave the match and go back to the main menu |
 | `quit` | Close the game |
 
@@ -326,15 +328,12 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - Terminal: broken glass can turn red when you look at it from certain angles. This may be
   one of the reasons for low FPS.
 - Favela: rendering issues and low FPS (cause not found yet).
-- Fall damage is inconsistent: sometimes a fall kills you, sometimes it doesn't register any hit.
-- There is no fall damage sound yet (to come from CS 1.6 or CS:S).
-- The flashbang explosion has no sound yet.
-- The map ambient sound is too loud on every map. For example, the airplane sound on Terminal is
-  too high and Highrise is very loud and windy. It may be related to the 100 Hz tick rate (not
-  confirmed).
-- Walking with **Shift** isn't silent yet. In CS, walking makes no footstep sounds.
-- Walking over a weapon doesn't pick it up automatically; you have to press **F**.
-- Dropping and throwing a weapon (**G**) will be reworked.
+- The map ambient sound was too loud on every map (Terminal's planes, Highrise's wind): MW2's
+  looping sound emitters stack up to only a few dB under a rifle. It now plays about 9 dB
+  quieter by default; tune it with `snd_ambient_volume`. Gunfire can still clip when it is
+  very loud.
+- Walking over a weapon picks it up only when its slot is empty, as in CS. With the slot taken,
+  press **F** to swap. Dropping and throwing a weapon (**G**) will be reworked.
 
 ---
 

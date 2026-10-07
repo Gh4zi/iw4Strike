@@ -305,6 +305,17 @@ fn is_sprinting_timestamps(ps: &PlayerState) -> bool {
     ps.last_sprint_start != 0 && ps.last_sprint_end < ps.last_sprint_start
 }
 
+/// CS (`PM_UpdateStepSound`): no step sound at this speed or slower, so walking (SHIFT, 130)
+/// and crouch-walking are silent.
+pub const CS_SILENT_STEP_SPEED: f32 = 150.0;
+
+/// Whether a CS player moves fast enough to be heard stepping.
+#[must_use]
+pub fn cs_makes_footsteps(ps: &PlayerState) -> bool {
+    let [x, y, z] = ps.velocity;
+    x * x + y * y + z * z > CS_SILENT_STEP_SPEED * CS_SILENT_STEP_SPEED
+}
+
 pub fn should_make_footsteps(ps: &PlayerState) -> bool {
     match ps.view_height_target {
         0x16 | 0x28 | 0x0b => false,

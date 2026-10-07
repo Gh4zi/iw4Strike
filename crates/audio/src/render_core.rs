@@ -151,6 +151,12 @@ pub(crate) struct RenderShared {
     pub device_underruns: AtomicU64,
     pub cancelled: AtomicBool,
     pub peak: AtomicU32,
+    /// Level meter since it was last read: summed squares (f64 bits), samples, samples that went
+    /// past full scale and were clipped, and the loudest sample before clipping.
+    pub meter_energy: AtomicU64,
+    pub meter_samples: AtomicU64,
+    pub meter_clipped: AtomicU64,
+    pub meter_peak: AtomicU32,
 }
 
 // The bounded rendering lease exclusively owns RenderState. Slot payload access
@@ -187,6 +193,10 @@ impl RenderShared {
             device_underruns: AtomicU64::new(0),
             cancelled: AtomicBool::new(false),
             peak: AtomicU32::new(0),
+            meter_energy: AtomicU64::new(0),
+            meter_samples: AtomicU64::new(0),
+            meter_clipped: AtomicU64::new(0),
+            meter_peak: AtomicU32::new(0),
         }
     }
 
@@ -235,9 +245,15 @@ impl RenderShared {
         }
         let master = f32::from_bits(self.master.load(Ordering::Relaxed));
         let mut peak = f32::from_bits(self.peak.load(Ordering::Relaxed));
+        let mut energy = 0.0f64;
+        let mut clipped = 0u64;
+        let mut loudest = f32::from_bits(self.meter_peak.load(Ordering::Relaxed));
         for sample in output.iter_mut().flatten() {
             let value = *sample * master;
             *sample = if value.is_finite() {
+                energy += f64::from(value) * f64::from(value);
+                loudest = loudest.max(value.abs());
+                clipped += u64::from(value.abs() > 1.0);
                 value.clamp(-1.0, 1.0)
             } else {
                 0.0
@@ -245,6 +261,12 @@ impl RenderShared {
             peak = peak.max(sample.abs());
         }
         self.peak.store(peak.to_bits(), Ordering::Relaxed);
+        let summed = f64::from_bits(self.meter_energy.load(Ordering::Relaxed)) + energy;
+        self.meter_energy.store(summed.to_bits(), Ordering::Relaxed);
+        self.meter_samples
+            .fetch_add(output.len() as u64 * 2, Ordering::Relaxed);
+        self.meter_clipped.fetch_add(clipped, Ordering::Relaxed);
+        self.meter_peak.store(loudest.to_bits(), Ordering::Relaxed);
         self.frame.store(frame + QUANTUM as u64, Ordering::Release);
         match device {
             Some(true) => {

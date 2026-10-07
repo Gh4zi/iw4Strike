@@ -7,6 +7,8 @@ const EV_FOOTSTEP_WALK: i32 = 0x6d;
 
 const EV_LANDING_FIRST: i32 = 0x70;
 
+const EV_LANDING_PAIN_FIRST: i32 = 0x8f;
+
 const FALL_LIGHT_IN: f32 = 4.0;
 
 const FALL_MEDIUM_IN: f32 = 8.0;
@@ -30,6 +32,15 @@ pub fn crash_land(ps: &mut PlayerState, pml: &mut Pml) {
     pml.landing_animation |= fall_height > FALL_HARD_IN;
     let surface = jump::ground_surface_type(pml.ground_trace[4]);
     crash_land_apply_sfx(ps, fall_height, surface);
+}
+
+/// A CS landing that hurts raises MW2's landing-pain event with the damage as its parameter;
+/// clients play it as the CS fall damage sound. The damage itself is dealt by the server.
+pub(crate) fn cs_landing_pain(ps: &mut PlayerState, pml: &Pml, damage: i32) {
+    if damage > 0 {
+        let surface = jump::ground_surface_type(pml.ground_trace[4]);
+        add_predictable_event(ps, EV_LANDING_PAIN_FIRST + surface, damage.min(255));
+    }
 }
 
 pub fn crash_land_fall_height(ps: &PlayerState, pml: &Pml) -> Option<f32> {

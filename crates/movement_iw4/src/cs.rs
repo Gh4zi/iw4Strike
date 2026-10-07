@@ -225,6 +225,7 @@ pub(crate) fn pmove<C: CollisionBackend>(
         landing_speed = ps.cs_fall_velocity.max(0.0);
         ps.cs_fall_velocity = 0.0;
     }
+    crate::crash::cs_landing_pain(ps, &pml, fall_damage(landing_speed));
 
     if ps.pm_flags & pm_flags::LADDER != 0 {
         ladder_footsteps(ps, pml.msec, cmd.server_time);
@@ -244,7 +245,7 @@ pub(crate) fn pmove<C: CollisionBackend>(
             old_bob,
             ps.bob_cycle as u8,
             pml.ground_trace[4],
-            should_make_footsteps(ps),
+            should_make_footsteps(ps) && crate::footstep::cs_makes_footsteps(ps),
         );
     }
 

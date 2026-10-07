@@ -2640,11 +2640,21 @@ fn explosion(
         .as_deref()
         .zip(sound_bank.as_deref())
         .and_then(|(weapons, bank)| {
-            weapons.0.weapon_sound_alias(
-                payload.weapon,
-                asset_game::WeaponSoundSlot::ProjectileExplosion,
+            cs_grenade_explosion_alias(
+                &weapons.0.script_name_of(payload.weapon),
+                payload.origin[0].to_bits() ^ payload.origin[1].to_bits(),
                 &bank.0,
             )
+            .or_else(|| {
+                weapons
+                    .0
+                    .weapon_sound_alias(
+                        payload.weapon,
+                        asset_game::WeaponSoundSlot::ProjectileExplosion,
+                        &bank.0,
+                    )
+                    .map(str::to_owned)
+            })
         });
     if let (Some(alias), Some(sounds)) = (alias, sounds.as_deref_mut()) {
         sounds.write(audio::WeaponSound {
@@ -2658,7 +2668,7 @@ fn explosion(
                 .as_deref()
                 .and_then(|w| w.0.namespace_of(payload.weapon))
                 .unwrap_or(asset_core::AssetNamespace::Iw4),
-            alias: alias.to_owned(),
+            alias,
             origin_inches: Some(payload.origin),
             snd_ent: audio::ent_from_number(payload.number),
         });
@@ -2667,6 +2677,26 @@ fn explosion(
     }
     log_combat_fx_gaps(&mut cursor, &combat);
     sync_combat_dump(&cursor, &mut combat);
+}
+
+/// A Counter-Strike grenade going off with its own sound: CS:S's sound script entry when it is in
+/// the bank, else one of CS 1.6's waves (picked by `seed`, the same on every client).
+fn cs_grenade_explosion_alias(
+    projectile: &str,
+    seed: u32,
+    bank: &asset_audio::SoundCatalog,
+) -> Option<String> {
+    let grenade = weapon_iw4::cs::cs_grenade_for_projectile(projectile)?;
+    let css = grenade
+        .css_explode_sound
+        .map(|name| format!("{}{}", asset_audio::CSS_SOUND_PREFIX, name.to_ascii_lowercase()));
+    let goldsrc = (!grenade.explode_sounds.is_empty()).then(|| {
+        let wave = grenade.explode_sounds[seed as usize % grenade.explode_sounds.len()];
+        format!("{}{wave}", asset_audio::CS_SOUND_PREFIX)
+    });
+    css.into_iter()
+        .chain(goldsrc)
+        .find(|alias| bank.has_alias(asset_core::AssetNamespace::Iw4, alias))
 }
 
 const KILLCAM_FX_REMOVAL_WEAPONS: [&str; 1] = ["remotemissile_projectile_mp"];

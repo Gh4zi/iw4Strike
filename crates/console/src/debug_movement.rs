@@ -26,6 +26,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "sv_destructibles [0|1] — cars, barrels and breakable walls take damage (default 0)",
         ));
     }
+    if registry.resolve("snd_ambient_volume").is_none() {
+        registry.register(crate::CommandSpec::new("snd_ambient_volume").usage(
+            "snd_ambient_volume [0-1] — how loud the map's own ambience plays (wind, engines, hum)",
+        ));
+    }
     if registry.resolve("viewmodel_fov").is_none() {
         registry.register(crate::CommandSpec::new("viewmodel_fov").usage(
             "viewmodel_fov [54-90] — how wide the CS gun is drawn (bigger = gun further away)",
@@ -117,6 +122,18 @@ pub(crate) fn route_movement_commands(
                     format!("sv_destructibles = {arg}")
                 }
                 _ => "usage: sv_destructibles [0|1]".to_owned(),
+            },
+            "snd_ambient_volume" => match cmd.args.as_slice() {
+                [] => format!("snd_ambient_volume = {:.2}", game.ambient_volume),
+                [arg] => match arg.parse::<f32>() {
+                    Ok(volume) if volume.is_finite() => {
+                        game.ambient_volume = volume.clamp(0.0, 1.0);
+                        game.touch();
+                        format!("snd_ambient_volume = {:.2}", game.ambient_volume)
+                    }
+                    _ => "usage: snd_ambient_volume [0-1]".to_owned(),
+                },
+                _ => "usage: snd_ambient_volume [0-1]".to_owned(),
             },
             "viewmodel_fov" => match cmd.args.as_slice() {
                 [] => format!("viewmodel_fov = {:.0}", game.viewmodel_fov),

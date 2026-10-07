@@ -1544,6 +1544,10 @@ pub struct CsGrenade {
     pub price: i32,
     /// How many a player may carry.
     pub carry: i32,
+    /// CS:S sound script entry played when it goes off, instead of the MW2 projectile's.
+    pub css_explode_sound: Option<&'static str>,
+    /// CS 1.6 `sound/weapons` waves for the same, picked by the explosion.
+    pub explode_sounds: &'static [&'static str],
 }
 
 pub const CS_GRENADES: [CsGrenade; 3] = [
@@ -1555,6 +1559,8 @@ pub const CS_GRENADES: [CsGrenade; 3] = [
         css_view_model: "v_eq_fraggrenade",
         price: 300,
         carry: 1,
+        css_explode_sound: None,
+        explode_sounds: &[],
     },
     CsGrenade {
         name: "flashbang",
@@ -1564,6 +1570,8 @@ pub const CS_GRENADES: [CsGrenade; 3] = [
         css_view_model: "v_eq_flashbang",
         price: 200,
         carry: 2,
+        css_explode_sound: Some("Flashbang.Explode"),
+        explode_sounds: &["flashbang-1", "flashbang-2"],
     },
     CsGrenade {
         name: "smokegrenade",
@@ -1573,8 +1581,16 @@ pub const CS_GRENADES: [CsGrenade; 3] = [
         css_view_model: "v_eq_smokegrenade",
         price: 300,
         carry: 1,
+        css_explode_sound: None,
+        explode_sounds: &[],
     },
 ];
+
+/// The CS grenade whose throws fly as MW2's `projectile` weapon.
+#[must_use]
+pub fn cs_grenade_for_projectile(projectile: &str) -> Option<&'static CsGrenade> {
+    CS_GRENADES.iter().find(|grenade| grenade.projectile == projectile)
+}
 
 /// `WeaponCombatFacts::cs_weapon` of the first grenade; the others follow.
 pub const CS_GRENADE_INDEX: u8 = CS_KNIFE_INDEX + 1;

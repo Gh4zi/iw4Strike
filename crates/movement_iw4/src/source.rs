@@ -334,6 +334,7 @@ pub(crate) fn pmove<C: CollisionBackend>(
     } else {
         mv.full_walk_move(ps, &mut pml, cmd, context.old_buttons, wish);
     }
+    crate::crash::cs_landing_pain(ps, &pml, fall_damage(&profile, mv.landing_speed));
 
     if ps.pm_flags & pm_flags::LADDER != 0 {
         ladder_footsteps(ps, pml.msec, cmd.server_time);
@@ -353,7 +354,7 @@ pub(crate) fn pmove<C: CollisionBackend>(
             old_bob,
             ps.bob_cycle as u8,
             pml.ground_trace[4],
-            should_make_footsteps(ps),
+            should_make_footsteps(ps) && crate::footstep::cs_makes_footsteps(ps),
         );
     }
 

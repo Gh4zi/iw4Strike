@@ -28,8 +28,32 @@ pub(crate) fn register(app: &mut App) {
             (
                 submit_presented_audio,
                 cancel_audio_on_exit.after(submit_presented_audio),
+                log_audio_meter,
             ),
         );
+}
+
+/// `IW4L_AUDIO_METER=1`: once a second, how loud the mix is (RMS and peak in dB of full scale)
+/// and how much of it clipped — for tuning levels without listening.
+fn log_audio_meter(runtime: Res<AudioRuntime>, mut last: Local<Option<std::time::Instant>>) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("IW4L_AUDIO_METER").is_some_and(|v| v != "0")) {
+        return;
+    }
+    let now = std::time::Instant::now();
+    if last.is_some_and(|last| now.duration_since(last).as_secs_f32() < 1.0) {
+        return;
+    }
+    *last = Some(now);
+    let (rms, peak, clipped, samples) = runtime.take_meter();
+    let db = |level: f32| 20.0 * level.max(1e-6).log10();
+    diag::info!(
+        Audio,
+        "audio meter: rms {:.1} dBFS peak {:.1} dBFS clipped {clipped}/{samples} ambient_volume {:.2}",
+        db(rms),
+        db(peak),
+        crate::ambient::ambient_volume()
+    );
 }
 
 fn publish_audio_context(
@@ -144,6 +168,7 @@ fn submit_presented_audio(
     }));
     if let Some(settings) = settings {
         runtime.set_master_volume(settings.master_volume);
+        crate::ambient::set_ambient_volume(settings.ambient_volume);
     }
     let mut desired = Vec::new();
     if let Some(destructibles) = destructibles {
