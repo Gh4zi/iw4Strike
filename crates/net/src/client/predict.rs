@@ -322,8 +322,12 @@ impl ClientPrediction {
         }
         let alpha = ((now_ms - time as f32) / tick_ms).clamp(0.0, 1.0);
         let mut blended = current;
+        // Fixed-tick movement (`mv_mode csgo64`/`csgo128`) moves in whole steps, so a command can
+        // move more or less than its 10 ms: present where the player is between steps.
+        let (from_at, current_at) = (between_steps(&from), between_steps(&current));
         for axis in 0..3 {
-            blended.origin[axis] = from.origin[axis] + gap[axis] * alpha;
+            blended.origin[axis] =
+                from_at[axis] + (current_at[axis] - from_at[axis]) * alpha;
             blended.velocity[axis] =
                 from.velocity[axis] + (current.velocity[axis] - from.velocity[axis]) * alpha;
         }
@@ -692,4 +696,10 @@ pub fn snapshot_ground_e_type(snapshot: &Snapshot, mover_num: i32) -> Option<i32
         return Some(entity_iw4::ET_PLAYER_CORPSE);
     }
     None
+}
+
+/// Where the player is between fixed movement steps: the last step's origin carried on by the
+/// time the command has not moved yet (0 outside `mv_mode csgo64`/`csgo128`).
+fn between_steps(ps: &PlayerState) -> [f32; 3] {
+    [0, 1, 2].map(|axis| ps.origin[axis] + ps.velocity[axis] * ps.cs_move_accum)
 }

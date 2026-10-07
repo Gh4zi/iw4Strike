@@ -373,6 +373,9 @@ ps_netfields! {
     cs_duck_amount: f32 = Replication::Replicated, Validation::Exact;
     cs_duck_fatigue: f32 = Replication::Replicated, Validation::Exact;
     cs_duck_anchor: vec3 = Replication::Replicated, Validation::Exact;
+    cs_move_accum: f32 = Replication::Replicated, Validation::Exact;
+    cs_move_buttons: u32 = Replication::Replicated, Validation::Exact;
+    cs_move_latched: u32 = Replication::Replicated, Validation::Exact;
     cs_punch: vec3 = Replication::Replicated, Validation::Exact;
     cs_shots_fired: i32 = Replication::Replicated, Validation::Exact;
     cs_accuracy: f32 = Replication::Replicated, Validation::Exact;

@@ -245,6 +245,7 @@ buy flashbang
 | Command | What it does |
 |---|---|
 | `mv_mode csgo` | CS:GO competitive movement, the default (CS:GO stamina and crouch fatigue, 1.1x bhop cap, no auto-hop) |
+| `mv_mode csgo64` / `csgo128` | CS:GO movement stepped like a 64 or 128 tick server (jump heights, bhop timing), inside the 100 Hz server |
 | `mv_mode css` | CS:S-style movement (CS:S stamina, Momentum's slope fix, no auto-hop) |
 | `mv_mode cs16` | Counter-Strike 1.6 movement (smaller player, lower jump) |
 | `mv_mode surf` | Surf settings (very high air control, auto-hop) |

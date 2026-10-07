@@ -136,6 +136,11 @@ pub struct PlayerState {
     /// CS:GO movement: where the duck speed was last fully rested (x, y; z unused); moving away
     /// from it recovers faster.
     pub cs_duck_anchor: [f32; 3],
+    /// Fixed-tick movement (`mv_mode csgo64`/`csgo128`): command time not yet moved (seconds),
+    /// the buttons of the last movement step, and buttons of commands that ran no step.
+    pub cs_move_accum: f32,
+    pub cs_move_buttons: u32,
+    pub cs_move_latched: u32,
     /// CS weapons: recoil punch (pitch, yaw, roll) bullets and the view follow (`punchangle`).
     pub cs_punch: [f32; 3],
     /// CS weapons: shots in the current spray (`m_iShotsFired`).
@@ -447,6 +452,9 @@ impl PlayerState {
         cs_duck_amount: 0.0,
         cs_duck_fatigue: 0.0,
         cs_duck_anchor: [0.0; 3],
+        cs_move_accum: 0.0,
+        cs_move_buttons: 0,
+        cs_move_latched: 0,
         cs_punch: [0.0; 3],
         cs_shots_fired: 0,
         cs_accuracy: 0.0,

@@ -85,6 +85,9 @@ pub struct SourceProfile {
     pub ladder_scale: f32,
     /// CS:GO's own rules over the shared Source movement; `None` keeps Momentum's CS:S-style ones.
     pub csgo: Option<CsgoRules>,
+    /// A fixed movement tick in seconds (CS:GO servers' 64 or 128): each 100 Hz command moves in
+    /// whole steps of this length. `None` moves once per command.
+    pub step_seconds: Option<f32>,
 }
 
 /// What CS:GO's movement does differently from the CS:S-style Source code: its stamina is a
@@ -188,6 +191,7 @@ pub const CSS: SourceProfile = SourceProfile {
     fall_damage_scale: 1.25,
     ladder_scale: 1.0,
     csgo: None,
+    step_seconds: None,
 };
 
 /// CS:GO competitive movement (`mv_mode csgo`): the CS:S-style base with CS:GO's own stamina,
@@ -201,6 +205,18 @@ pub const CSGO: SourceProfile = SourceProfile {
     ladder_scale: 0.78,
     csgo: Some(CSGO_RULES),
     ..CSS
+};
+
+/// CS:GO movement stepped at a 64 tick server's 15.625 ms (`mv_mode csgo64`).
+pub const CSGO_64: SourceProfile = SourceProfile {
+    step_seconds: Some(1.0 / 64.0),
+    ..CSGO
+};
+
+/// CS:GO movement stepped at a 128 tick server's 7.8125 ms (`mv_mode csgo128`).
+pub const CSGO_128: SourceProfile = SourceProfile {
+    step_seconds: Some(1.0 / 128.0),
+    ..CSGO
 };
 
 /// Momentum Mod's bhop mode on CS:GO's hull: autohop, airaccelerate 1000, no stamina.
@@ -251,6 +267,8 @@ const LADDER_CLIMB_SPEED: f32 = 200.0;
 
 /// Speed a jump pushes the player straight off a ladder.
 const LADDER_JUMP_OFF_SPEED: f32 = 270.0;
+/// Most fixed movement steps one command runs (a long hitch does not run away).
+const MAX_MOVE_STEPS: u32 = 8;
 /// CS:GO's acceleration measures weapon speed and wish speed against the knife's 250.
 const CSGO_BASE_SPEED: f32 = 250.0;
 
@@ -377,63 +395,70 @@ pub(crate) fn pmove<C: CollisionBackend>(
     let _ads = update_ads_intent(ps, cmd, context.old_buttons, context.ads_intent);
     update_ads_frac(ps, pml.msec, context.ads_frac);
     crate::breath::update_hold_breath(ps, cmd.buttons, pml.msec, context.can_hold_breath);
-    // CS:GO slows this command by the stamina penalty as it stood before recovering.
-    let stamina_before = ps.cs_stamina;
-    reduce_timers(ps, pml.msec, &profile);
-
-    let was_crouched = ps.pm_flags & pm_flags::CROUCH != 0;
-    let mut mv = Move {
-        collision,
-        profile,
-        bounds: hull(ps, &profile, context.bounds),
-        gravity: ps.gravity as f32,
-        frametime: pml.frametime,
-        surface_friction: 1.0,
-        landing_speed: 0.0,
-        walking: walk_key,
-        weapon_speed: profile.max_speed,
-    };
-
-    let unstuck = mv.unstick(ps);
-    mv.categorize(ps, &mut pml);
-    if pml.walking == 0 {
-        ps.cs_fall_velocity = -ps.velocity[2];
-    }
     drop_timers(ps, &pml);
 
-    let mut wish = match profile.csgo {
-        Some(rules) => {
-            let ducked = ps.cs_duck_state & cs_duck::DUCKED != 0;
-            let (wish, max_speed) =
-                csgo_command_wish(cmd, &profile, &rules, walk_key, ducked, stamina_before);
-            mv.profile.max_speed = max_speed;
-            wish
+    let was_crouched = ps.pm_flags & pm_flags::CROUCH != 0;
+    let mut bounds = hull(ps, &profile, context.bounds);
+    let mut landing_speed = 0.0_f32;
+    let mut unstuck = false;
+    let command_seconds = pml.frametime;
+    match profile.step_seconds {
+        None => {
+            ps.cs_move_accum = 0.0;
+            let step = move_step(
+                ps,
+                cmd,
+                &context,
+                collision,
+                profile,
+                &mut pml,
+                walk_key,
+                context.old_buttons,
+                command_seconds,
+            );
+            (bounds, landing_speed, unstuck) = (step.bounds, step.landing_speed, step.unstuck);
         }
-        None => command_wish(cmd, &profile, walk_key),
-    };
-    mv.duck(ps, &mut pml, cmd, context.old_buttons, &mut wish);
-
-    {
-        let mut ladder_backend = LadderBackend {
-            collision,
-            bounds: mv.bounds,
-        };
-        if check_ladder_move(
-            ps,
-            crate::ladder::cs_ladder_context(cmd, pml.walking != 0, pml.forward, pml.right),
-            &mut ladder_backend,
-        ) {
-            pml.record_jump_animation(crate::JumpAnimation::Forward, true);
+        Some(seconds) => {
+            // A fixed movement tick (CS:GO's 64 or 128) inside the 100 Hz command: the command's
+            // time runs in whole steps, what is left waits for the next command, and buttons of
+            // a command that ran no step count on the next one (a scroll jump is never lost).
+            ps.cs_move_accum += command_seconds;
+            let mut steps = 0;
+            while ps.cs_move_accum >= seconds && steps < MAX_MOVE_STEPS {
+                ps.cs_move_accum -= seconds;
+                steps += 1;
+            }
+            if steps == 0 {
+                ps.cs_move_latched |= cmd.buttons;
+            }
+            for index in 0..steps {
+                let mut step_cmd = *cmd;
+                if index == 0 {
+                    step_cmd.buttons |= ps.cs_move_latched;
+                }
+                let old_buttons = ps.cs_move_buttons;
+                let step = move_step(
+                    ps,
+                    &mut step_cmd,
+                    &context,
+                    collision,
+                    profile,
+                    &mut pml,
+                    walk_key,
+                    old_buttons,
+                    seconds,
+                );
+                ps.cs_move_buttons = step_cmd.buttons;
+                bounds = step.bounds;
+                landing_speed = landing_speed.max(step.landing_speed);
+                unstuck |= step.unstuck;
+            }
+            if steps > 0 {
+                ps.cs_move_latched = 0;
+            }
         }
     }
-
-    if ps.pm_flags & pm_flags::LADDER != 0 {
-        mv.ladder_move(ps, &mut pml, cmd);
-        mv.categorize(ps, &mut pml);
-    } else {
-        mv.full_walk_move(ps, &mut pml, cmd, context.old_buttons, wish);
-    }
-    crate::crash::cs_landing_pain(ps, &pml, fall_damage(&profile, mv.landing_speed));
+    crate::crash::cs_landing_pain(ps, &pml, fall_damage(&profile, landing_speed));
 
     if ps.pm_flags & pm_flags::LADDER != 0 {
         ladder_footsteps(ps, pml.msec, cmd.server_time);
@@ -465,16 +490,97 @@ pub(crate) fn pmove<C: CollisionBackend>(
     };
     PmoveResult {
         pml,
-        bounds: mv.bounds,
+        bounds,
         stance_event,
         reset_torso: stance_event.is_some(),
+        landing_speed,
+        unstuck,
+    }
+}
+
+/// What one movement step leaves for the command's result.
+struct StepResult {
+    bounds: MoveBounds,
+    landing_speed: f32,
+    unstuck: bool,
+}
+
+/// One movement step of `frametime` seconds: timers, stuck check, ground, duck, ladder, then the
+/// walk or air move.
+#[allow(clippy::too_many_arguments)]
+fn move_step<C: CollisionBackend>(
+    ps: &mut PlayerState,
+    cmd: &mut UserCmd,
+    context: &PmoveSingleContext,
+    collision: &C,
+    profile: SourceProfile,
+    pml: &mut Pml,
+    walk_key: bool,
+    old_buttons: u32,
+    frametime: f32,
+) -> StepResult {
+    // CS:GO slows this command by the stamina penalty as it stood before recovering.
+    let stamina_before = ps.cs_stamina;
+    reduce_timers(ps, frametime * 1000.0, &profile);
+
+    let mut mv = Move {
+        collision,
+        profile,
+        bounds: hull(ps, &profile, context.bounds),
+        gravity: ps.gravity as f32,
+        frametime,
+        surface_friction: 1.0,
+        landing_speed: 0.0,
+        walking: walk_key,
+        weapon_speed: profile.max_speed,
+    };
+
+    let unstuck = mv.unstick(ps);
+    mv.categorize(ps, pml);
+    if pml.walking == 0 {
+        ps.cs_fall_velocity = -ps.velocity[2];
+    }
+
+    let mut wish = match profile.csgo {
+        Some(rules) => {
+            let ducked = ps.cs_duck_state & cs_duck::DUCKED != 0;
+            let (wish, max_speed) =
+                csgo_command_wish(cmd, &profile, &rules, walk_key, ducked, stamina_before);
+            mv.profile.max_speed = max_speed;
+            wish
+        }
+        None => command_wish(cmd, &profile, walk_key),
+    };
+    mv.duck(ps, pml, cmd, old_buttons, &mut wish);
+
+    {
+        let mut ladder_backend = LadderBackend {
+            collision,
+            bounds: mv.bounds,
+        };
+        if check_ladder_move(
+            ps,
+            crate::ladder::cs_ladder_context(cmd, pml.walking != 0, pml.forward, pml.right),
+            &mut ladder_backend,
+        ) {
+            pml.record_jump_animation(crate::JumpAnimation::Forward, true);
+        }
+    }
+
+    if ps.pm_flags & pm_flags::LADDER != 0 {
+        mv.ladder_move(ps, pml, cmd);
+        mv.categorize(ps, pml);
+    } else {
+        mv.full_walk_move(ps, pml, cmd, old_buttons, wish);
+    }
+    StepResult {
+        bounds: mv.bounds,
         landing_speed: mv.landing_speed,
         unstuck,
     }
 }
 
-fn reduce_timers(ps: &mut PlayerState, msec: i32, profile: &SourceProfile) {
-    let msec = msec as f32;
+fn reduce_timers(ps: &mut PlayerState, msec: f32, profile: &SourceProfile) {
     ps.cs_duck_time = (ps.cs_duck_time - msec).max(0.0);
     ps.cs_stamina = match profile.csgo {
         // CS:GO: a penalty that recovers so much a second.
@@ -1862,6 +1968,74 @@ mod tests {
         let crouched = csgo_jump_apex(true);
         assert!((standing - 55.5).abs() < 1.0, "standing {standing}");
         assert!(crouched > standing + 1.0, "crouched {crouched} standing {standing}");
+    }
+
+    /// Highest the feet get on one standing jump with `profile`.
+    fn standing_apex(profile: SourceProfile) -> f32 {
+        let mut sim = Sim {
+            rules: Some(crate::rules::Ruleset::Source(profile)),
+            ..Sim::new(Floor)
+        };
+        sim.settle();
+        let mut apex = sim.ps.origin[2];
+        sim.tick(0, 0, buttons::JUMP, 0.0);
+        for _ in 0..150 {
+            apex = apex.max(sim.ps.origin[2]);
+            sim.tick(0, 0, buttons::JUMP, 0.0);
+        }
+        apex
+    }
+
+    #[test]
+    fn csgo_tick_modes_jump_to_their_servers_heights() {
+        // CS:GO's standing jump peaks at 54.65 units on 64 tick and 55.83 on 128 (the ordinary
+        // branch's discrete trajectory).
+        let tick64 = standing_apex(CSGO_64);
+        assert!((tick64 - 54.654).abs() < 0.05, "64 tick {tick64}");
+        let tick128 = standing_apex(CSGO_128);
+        assert!((tick128 - 55.826).abs() < 0.05, "128 tick {tick128}");
+    }
+
+    #[test]
+    fn csgo64_never_loses_a_one_command_jump() {
+        // A scroll press lasts one 10 ms command; some commands run no 64 tick step.
+        for wait in 0..5 {
+            let mut sim = Sim {
+                rules: Some(crate::rules::Ruleset::Source(CSGO_64)),
+                ..Sim::new(Floor)
+            };
+            sim.settle();
+            for _ in 0..wait {
+                sim.tick(0, 0, 0, 0.0);
+            }
+            sim.tick(0, 0, buttons::JUMP, 0.0);
+            let mut jumped = !sim.grounded();
+            for _ in 0..3 {
+                sim.tick(0, 0, 0, 0.0);
+                jumped |= !sim.grounded();
+            }
+            assert!(jumped, "jump pressed after {wait} idle commands was lost");
+        }
+    }
+
+    #[test]
+    fn csgo64_runs_at_250_over_its_steps() {
+        let mut sim = Sim {
+            rules: Some(crate::rules::Ruleset::Source(CSGO_64)),
+            ..Sim::new(Floor)
+        };
+        sim.settle();
+        let start = sim.ps.origin[0];
+        for _ in 0..300 {
+            sim.tick(127, 0, 0, 0.0);
+        }
+        let x = sim.ps.origin[0];
+        for _ in 0..100 {
+            sim.tick(127, 0, 0, 0.0);
+        }
+        // One second of commands at full speed covers 250 units (give or take the leftover).
+        let covered = sim.ps.origin[0] - x;
+        assert!((covered - 250.0).abs() < 4.0, "covered {covered} from {start}");
     }
 
     #[test]

@@ -18,7 +18,7 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
     }
     if registry.resolve("mv_mode").is_none() {
         registry.register(crate::CommandSpec::new("mv_mode").usage(
-            "mv_mode [csgo|css|surf|mmod|cs16] — movement preset: CS:GO, CS:S style, surf, Momentum bhop, CS 1.6",
+            "mv_mode [csgo|csgo64|csgo128|css|surf|mmod|cs16] — movement preset: CS:GO (100, 64 or 128 tick), CS:S style, surf, Momentum bhop, CS 1.6",
         ));
     }
     if registry.resolve("sv_destructibles").is_none() {
@@ -110,9 +110,9 @@ pub(crate) fn route_movement_commands(
                             game.touch();
                             format!("mv_mode = {} — {}", next.name(), next.describe())
                         }
-                        None => "usage: mv_mode [csgo|css|surf|mmod|cs16]".to_owned(),
+                        None => "usage: mv_mode [csgo|csgo64|csgo128|css|surf|mmod|cs16]".to_owned(),
                     },
-                    _ => "usage: mv_mode [csgo|css|surf|mmod|cs16]".to_owned(),
+                    _ => "usage: mv_mode [csgo|csgo64|csgo128|css|surf|mmod|cs16]".to_owned(),
                 }
             }
             "sv_destructibles" => match cmd.args.as_slice() {
