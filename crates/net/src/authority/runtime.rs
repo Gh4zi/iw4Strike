@@ -1127,6 +1127,12 @@ pub fn authority_bookkeeping(
 ) {
     push_phase(trace, "Bookkeeping");
 
+    // Killcams are the archive's only reader, and CS rules turn them off
+    // (`scr_game_allowkillcam 0` in the match config): a full snapshot clone every tick would
+    // feed nothing.
+    if movement_iw4::rules::CS_RULES && seats.is_empty() {
+        return;
+    }
     if let Some(tick) = server_tick.0.as_ref() {
         archive.push_snapshot(&tick.snapshot, &seats.viewers());
     }
