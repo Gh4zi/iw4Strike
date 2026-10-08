@@ -268,7 +268,8 @@ fn steam_installs() -> Vec<PathBuf> {
 }
 
 /// Steam's own folders on this PC: the native install (`~/.local/share/Steam`, also reached
-/// through `~/.steam/steam`), Flatpak's and Snap's.
+/// through `~/.steam/steam`), Flatpak's (in the app's home, or its data folder on some
+/// setups) and Snap's.
 #[cfg(not(windows))]
 fn steam_installs() -> Vec<PathBuf> {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
@@ -283,6 +284,7 @@ fn steam_installs() -> Vec<PathBuf> {
         home.join(".steam/steam"),
         home.join(".steam/root"),
         home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
+        home.join(".var/app/com.valvesoftware.Steam/data/Steam"),
         home.join("snap/steam/common/.local/share/Steam"),
     ]
     .into_iter()
