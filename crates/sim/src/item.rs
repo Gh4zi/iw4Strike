@@ -382,6 +382,14 @@ pub(crate) fn drop_cs_weapon(world: &mut FrameWorld, tick: Tick, player: ClientI
         return;
     }
     let weapon = ps.weapon;
+    // The C4 belongs to the bomb mode's script: it drops the bomb (and takes the C4 back).
+    if world
+        .combat_facts_for(weapon)
+        .is_some_and(|facts| weapon_iw4::cs::is_c4(facts.cs_weapon))
+    {
+        crate::script::notify_player(world.ecs(), player.0, "cs_drop_bomb");
+        return;
+    }
     let Some(number) = throw_cs_weapon(world, tick, player, weapon) else {
         return;
     };
@@ -1012,7 +1020,11 @@ pub(crate) fn phase_use_items(
         let Some(ps) = world.player(id).copied() else {
             continue;
         };
-        let selected = selected_item(world, id, &ps);
+        // Counter-Strike picks guns up by walking over them, never with E (E defuses the bomb),
+        // and shows no "swap" hint.
+        let selected = (!movement_iw4::rules::CS_RULES)
+            .then(|| selected_item(world, id, &ps))
+            .flatten();
         let held = cmds.iter().any(|(client, bits)| {
             *client == id.0
                 && bits & (playerstate_iw4::buttons::USE | playerstate_iw4::buttons::USE_RELOAD)
@@ -1043,11 +1055,15 @@ pub(crate) fn phase_use_items(
             }
             world.client_meta_mut(id).item_use_entity = None;
         }
-        let selected = selected_item(
-            world,
-            id,
-            &world.player(id).copied().expect("client exists"),
-        );
+        let selected = (!movement_iw4::rules::CS_RULES)
+            .then(|| {
+                selected_item(
+                    world,
+                    id,
+                    &world.player(id).copied().expect("client exists"),
+                )
+            })
+            .flatten();
         let dual = selected.is_some_and(|item| {
             world
                 .combat_facts_for(item.weapon)

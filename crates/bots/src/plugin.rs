@@ -106,6 +106,7 @@ impl Plugin for BotsPlugin {
             .init_resource::<BotHold>()
             .init_resource::<BotTpQueue>()
             .init_resource::<BotFireQueue>()
+            .init_resource::<crate::BotTestControls>()
             .init_resource::<BotNav>()
             .init_resource::<BotNavigationReady>()
             .init_resource::<BotMeter>()
@@ -374,6 +375,7 @@ struct ThinkBots<'w> {
     request_ids: ResMut<'w, net::ActionRequestIds>,
     hold: Res<'w, BotHold>,
     fire: ResMut<'w, BotFireQueue>,
+    test: Res<'w, crate::BotTestControls>,
     reliable: ResMut<'w, ReliableEventHub>,
     meter: ResMut<'w, BotMeter>,
 }
@@ -478,8 +480,17 @@ fn think_bots(mut p: ThinkBots) {
         if fires.iter().any(|target| match target {
             BotTpTarget::All => true,
             BotTpTarget::Id(id) => *id == bot.id,
-        }) {
+        }) || p.test.attack_all
+            || p.test.attack.contains(&bot.id)
+        {
             cmd.buttons |= playerstate_iw4::buttons::ATTACK;
+        }
+        if p.test.use_held.contains(&bot.id) {
+            cmd.buttons |= playerstate_iw4::buttons::USE;
+        }
+        if let Some(&weapon) = p.test.weapon.get(&bot.id) {
+            cmd.weapon = weapon;
+            cmd.weapon_mapped = weapon;
         }
         bot.last_cmd = Some(cmd);
         p.cmds.push(bot.id, None, cmd, None);

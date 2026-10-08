@@ -336,11 +336,13 @@ pub(crate) fn advance_weapon_command(
         let knife_held = weapon_iw4::cs::is_knife(facts.cs_weapon);
         // CS guns have no melee of their own (the knife is slot 3).
         let grenade_held = weapon_iw4::cs::is_grenade(facts.cs_weapon);
+        // The C4 never fires: its attack plants it, which the bomb mode's script reads.
+        let c4_held = weapon_iw4::cs::is_c4(facts.cs_weapon);
         // Screwing a silencer on or off: no shooting or reloading until it is done.
         let adjusting = facts.cs_weapon != 0
             && ps.cs_gun_weapon == ps.weapon
             && cmd.server_time < ps.cs_adjust_ms;
-        let taken = if knife_held || grenade_held {
+        let taken = if knife_held || grenade_held || c4_held {
             CS_KNIFE_BUTTONS
         } else if adjusting {
             playerstate_iw4::buttons::MELEE_CHARGE

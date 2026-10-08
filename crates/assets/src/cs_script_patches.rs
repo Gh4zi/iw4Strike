@@ -29,6 +29,77 @@ const fn once(
 
 const GAMELOGIC: &str = "maps/mp/gametypes/_gamelogic";
 const SD: &str = "maps/mp/gametypes/sd";
+const GAMEOBJECTS: &str = "maps/mp/gametypes/_gameobjects";
+
+/// The bomb mode's CS C4 threads, put in `sd.gsc` ahead of `initGametypeAwards`:
+/// - `csPlantThink` (a site): a carrier holding attack with the C4 in the site starts the plant
+///   (the site's use code then runs it: 3 s, frozen, progress bar).
+/// - `csBombCarrierThink` (the carrier): attack with the C4 outside a site says where to plant.
+/// - `csBombDropThink` (the carrier): `drop` with the C4 in hand (the engine's `cs_drop_bomb`)
+///   drops the bomb at the carrier's feet.
+const CS_BOMB_FUNCTIONS: &str = r#"csPlantThink()
+{
+    level endon ( "game_ended" );
+    self endon ( "deleted" );
+    for ( ;; )
+    {
+        wait ( 0.05 );
+        if ( self.interactTeam == "none" || ( isDefined( self.inUse ) && self.inUse ) )
+            continue;
+        foreach ( player in level.players )
+        {
+            if ( !isDefined( player.carryObject ) || player.carryObject != self.keyObject )
+                continue;
+            if ( !isReallyAlive( player ) || !player attackButtonPressed() || player getCurrentWeapon() != level.csBomb )
+                continue;
+            if ( player isTouching( self.trigger ) )
+                self.trigger notify ( "trigger", player );
+        }
+    }
+}
+
+csBombCarrierThink( bomb )
+{
+    self endon ( "death" );
+    self endon ( "disconnect" );
+    self endon ( "cs_bomb_gone" );
+    level endon ( "game_ended" );
+    hinted = false;
+    for ( ;; )
+    {
+        if ( self attackButtonPressed() && self getCurrentWeapon() == level.csBomb && !( isDefined( self.isPlanting ) && self.isPlanting ) )
+        {
+            inSite = false;
+            foreach ( zone in level.bombZones )
+            {
+                if ( self isTouching( zone.trigger ) )
+                    inSite = true;
+            }
+            if ( !inSite && !hinted )
+                self iPrintLnBold( "C4 must be planted at a bomb site!" );
+            hinted = true;
+        }
+        else
+        {
+            hinted = false;
+        }
+        wait ( 0.05 );
+    }
+}
+
+csBombDropThink( bomb )
+{
+    self endon ( "death" );
+    self endon ( "disconnect" );
+    self endon ( "cs_bomb_gone" );
+    level endon ( "game_ended" );
+    self waittill ( "cs_drop_bomb" );
+    if ( isDefined( self.carryObject ) && self.carryObject == bomb && !( isDefined( self.isPlanting ) && self.isPlanting ) )
+        bomb thread maps\mp\gametypes\_gameobjects::setDropped();
+}
+
+initGametypeAwards()
+{"#;
 
 const PATCHES: &[Patch] = &[
     once(
@@ -85,7 +156,8 @@ const PATCHES: &[Patch] = &[
     once(
         SD,
         "setClientNameMode( \"manual_change\" );",
-        "setClientNameMode( \"manual_change\" ); setDvar( \"cs_attackers\", game[\"attackers\"] ); \
+        "setClientNameMode( \"manual_change\" ); setDvar( \"cs_bomb\", \"none\" ); \
+         makeDvarServerInfo( \"cs_bomb\", \"none\" ); setDvar( \"cs_attackers\", game[\"attackers\"] ); \
          makeDvarServerInfo( \"cs_attackers\", game[\"attackers\"] );",
         "defusal: tell clients which team attacks (the Terrorists), each round",
     ),
@@ -148,6 +220,30 @@ const PATCHES: &[Patch] = &[
         times: 2,
         why: "defusal: no world marker over the dropped bomb",
     },
+    once(
+        SD,
+        "set3DIcon( \"friendly\", \"waypoint_defend\" + label );",
+        "set3DIcon( \"friendly\", undefined );",
+        "defusal: no site marker in the world (the radar shows the sites)",
+    ),
+    once(
+        SD,
+        "set3DIcon( \"enemy\", \"waypoint_target\" + label );",
+        "set3DIcon( \"enemy\", undefined );",
+        "defusal: no target marker in the world",
+    ),
+    once(
+        SD,
+        "set3DIcon( \"friendly\", \"waypoint_defuse\" + label );",
+        "set3DIcon( \"friendly\", undefined );",
+        "defusal: no defuse marker over the planted bomb",
+    ),
+    once(
+        SD,
+        "set3DIcon( \"enemy\", \"waypoint_defend\" + label );",
+        "set3DIcon( \"enemy\", undefined );",
+        "defusal: no defend marker over the planted bomb",
+    ),
     once(
         SD,
         "level.bombTimer = dvarFloatValue( \"bombtimer\", 45, 1, 300 );",
@@ -262,6 +358,212 @@ const PATCHES: &[Patch] = &[
          attacker.pers[\"cur_kill_streak\"] );",
         "attacker notify( \"got_killstreak\", attacker.pers[\"cur_kill_streak\"] );",
         "no killstreak rewards",
+    ),
+    // ---- The CS C4. The bomb mode keeps MW2's sites, timer and round end; the player side is
+    // CS 1.6's: the carrier holds the C4 (slot 5, MW2's own `briefcase_bomb_mp`) and plants it
+    // by holding attack in a site for 3 s, frozen in place; E only defuses (10 s, 5 s with a
+    // defuse kit). `level.csBomb` names the C4 for the generic use-object code below.
+    once(
+        GAMEOBJECTS,
+        "if ( isSubStr( player getCurrentWeapon(), \"killstreak\" ) )",
+        "if ( isDefined( level.csBomb ) && isDefined( self.keyObject ) && !( player \
+         attackButtonPressed() && player getCurrentWeapon() == level.csBomb ) )\n\
+         \t\t\tcontinue;\n\n\
+         \t\tif ( isSubStr( player getCurrentWeapon(), \"killstreak\" ) )",
+        "CS C4: a site is planted at with attack and the C4 in hand, never with E",
+    ),
+    once(
+        GAMEOBJECTS,
+        "player _disableWeapon();",
+        "if ( !isDefined( level.csBomb ) ) player _disableWeapon();",
+        "CS C4: the weapon stays up while planting (the C4 arms) and defusing",
+    ),
+    Patch {
+        module: GAMEOBJECTS,
+        find: "player _enableWeapon();",
+        replace: "if ( !isDefined( level.csBomb ) ) player _enableWeapon();",
+        times: 2,
+        why: "CS C4: nothing to bring back after planting or defusing",
+    },
+    once(
+        GAMEOBJECTS,
+        "personalUseBar( object )\n{",
+        "personalUseBar( object )\n{\n\tif ( isDefined( level.csBomb ) )\n\t\treturn;",
+        "CS C4: the CS HUD draws the plant/defuse bar, not MW2's",
+    ),
+    once(
+        GAMEOBJECTS,
+        "player useButtonPressed()",
+        "self csUseHeld( player )",
+        "CS C4: planting holds attack, defusing holds E",
+    ),
+    once(
+        GAMEOBJECTS,
+        "detachUseModels()\n{",
+        "csUseHeld( player )\n{\n\
+         \tif ( isDefined( level.csBomb ) && isDefined( self.keyObject ) )\n\
+         \t\treturn player attackButtonPressed() && player getCurrentWeapon() == level.csBomb;\n\
+         \treturn player useButtonPressed();\n}\n\n\
+         detachUseModels()\n{",
+        "CS C4: which button holds a use",
+    ),
+    once(
+        SD,
+        "\tlevel.bombPlanted = false;",
+        "\tlevel.csBomb = \"briefcase_bomb_mp\";\n\tlevel.bombPlanted = false;",
+        "CS C4: the bomb is a weapon in the carrier's hands",
+    ),
+    once(
+        SD,
+        "bombZone.useWeapon = \"briefcase_bomb_mp\";",
+        "bombZone.useWeapon = undefined;\n\t\tbombZone thread csPlantThink();",
+        "CS C4: holding attack with the C4 in a site starts the plant",
+    ),
+    once(
+        SD,
+        "defuseObject.useWeapon = \"briefcase_bomb_defuse_mp\";",
+        "defuseObject.useWeapon = undefined;",
+        "CS C4: defusing keeps the gun in hand",
+    ),
+    once(
+        SD,
+        "player playSound( \"mp_bomb_defuse\" );",
+        "player playSound( \"cs_c4_disarm\" );\n\
+         \t\tif ( player csHasDefuseKit() ) player.objectiveScaler = 2; \
+         else player.objectiveScaler = 1;",
+        "CS C4: defusing takes 10 s, 5 s with a defuse kit",
+    ),
+    once(
+        SD,
+        "\t\tif ( isDefined( level.sdBombModel ) )\n\t\t\tlevel.sdBombModel hide();",
+        "\t\tif ( isDefined( level.sdBombModel ) && !isDefined( level.csBomb ) )\n\
+         \t\t\tlevel.sdBombModel hide();",
+        "CS C4: the bomb stays in sight while it is defused",
+    ),
+    once(
+        SD,
+        "bombZone maps\\mp\\gametypes\\_gameobjects::setUseHintText( &\"PLATFORM_HOLD_TO_PLANT_EXPLOSIVES\" );",
+        "",
+        "CS C4: no \"hold E to plant\" hint (the C4 plants with attack)",
+    ),
+    once(
+        SD,
+        "player.isPlanting = true;",
+        "player.isPlanting = true;\n\t\tplayer.objectiveScaler = 1;",
+        "CS C4: planting takes 3 s",
+    ),
+    once(
+        SD,
+        "player iPrintLnBold( &\"MP_CANT_PLANT_WITHOUT_BOMB\" );",
+        "if ( !isDefined( level.csBomb ) ) player iPrintLnBold( &\"MP_CANT_PLANT_WITHOUT_BOMB\" );",
+        "CS C4: no MW2 \"can't plant without the bomb\" on E in a site",
+    ),
+    once(
+        SD,
+        "player playSound( \"mp_bomb_plant\" );",
+        "player playSound( \"cs_c4_plant\" );",
+        "CS C4: plant sound",
+    ),
+    once(
+        SD,
+        "leaderDialog( \"bomb_planted\" );",
+        "playSoundOnPlayers( \"cs_event_bombplanted\" );",
+        "CS C4: \"The bomb has been planted\" on the radio",
+    ),
+    once(
+        SD,
+        "leaderDialog( \"bomb_defused\" );",
+        "playSoundOnPlayers( \"cs_event_bombdefused\" ); player playSound( \"cs_c4_disarmed\" );",
+        "CS C4: \"The bomb has been defused\" on the radio",
+    ),
+    once(
+        SD,
+        "player.isBombCarrier = true;",
+        "player.isBombCarrier = true;\n\
+         \tif ( isDefined( level.csBomb ) )\n\t{\n\
+         \t\tplayer giveWeapon( level.csBomb );\n\
+         \t\tplayer thread csBombDropThink( self );\n\
+         \t\tplayer thread csBombCarrierThink( self );\n\t}",
+        "CS C4: the carrier gets the C4 on slot 5",
+    ),
+    once(
+        SD,
+        "leaderDialog( \"bomb_taken\", player.pers[\"team\"] );",
+        "",
+        "CS C4: no MW2 announcer on taking the bomb",
+    ),
+    once(
+        SD,
+        "\tmaps\\mp\\_utility::playSoundOnPlayers( game[\"bomb_dropped_sound\"], game[\"attackers\"] );",
+        "",
+        "CS C4: no MW2 sound on dropping the bomb",
+    ),
+    once(
+        SD,
+        "\tmaps\\mp\\_utility::playSoundOnPlayers( game[\"bomb_recovered_sound\"], game[\"attackers\"] );",
+        "",
+        "CS C4: no MW2 sound on taking the bomb",
+    ),
+    once(
+        SD,
+        "onDrop( player )\n{",
+        "onDrop( player )\n{\n\
+         \tif ( isDefined( player ) && isDefined( level.csBomb ) )\n\t{\n\
+         \t\tplayer notify ( \"cs_bomb_gone\" );\n\
+         \t\tif ( isAlive( player ) )\n\t\t\tplayer takeWeapon( level.csBomb );\n\t}",
+        "CS C4: dropping (or planting) the bomb takes the C4",
+    ),
+    once(
+        SD,
+        "destroyedObj.visuals[0] thread maps\\mp\\gametypes\\_gamelogic::playTickingSound();",
+        "",
+        "CS C4: no MW2 ticking (CS's beeps instead)",
+    ),
+    // Clients beep the planted bomb in their own install's rhythm (CS:S speeds one beep up,
+    // CS 1.6 steps through five), hide the round timer and draw the planted C4: the plant time,
+    // the timer and where it lies.
+    once(
+        SD,
+        "\tBombTimerWait();",
+        "\tcsBombInfo = \"planted \" + getTime() + \" \" + level.bombTimer + \" \" + \
+         level.sdBombModel.origin[0] + \" \" + level.sdBombModel.origin[1] + \" \" + \
+         level.sdBombModel.origin[2];\n\
+         \tsetDvar( \"cs_bomb\", csBombInfo ); makeDvarServerInfo( \"cs_bomb\", csBombInfo );\n\
+         \tBombTimerWait();",
+        "CS C4: clients know the bomb is planted: when, for how long, where",
+    ),
+    once(
+        SD,
+        "level.bombExploded = true;",
+        "level.bombExploded = true;\n\
+         \tsetDvar( \"cs_bomb\", \"exploded\" ); makeDvarServerInfo( \"cs_bomb\", \"exploded\" );",
+        "CS C4: clients know the bomb went off",
+    ),
+    once(
+        SD,
+        "level.bombDefused = true;",
+        "level.bombDefused = true;\n\
+         \tsetDvar( \"cs_bomb\", \"defused\" ); makeDvarServerInfo( \"cs_bomb\", \"defused\" );",
+        "CS C4: clients know the bomb was defused",
+    ),
+    Patch {
+        module: SD,
+        find: "explosionOrigin, 512, 200, 20",
+        replace: "explosionOrigin, 1750, 500, 0",
+        times: 2,
+        why: "CS C4: 500 damage falling off to nothing at 1750 units",
+    },
+    once(
+        SD,
+        "\"exp_suitcase_bomb_main\"",
+        "\"cs_c4_explode\"",
+        "CS C4: explosion sound",
+    ),
+    once(
+        SD,
+        "initGametypeAwards()\n{",
+        CS_BOMB_FUNCTIONS,
+        "CS C4: plant, carry, drop and beep threads",
     ),
     // Final killcam only for the kill that wins the match, not every round's last kill, and
     // only while killcams are on (`scr_game_allowkillcam`, off in the CS fork for now).

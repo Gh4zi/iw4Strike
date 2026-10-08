@@ -873,6 +873,13 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                     crate::script_player::cs_buy_armor(world, *id, helmet);
                 }
             }
+            ClientAction::BuyDefuser { .. } => {
+                if let Some(refusal) = crate::cs_economy::buy_refusal(world, tick, *id) {
+                    diag::info!(Sim, "cs buy: client {} can't buy a defuse kit: {refusal}", id.0);
+                } else {
+                    crate::script_player::cs_buy_defuser(world, *id);
+                }
+            }
             ClientAction::BuyWeapon { request_id, weapon } => {
                 apply_buy_weapon(world, tick, *id, request_id, weapon);
             }

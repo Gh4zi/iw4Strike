@@ -75,6 +75,12 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
   own guns (AK-47, Galil, SG 552, MAC-10, G3/SG-1, Dual Elites for the Terrorists; M4A1, FAMAS,
   AUG, TMP, SG 550, Five-seveN for the Counter-Terrorists). A gun bought over one in the same
   slot drops the old one, so you can buy for a teammate
+- The CS C4: the Terrorist who picks up the bomb carries it on slot **5** (CS:S model in hand,
+  green C4 icon on the HUD). Hold left click with it in a bomb site to plant (3 s, you stand
+  still), **G** drops it for a teammate. It beeps like CS and blows up for 500 damage.
+  Counter-Terrorists hold **E** on it to defuse: 10 s, or 5 s with a defuse kit ($200 in the
+  equipment menu, `buy defuser`), with CS:S's progress bar
+- Guns are picked up by walking over them (E only defuses)
 - 3 s plant, 10 s defuse, 40 s bomb; the round ends 7 s after it is decided so you can still
   get away. Killcams are off for now
 - CS's radio voice ends each round ("Terrorists win!", "Counter-Terrorists win!", "Round
@@ -169,9 +175,9 @@ GitHub builds `iw4l.exe` for you with the
 | **Mouse 1** | Fire / knife slash |
 | **Mouse 2** | AWP zoom / knife stab |
 | **R** | Reload |
-| **E** | Use / swap for a gun on the ground |
+| **E** | Defuse the bomb (hold) |
 | **G** | Drop gun |
-| **1 / 2 / 3 / 4** | Primary / pistol / knife / grenades (press 4 again to cycle grenades) |
+| **1 / 2 / 3 / 4 / 5** | Primary / pistol / knife / grenades (press 4 again to cycle grenades) / C4 |
 | **Mouse wheel** | Next / previous weapon |
 | **B** | Buy menu (number keys or the mouse pick; **0** or **Esc** closes) |
 | **F1** / **F2** | Autobuy / rebuy |

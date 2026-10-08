@@ -654,6 +654,15 @@ const T_RIFLES: [&str; 6] = ["galil", "ak47", "scout", "sg552", "awp", "g3sg1"];
 const CT_RIFLES: [&str; 6] = ["famas", "scout", "m4a1", "aug", "sg550", "awp"];
 const MACHINE_GUNS: [&str; 1] = ["m249"];
 const EQUIPMENT: [&str; 5] = ["vest", "vesthelm", "flashbang", "hegrenade", "smokegrenade"];
+/// CS 1.6's Counter-Terrorist equipment menu adds the defusal kit on 6.
+const CT_EQUIPMENT: [&str; 6] = [
+    "vest",
+    "vesthelm",
+    "flashbang",
+    "hegrenade",
+    "smokegrenade",
+    "defuser",
+];
 
 fn classic_items(menu: &str, terrorist: bool) -> Option<&'static [&'static str]> {
     Some(match menu.to_ascii_lowercase().as_str() {
@@ -665,7 +674,8 @@ fn classic_items(menu: &str, terrorist: bool) -> Option<&'static [&'static str]>
         "ct_buyrifle" | "t_buyrifle" if terrorist => &T_RIFLES,
         "ct_buyrifle" | "t_buyrifle" => &CT_RIFLES,
         "buymachinegun" => &MACHINE_GUNS,
-        "ct_buyitem" | "t_buyitem" => &EQUIPMENT,
+        "ct_buyitem" | "t_buyitem" if terrorist => &EQUIPMENT,
+        "ct_buyitem" | "t_buyitem" => &CT_EQUIPMENT,
         _ => return None,
     })
 }
@@ -690,8 +700,8 @@ fn classic_action(menu: &str, key: u8, terrorist: bool, ffa: bool) -> Option<Act
     let items = classic_items(menu, terrorist)?;
     match items.get(usize::from(key) - 1) {
         Some(name) => Some(Action::Buy(name)),
-        // The equipment menu's night vision, defuse kit and shield.
-        None if items.len() == EQUIPMENT.len() && key <= 8 => Some(Action::Unavailable),
+        // The equipment menu's night vision and shield.
+        None if items.first() == Some(&"vest") && key <= 8 => Some(Action::Unavailable),
         None => None,
     }
 }
@@ -726,7 +736,7 @@ fn own_classic_menus() -> HashMap<String, Vec<String>> {
         ("CT_BuyRifle", "Buy Rifle", &CT_RIFLES),
         ("T_BuyRifle", "Buy Rifle", &T_RIFLES),
         ("BuyMachineGun", "Buy Machine Gun", &MACHINE_GUNS),
-        ("CT_BuyItem", "Buy Equipment", &EQUIPMENT),
+        ("CT_BuyItem", "Buy Equipment", &CT_EQUIPMENT),
         ("T_BuyItem", "Buy Equipment", &EQUIPMENT),
     ];
     for (name, title, items) in menus {
@@ -750,6 +760,7 @@ fn item_name(name: &str) -> &'static str {
     match name {
         "vest" => "Kevlar Vest",
         "vesthelm" => "Kevlar Vest & Helmet",
+        "defuser" => "Defusal Kit",
         other => cs::cs_weapon_by_name(other)
             .and_then(|_| {
                 cs::CS_WEAPONS
@@ -867,11 +878,16 @@ struct Buyer {
     helmet: bool,
     /// Owns a rifle, SMG, shotgun or machine gun.
     has_primary: bool,
+    defuser: bool,
 }
 
 impl Buyer {
     /// The player's side sells `name` (team guns are kept to their side in the bomb mode).
     fn side_allows(&self, name: &str) -> bool {
+        // The defuse kit only means something to a Counter-Terrorist in the bomb mode.
+        if name == "defuser" {
+            return self.economy && !self.terrorist;
+        }
         match cs::buy_team(name) {
             BuyTeam::Both => true,
             BuyTeam::Terrorists => self.terrorist || !self.economy,
@@ -964,6 +980,7 @@ pub(crate) fn update_cs_buymenu(
         economy,
         armor: ps.map_or(0, |ps| ps.cs_armor),
         helmet: ps.is_some_and(|ps| ps.cs_helmet != 0),
+        defuser: ps.is_some_and(|ps| ps.cs_defuser != 0),
         has_primary: ps.zip(weapons.as_deref()).is_some_and(|(ps, weapons)| {
             ps.weapons
                 .iter()
@@ -1377,6 +1394,10 @@ fn act(menu: &mut CsBuyMenu, action: Action, buyer: &Buyer, now: f32) {
                     "Cstrike_TitlesTXT_Already_Have_Kevlar_Helmet",
                     "You already have kevlar and a helmet!",
                 )),
+                "defuser" if buyer.defuser => Some(say(
+                    "Cstrike_TitlesTXT_Already_Have_One",
+                    "You already have one!",
+                )),
                 _ => None,
             })
             .or_else(|| {
@@ -1455,6 +1476,7 @@ struct Loadout {
     secondary: Option<&'static str>,
     armor: Option<&'static str>,
     grenades: Vec<&'static str>,
+    defuser: bool,
 }
 
 impl Loadout {
@@ -1467,6 +1489,8 @@ impl Loadout {
             }
         } else if name == "vesthelm" || (name == "vest" && self.armor.is_none()) {
             self.armor = Some(name);
+        } else if name == "defuser" {
+            self.defuser = true;
         } else if let Some(grenade) = cs::CS_GRENADES.iter().find(|g| g.name == name) {
             let held = self.grenades.iter().filter(|g| **g == name).count();
             if held < usize::try_from(grenade.carry).unwrap_or(1) {
@@ -1475,7 +1499,7 @@ impl Loadout {
         }
     }
 
-    /// In CS:S's `cl_rebuy` order: primary, pistol, armour, then the grenades.
+    /// In CS:S's `cl_rebuy` order: primary, pistol, armour, the grenades, then the defuse kit.
     fn items(&self) -> Vec<&'static str> {
         let mut out: Vec<&'static str> = [self.primary, self.secondary, self.armor]
             .into_iter()
@@ -1488,6 +1512,9 @@ impl Loadout {
             _ => 2,
         });
         out.extend(grenades);
+        if self.defuser {
+            out.push("defuser");
+        }
         out
     }
 }
@@ -1518,7 +1545,13 @@ fn classic_lines(name: &str, mut lines: Vec<String>, buyer: &Buyer) -> Vec<Strin
         else {
             continue;
         };
-        if classic_action(name, key, buyer.terrorist, buyer.ffa) == Some(Action::Unavailable) {
+        let action = classic_action(name, key, buyer.terrorist, buyer.ffa);
+        let unsold = match action {
+            Some(Action::Unavailable) => true,
+            Some(Action::Buy(item)) => !buyer.side_allows(item),
+            _ => false,
+        };
+        if unsold {
             // Menu colours carry on to the next line: hand white back after.
             *line = format!("\\d{body}\\w");
         }

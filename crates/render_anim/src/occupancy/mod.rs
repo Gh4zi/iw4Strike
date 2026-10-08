@@ -1,3 +1,4 @@
+pub mod cs_bomb;
 pub mod cs_scope;
 pub mod cs_viewmodel;
 pub mod cs_world_model;

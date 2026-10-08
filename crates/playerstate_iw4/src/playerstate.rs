@@ -177,6 +177,8 @@ pub struct PlayerState {
     /// CS kevlar points (0-100) and whether a helmet comes with them (`m_iKevlar`).
     pub cs_armor: u32,
     pub cs_helmet: u32,
+    /// CS defuse kit (`m_bHasDefuser`): a Counter-Terrorist with one defuses in half the time.
+    pub cs_defuser: u32,
     /// CS flashbang on this player: when it went off (server ms), how long it holds the screen
     /// white and then fades (ms), and how white (255 full) — `weapon_iw4::cs::CsFlash`.
     pub cs_flash_start_ms: i32,
@@ -475,6 +477,7 @@ impl PlayerState {
         cs_grenade: 0,
         cs_armor: 0,
         cs_helmet: 0,
+        cs_defuser: 0,
         cs_flash_start_ms: 0,
         cs_flash_hold_ms: 0,
         cs_flash_fade_ms: 0,

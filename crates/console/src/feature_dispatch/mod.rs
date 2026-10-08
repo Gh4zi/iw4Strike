@@ -36,10 +36,11 @@ pub(crate) fn route_debug_feature_commands(
         ResMut<ConsoleLine>,
     ),
     mut bot_add: ResMut<BotAddQueue>,
-    (mut bot_hold, mut bot_tp, mut bot_fire): (
+    (mut bot_hold, mut bot_tp, mut bot_fire, mut bot_test): (
         ResMut<BotHold>,
         ResMut<BotTpQueue>,
         ResMut<BotFireQueue>,
+        ResMut<bots::BotTestControls>,
     ),
     (weapons, mut inbox, mut give_seq, roster): (
         Option<Res<assets::PreparedWeapons>>,
@@ -65,7 +66,15 @@ pub(crate) fn route_debug_feature_commands(
         match cmd.name.as_str() {
             "bot" => match parse_bot_args(&cmd.args) {
                 Err(msg) => echo(msg, console, line),
-                Ok(BotVerb::Hold(_) | BotVerb::Tp(_) | BotVerb::Fire(_) | BotVerb::Give { .. })
+                Ok(
+                    BotVerb::Hold(_)
+                    | BotVerb::Tp(_)
+                    | BotVerb::Fire(_)
+                    | BotVerb::Attack(..)
+                    | BotVerb::Weapon(..)
+                    | BotVerb::Use(..)
+                    | BotVerb::Give { .. },
+                )
                     if authority.as_ref().is_some_and(|a| !a.0.cheats_enabled()) =>
                 {
                     echo("bot: cheats are off".into(), console, line);
@@ -93,6 +102,44 @@ pub(crate) fn route_debug_feature_commands(
                 Ok(BotVerb::Fire(target)) => {
                     bot_fire.push(target);
                     echo("bot: queued fire".into(), console, line);
+                }
+                Ok(BotVerb::Attack(target, on)) => {
+                    match target {
+                        BotTpTarget::All => {
+                            bot_test.attack_all = on;
+                            if !on {
+                                bot_test.attack.clear();
+                            }
+                        }
+                        BotTpTarget::Id(id) if on => {
+                            bot_test.attack.insert(id);
+                        }
+                        BotTpTarget::Id(id) => {
+                            bot_test.attack.remove(&id);
+                        }
+                    }
+                    echo(format!("bot: attack {target:?} {}", if on { "on" } else { "off" }), console, line);
+                }
+                Ok(BotVerb::Use(id, on)) => {
+                    if on {
+                        bot_test.use_held.insert(id);
+                    } else {
+                        bot_test.use_held.remove(&id);
+                    }
+                    echo(format!("bot: {} use {}", id.0, if on { "on" } else { "off" }), console, line);
+                }
+                Ok(BotVerb::Weapon(id, weapon)) => {
+                    match weapons
+                        .as_ref()
+                        .map(|w| crate::weapon_dispatch::resolve_give_id(&w.0, &weapon, &[]))
+                    {
+                        Some(Ok(weapon_id)) => {
+                            bot_test.weapon.insert(id, weapon_id as u16);
+                            echo(format!("bot: {} holds weapon {weapon_id}", id.0), console, line);
+                        }
+                        Some(Err(msg)) => echo(format!("bot weapon: {msg}"), console, line),
+                        None => echo("bot weapon: weapon catalog not loaded".into(), console, line),
+                    }
                 }
                 Ok(BotVerb::Give {
                     id,
@@ -317,7 +364,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
     }
 }
 
-pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
+pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | attack all|<id> [on|off] | use <id> [on|off] | weapon <id> <weapon> | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum BotVerb {
@@ -330,6 +377,12 @@ pub(crate) enum BotVerb {
         attachments: Vec<String>,
     },
     Fire(BotTpTarget),
+    /// Test control: keep attack held (or let go).
+    Attack(BotTpTarget, bool),
+    /// Test control: hold this weapon (by name).
+    Weapon(ClientId, String),
+    /// Test control: keep use (E) held, or let go.
+    Use(ClientId, bool),
     Tp(BotTpRequest),
 }
 
@@ -387,6 +440,42 @@ pub(crate) fn parse_bot_args(args: &[String]) -> Result<BotVerb, String> {
                 Ok(BotVerb::Fire(BotTpTarget::Id(ClientId(id))))
             }
         },
+        "attack" => {
+            let usage = || "usage: bot attack all|<id> [on|off]".to_owned();
+            let target = match args.get(1).map(String::as_str) {
+                None | Some("all") => BotTpTarget::All,
+                Some(s) => BotTpTarget::Id(ClientId(s.parse::<u32>().map_err(|_| usage())?)),
+            };
+            let on = match args.get(2).map(String::as_str) {
+                None | Some("on") | Some("1") => true,
+                Some("off") | Some("0") => false,
+                Some(_) => return Err(usage()),
+            };
+            Ok(BotVerb::Attack(target, on))
+        }
+        "use" => {
+            let usage = || "usage: bot use <id> [on|off]".to_owned();
+            let id = args
+                .get(1)
+                .ok_or_else(usage)?
+                .parse::<u32>()
+                .map_err(|_| usage())?;
+            let on = match args.get(2).map(String::as_str) {
+                None | Some("on") | Some("1") => true,
+                Some("off") | Some("0") => false,
+                Some(_) => return Err(usage()),
+            };
+            Ok(BotVerb::Use(ClientId(id), on))
+        }
+        "weapon" => {
+            let usage = || "usage: bot weapon <id> <weapon>".to_owned();
+            let id = args
+                .get(1)
+                .ok_or_else(usage)?
+                .parse::<u32>()
+                .map_err(|_| usage())?;
+            Ok(BotVerb::Weapon(ClientId(id), args.get(2).cloned().ok_or_else(usage)?))
+        }
         "tp" => parse_bot_tp(&args[1..]),
         _ => Err(BOT_USAGE.into()),
     }

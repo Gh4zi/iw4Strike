@@ -300,6 +300,15 @@ pub fn apply_prepared_match(
         let mut sim_cam = *sim_cam;
         let mut input_gate = *input_gate;
         let mut content = sim::SimContentBuilder::default();
+        // CS sounds come from each client's own CS install, not the zones.
+        let script_sound_aliases = script_sound_aliases.map(|mut names| {
+            if movement_iw4::rules::CS_RULES {
+                for name in asset_audio::CS_SCRIPT_SOUNDS {
+                    names.entry(name.to_owned()).or_insert(Some(false));
+                }
+            }
+            names
+        });
         content.set_script_sound_aliases(script_sound_aliases);
         let mut sim = sim::SimWorld::new();
         if role.runs_authority()

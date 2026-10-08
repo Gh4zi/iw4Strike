@@ -61,6 +61,87 @@ fn add_ladder_steps(catalog: &mut SoundCatalog, waves: &[(u32, i32, Vec<u8>)]) -
     added
 }
 
+/// The bomb's sounds under install-free names (`cs_c4_plant`, `cs_c4_disarm`, `cs_c4_disarmed`,
+/// `cs_c4_explode`, `cs_c4_click`, `cs_c4_beep1`; CS 1.6 also `cs_c4_beep2..5`), each mixed like
+/// the MW2 bomb sound it stands in for. CS:S has one beep that speeds up; CS 1.6 steps through
+/// five.
+pub const CS_C4_PREFIX: &str = "cs_c4_";
+
+/// The CS sounds the bomb mode's script plays by name. The server checks every script sound
+/// against the zones' aliases; these come from the local CS install on each client instead, so
+/// they are added to that list.
+pub const CS_SCRIPT_SOUNDS: [&str; 15] = [
+    "cs_c4_plant",
+    "cs_c4_disarm",
+    "cs_c4_disarmed",
+    "cs_c4_explode",
+    "cs_c4_click",
+    "cs_c4_beep1",
+    "cs_c4_beep2",
+    "cs_c4_beep3",
+    "cs_c4_beep4",
+    "cs_c4_beep5",
+    "cs_event_terwin",
+    "cs_event_ctwin",
+    "cs_event_rounddraw",
+    "cs_event_bombplanted",
+    "cs_event_bombdefused",
+];
+
+/// CS 1.6 `sound/weapons` waves behind each bomb sound.
+const CS16_C4: [(&str, &str); 10] = [
+    ("plant", "c4_plant"),
+    ("disarm", "c4_disarm"),
+    ("disarmed", "c4_disarmed"),
+    ("explode", "c4_explode1"),
+    ("click", "c4_click"),
+    ("beep1", "c4_beep1"),
+    ("beep2", "c4_beep2"),
+    ("beep3", "c4_beep3"),
+    ("beep4", "c4_beep4"),
+    ("beep5", "c4_beep5"),
+];
+
+/// CS:S sound script entries behind each bomb sound.
+const CSS_C4: [(&str, &str); 6] = [
+    ("plant", "c4.plant"),
+    ("disarm", "c4.disarmstart"),
+    ("disarmed", "c4.disarmfinish"),
+    ("explode", "c4.explode"),
+    ("click", "c4.click"),
+    ("beep1", "c4.plantsound"),
+];
+
+/// Register one bomb sound (`event` of [`CS_C4_PREFIX`]) with its waves, mixed like MW2's
+/// bomb sound for the same moment.
+fn add_c4_sound(catalog: &mut SoundCatalog, event: &str, waves: &[(u32, i32, Vec<u8>)]) -> bool {
+    let preferred: &[&str] = match event {
+        "plant" => &["mp_bomb_plant"],
+        "disarm" | "disarmed" => &["mp_bomb_defuse"],
+        "explode" => &["exp_suitcase_bomb_main"],
+        _ => &["ui_mp_suitcasebomb_timer"],
+    };
+    let Some(template) = preferred
+        .iter()
+        .chain(WORLD_TEMPLATES)
+        .find(|name| catalog.has_alias(crate::AssetNamespace::Iw4, name))
+    else {
+        return false;
+    };
+    let name = format!("{CS_C4_PREFIX}{event}");
+    let clips = waves
+        .iter()
+        .enumerate()
+        .map(|(i, (rate, channels, pcm))| LooseClip {
+            name: format!("{name}#{i}"),
+            rate: *rate,
+            channels: *channels,
+            pcm16: pcm.clone(),
+        })
+        .collect();
+    catalog.add_loose_alias(&name, template, clips)
+}
+
 /// The CS 1.6 radio wave behind each announcement.
 const CS16_EVENTS: [(&str, &str); 5] = [
     ("ctwin", "ctwin"),
@@ -201,6 +282,13 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             }
         }
     }
+    // The bomb's sounds.
+    for (event, wave) in CS16_C4 {
+        let path = dir.join(format!("{wave}.wav"));
+        if let Some(decoded) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b)) {
+            add_c4_sound(catalog, event, &[decoded]);
+        }
+    }
     // Ladder steps: CS 1.6's own, else Half-Life's (the same waves).
     let ladder: Vec<_> = (1..=4)
         .filter_map(|i| {
@@ -224,9 +312,10 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
 /// pack as aliases `css/<entry>` and `css/<entry>/plr`, each with the entry's random waves as
 /// variants. Returns how many entries were added; 0 when CS:S is not installed.
 /// The CS:S sound script entries (lowercase name prefixes) loaded into the bank: guns and their
-/// zoom/dry-fire, radio calls, grenades, and the player's fall and armour hits.
-const CSS_SOUND_GROUPS: [&str; 12] = [
+/// zoom/dry-fire, radio calls, grenades, the C4's keypad, and the player's fall and armour hits.
+const CSS_SOUND_GROUPS: [&str; 13] = [
     "weapon_",
+    "c4.",
     "default.",
     "radio.",
     "flashbang.",
@@ -323,6 +412,16 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         if let Some((event, clips)) = event {
             catalog.add_loose_alias(&event, &player, clips);
         }
+    }
+    // The bomb's sounds.
+    for (event, entry) in CSS_C4 {
+        let waves: Vec<_> = scripts
+            .waves(entry)
+            .iter()
+            .filter_map(|wave| vpk.read(&format!("sound/{wave}")))
+            .filter_map(|bytes| decode_wav(&bytes))
+            .collect();
+        add_c4_sound(catalog, event, &waves);
     }
     // Ladder steps: Half-Life 2's, in CS:S's own pack or the `hl2` sound pack beside it.
     let hl2 = pak

@@ -51,6 +51,11 @@ pub enum ClientAction {
         helmet: bool,
     },
 
+    /// Counter-Strike `buy defuser`: a defuse kit (Counter-Terrorists, bomb mode).
+    BuyDefuser {
+        request_id: ActionRequestId,
+    },
+
     /// Counter-Strike `buy <gun or grenade>`: paid for out of the player's money.
     BuyWeapon {
         request_id: ActionRequestId,
@@ -197,6 +202,7 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::ForceDeath { request_id }
         | ClientAction::DropWeapon { request_id }
         | ClientAction::BuyArmor { request_id, .. }
+        | ClientAction::BuyDefuser { request_id }
         | ClientAction::BuyWeapon { request_id, .. }
         | ClientAction::SpawnClient { request_id }
         | ClientAction::ForceSpawn { request_id, .. }

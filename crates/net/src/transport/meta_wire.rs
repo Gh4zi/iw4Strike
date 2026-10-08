@@ -530,6 +530,10 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u32(request_id);
             out.put_u8(u8::from(helmet));
         }
+        ClientAction::BuyDefuser { request_id } => {
+            out.put_u8(26);
+            out.put_u32(request_id);
+        }
         ClientAction::BuyWeapon { request_id, weapon } => {
             out.put_u8(25);
             out.put_u32(request_id);
@@ -648,6 +652,9 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
         24 => Ok(ClientAction::BuyArmor {
             request_id: input.get_u32()?,
             helmet: input.get_u8()? != 0,
+        }),
+        26 => Ok(ClientAction::BuyDefuser {
+            request_id: input.get_u32()?,
         }),
         25 => Ok(ClientAction::BuyWeapon {
             request_id: input.get_u32()?,

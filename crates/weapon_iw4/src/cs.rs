@@ -1608,6 +1608,46 @@ pub fn is_grenade(index: u8) -> bool {
     cs_grenade(index).is_some()
 }
 
+/// The CS 1.6 C4 (`CC4`) on slot 5, worn by MW2's own bomb weapon. Only the bomb carrier has
+/// it; held, attack in a bomb site plants it ([`CS_C4_ARMING_SECONDS`], frozen in place). The
+/// bomb mode's script does the rest (the site, the timer, the explosion).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CsC4 {
+    pub name: &'static str,
+    pub mw2_name: &'static str,
+    pub view_model: &'static str,
+    pub css_view_model: &'static str,
+    pub max_speed: f32,
+}
+
+pub const CS_C4: CsC4 = CsC4 {
+    name: "c4",
+    mw2_name: "briefcase_bomb_mp",
+    view_model: "v_c4",
+    css_view_model: "v_c4",
+    max_speed: 250.0,
+};
+
+/// `C4_ARMING_ON_TIME`: holding attack this long in a site plants the bomb.
+pub const CS_C4_ARMING_SECONDS: f32 = 3.0;
+/// Defusing takes this long, or [`CS_DEFUSE_KIT_SECONDS`] with a defuse kit.
+pub const CS_DEFUSE_SECONDS: f32 = 10.0;
+pub const CS_DEFUSE_KIT_SECONDS: f32 = 5.0;
+/// `DEFUSEKIT_PRICE`; Counter-Terrorists only.
+pub const CS_DEFUSE_KIT_PRICE: i32 = 200;
+/// The planted bomb's blast (`m_flBombRadius` 500 by default): 500 damage falling off linearly
+/// to nothing at 3.5 times that.
+pub const CS_C4_DAMAGE: f32 = 500.0;
+pub const CS_C4_RADIUS: f32 = 1750.0;
+
+/// `WeaponCombatFacts::cs_weapon` of the C4: past the grenades.
+pub const CS_C4_INDEX: u8 = CS_GRENADE_INDEX + CS_GRENADES.len() as u8;
+
+#[must_use]
+pub fn is_c4(index: u8) -> bool {
+    index == CS_C4_INDEX
+}
+
 /// HE grenade blast (`pev->dmg` 100, radius `dmg * 3.5`), falling off linearly to the edge.
 pub const CS_HE_DAMAGE: i32 = 100;
 pub const CS_HE_RADIUS: i32 = 350;
@@ -1740,6 +1780,9 @@ pub fn slot_of(facts: &WeaponCombatFacts) -> u8 {
     if is_grenade(facts.cs_weapon) {
         return 4;
     }
+    if is_c4(facts.cs_weapon) {
+        return 5;
+    }
     if let Some(weapon) = cs_weapon(facts.cs_weapon) {
         return weapon.slot();
     }
@@ -1767,6 +1810,9 @@ pub fn cs_weapon_index_for(script_name: &str) -> Option<u8> {
     let name = script_name.rsplit(['/', ':']).next().unwrap_or(script_name);
     if CS_KNIFE.mw2_name.eq_ignore_ascii_case(name) {
         return Some(CS_KNIFE_INDEX);
+    }
+    if CS_C4.mw2_name.eq_ignore_ascii_case(name) {
+        return Some(CS_C4_INDEX);
     }
     if let Some(i) = CS_GRENADES
         .iter()
@@ -1899,17 +1945,19 @@ pub enum BuyTeam {
 pub fn buy_team(name: &str) -> BuyTeam {
     match name {
         "ak47" | "galil" | "sg552" | "mac10" | "g3sg1" | "elite" => BuyTeam::Terrorists,
-        "m4a1" | "famas" | "aug" | "tmp" | "sg550" | "fiveseven" => BuyTeam::CounterTerrorists,
+        "m4a1" | "famas" | "aug" | "tmp" | "sg550" | "fiveseven" | "defuser" => {
+            BuyTeam::CounterTerrorists
+        }
         _ => BuyTeam::Both,
     }
 }
 
 /// The buy name behind a CS buy command or alias: CS:S's `buy <name>` names, CS 1.6's aliases
 /// (`fn57`, `elites`, `mp5`, `hegren`, `sgren`, `flash`, ...). `None` for what isn't sold here
-/// (night vision, the shield, the defuse kit, ammo).
+/// (night vision, the shield, ammo).
 #[must_use]
 pub fn buy_alias(command: &str) -> Option<&'static str> {
-    const ALIASES: [(&str, &str); 13] = [
+    const ALIASES: [(&str, &str); 14] = [
         ("elites", "elite"),
         ("fn57", "fiveseven"),
         ("mp5navy", "mp5"),
@@ -1923,6 +1971,7 @@ pub fn buy_alias(command: &str) -> Option<&'static str> {
         ("sgren", "smokegrenade"),
         ("vest", "vest"),
         ("vesthelm", "vesthelm"),
+        ("defuser", "defuser"),
     ];
     let command = command.trim();
     let name = command
@@ -1945,6 +1994,7 @@ pub fn buy_price(name: &str) -> Option<i32> {
     match name {
         "vest" => Some(CS_KEVLAR_PRICE),
         "vesthelm" => Some(CS_KEVLAR_HELMET_PRICE),
+        "defuser" => Some(CS_DEFUSE_KIT_PRICE),
         other => cs_buyable(other).map(|(_, _, price)| price),
     }
 }
@@ -1960,8 +2010,17 @@ pub fn cs_weapon_by_name(name: &str) -> Option<&'static CsWeapon> {
 /// Rewrite an MW2 weapon's combat facts to play as `index`'s CS weapon. Returns the run-speed
 /// scales (hip, zoomed) relative to [`CS_BASE_SPEED`].
 pub fn apply_overrides(facts: &mut WeaponCombatFacts, index: u8) -> Option<(f32, f32)> {
-    if is_knife(index) || cs_grenade(index).is_some() || cs_weapon(index).is_some() {
+    if is_knife(index) || is_c4(index) || cs_grenade(index).is_some() || cs_weapon(index).is_some()
+    {
         apply_deploy(facts, deploy_seconds(index));
+    }
+    if is_c4(index) {
+        // Carried at the knife's run speed; it never fires (attack plants it).
+        facts.cs_weapon = index;
+        facts.can_hold_breath = false;
+        facts.aim_down_sight = false;
+        let scale = CS_C4.max_speed / CS_BASE_SPEED;
+        return Some((scale, scale));
     }
     if is_knife(index) {
         facts.cs_weapon = index;

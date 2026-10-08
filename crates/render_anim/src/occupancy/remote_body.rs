@@ -78,8 +78,10 @@ pub fn register_remote_body_systems(app: &mut App) {
         .init_resource::<crate::occupancy::cs_world_model::CsWorldModels>()
         .add_systems(
             Update,
-            crate::occupancy::cs_world_model::update_cs_world_models
-                .after(pose_remote_bodies)
+            (
+                crate::occupancy::cs_world_model::update_cs_world_models.after(pose_remote_bodies),
+                crate::occupancy::cs_bomb::beep_cs_bomb.after(PresentedPublished),
+            )
                 .in_set(ClientSet::Present),
         )
         .add_systems(Update, prepare_remote_kits.in_set(ClientSet::Load))

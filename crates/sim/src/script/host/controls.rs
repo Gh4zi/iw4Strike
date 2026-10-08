@@ -470,6 +470,27 @@ pub(crate) fn player_commands(world: &mut World, client: u32, cmd_buttons: u32, 
     });
 }
 
+/// Counter-Strike: raises `notify` on a player's script object (the bomb mode hears
+/// `cs_drop_bomb` when the carrier drops the C4). Authority only, like the command notifies.
+pub(crate) fn notify_player(world: &mut World, client: u32, notify: &str) {
+    if !world
+        .resource::<crate::step::StepRequest>()
+        .reason
+        .advances_authority_world()
+    {
+        return;
+    }
+    let Some(receiver) = world
+        .resource::<Runtime>()
+        .players
+        .get(&client)
+        .map(|slot| Value::Object(slot.object))
+    else {
+        return;
+    };
+    crate::script::runtime::raise(world, receiver, &Arc::from(notify), Vec::new());
+}
+
 pub(crate) fn action_slot_command(world: &mut World, client: u32, slot: u8) {
     let command = format!("+actionslot {}", u32::from(slot) + 1);
     raise_commands(world, client, |bound| bound == command);

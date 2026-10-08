@@ -1129,6 +1129,14 @@ fn register_body(registry: &mut NativeRegistry) {
                 .into(),
         ))
     });
+    // Counter-Strike fork: the bomb mode defuses twice as fast with a kit.
+    registry.register(Method, "cshasdefusekit", |world, receiver, _| {
+        let id = client_of(world, receiver)?;
+        let frame = FrameWorld::from_world(world);
+        Ok(Value::Int(
+            frame.player(id).is_some_and(|ps| ps.cs_defuser != 0).into(),
+        ))
+    });
     registry.register(Method, "isonladder", |world, receiver, _| {
         let id = client_of(world, receiver)?;
         let frame = FrameWorld::from_world(world);

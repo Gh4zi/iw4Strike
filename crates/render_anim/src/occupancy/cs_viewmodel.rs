@@ -134,6 +134,8 @@ struct Roles {
     /// A grenade's pin pull and throw.
     pullpin: Option<usize>,
     throw: Option<usize>,
+    /// The C4's keypad (`pressbutton`), played while planting.
+    arm: Option<usize>,
     stab: Option<usize>,
     stab_miss: Option<usize>,
 }
@@ -174,6 +176,8 @@ struct ViewWeapon {
     reload: f32,
     knife: bool,
     grenade: bool,
+    /// The bomb carrier's C4.
+    c4: bool,
     /// The CS:S model is modelled right-handed already (not mirrored).
     css_right_handed: bool,
     /// `PlayerState::cs_silencers` bit of a gun with a silencer; 0 for every other weapon.
@@ -201,6 +205,7 @@ impl ViewWeapon {
             reload: 0.0,
             knife: false,
             grenade: false,
+            c4: false,
             css_right_handed: false,
             silencer_bit: 0,
             silencer_adjust: 0.0,
@@ -232,6 +237,16 @@ impl ViewWeapon {
         Self {
             grenade: true,
             ..Self::plain(grenade.name, grenade.view_model, grenade.css_view_model)
+        }
+    }
+
+    fn c4() -> Self {
+        let c4 = &weapon_iw4::cs::CS_C4;
+        Self {
+            c4: true,
+            // CS:S models the C4 right-handed (its keypad reads the right way round).
+            css_right_handed: true,
+            ..Self::plain(c4.name, c4.view_model, c4.css_view_model)
         }
     }
 
@@ -270,6 +285,8 @@ struct Playing {
     silenced: bool,
     /// `PlayerState::cs_grenade` last frame.
     grenade_state: u32,
+    /// The C4 was being planted last frame.
+    arming: bool,
     /// When the last shot's muzzle flash started, and its random spin.
     flash: Option<(f64, u32)>,
     /// The clip last frame (a shotgun reload plays a shell going in as it grows).
@@ -410,6 +427,7 @@ fn goldsrc_model(
     let (slashes, stab, stab_miss) = knife_roles(&labels);
     let label = |name: &str| labels.iter().position(|l| l.eq_ignore_ascii_case(name));
     let (pullpin, throw) = (label("pullpin"), label("throw"));
+    let arm = label("pressbutton");
     // With the `_unsil` set as the plain gun, the unmarked labels are the silenced one.
     let silenced = unsilenced.then(|| Silenced {
         idle: label("idle"),
@@ -437,6 +455,7 @@ fn goldsrc_model(
         stab_miss,
         pullpin,
         throw,
+        arm,
         silenced,
         idle: pick("idle"),
         draw: pick("draw").or_else(|| pick("deploy")),
@@ -555,6 +574,7 @@ fn source_model(
     let (slashes, stab, stab_miss) = knife_roles(&labels);
     let label = |name: &str| labels.iter().position(|l| l.eq_ignore_ascii_case(name));
     let (pullpin, throw) = (label("pullpin"), label("throw"));
+    let arm = label("pressbutton");
     // The silenced set has its own activities; only the M4A1 and USP carry it.
     let attach = studio.sequence_for_activity("ACT_VM_ATTACH_SILENCER");
     let silenced = attach.map(|attach| Silenced {
@@ -573,6 +593,7 @@ fn source_model(
         stab_miss,
         pullpin,
         throw,
+        arm,
         silenced,
         idle: studio.sequence_for_activity("ACT_VM_IDLE"),
         draw: studio.sequence_for_activity("ACT_VM_DRAW"),
@@ -718,6 +739,9 @@ fn held_cs_weapon(ps: &PlayerState, weapons: &PreparedWeapons) -> Option<(u32, V
     }
     if weapon_iw4::cs::is_knife(index) {
         return Some((viewmodel, ViewWeapon::knife()));
+    }
+    if weapon_iw4::cs::is_c4(index) {
+        return Some((viewmodel, ViewWeapon::c4()));
     }
     Some((
         viewmodel,
@@ -977,6 +1001,20 @@ pub fn update_cs_viewmodel(
     };
     let playing = match state.playing.as_mut() {
         Some(playing) if playing.weapon == weapon_index => {
+            // Planting holds the player in place (the site links them to it): the C4's keypad
+            // plays over the 3 s it takes, and stops if they let go.
+            let arming = weapon.c4 && ps.pm_type == playerstate_iw4::PM_TYPE_NORMAL_LINKED;
+            if arming && !playing.arming {
+                let rate = roles
+                    .arm
+                    .map(|i| model.sequences[i].duration / weapon_iw4::cs::CS_C4_ARMING_SECONDS)
+                    .filter(|rate| *rate > 0.0)
+                    .unwrap_or(1.0);
+                start(playing, roles.arm.or(idle), rate);
+            } else if !arming && playing.arming {
+                start(playing, idle, 1.0);
+            }
+            playing.arming = arming;
             if weapon.grenade {
                 use playerstate_iw4::cs_grenade::{IDLE, PULLED, THROWN};
                 let sequence = match (playing.grenade_state, ps.cs_grenade) {
@@ -1109,6 +1147,7 @@ pub fn update_cs_viewmodel(
                 reloading,
                 silenced,
                 grenade_state: ps.cs_grenade,
+                arming: false,
                 flash: None,
                 clip,
             }
@@ -1120,7 +1159,8 @@ pub fn update_cs_viewmodel(
         .map(|(started, seed)| (((now - started) / FLASH_SECONDS) as f32, seed));
     // A finished one-shot sequence settles into idle; a grenade holds its pulled pin or empty
     // hand until the next step.
-    let holding = weapon.grenade && ps.cs_grenade != playerstate_iw4::cs_grenade::IDLE;
+    let holding = (weapon.grenade && ps.cs_grenade != playerstate_iw4::cs_grenade::IDLE)
+        || (weapon.c4 && playing.arming);
     if let Some(sequence) = playing.sequence
         && Some(sequence) != idle
         && !holding

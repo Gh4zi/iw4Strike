@@ -197,6 +197,7 @@ fn send_buy(
             request_id,
             helmet: name == "vesthelm",
         },
+        "defuser" => ClientAction::BuyDefuser { request_id },
         _ => {
             let Some(weapons) = weapons else {
                 return "buy: weapon catalog not loaded".into();

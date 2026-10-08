@@ -41,6 +41,8 @@ fn world_model_name(weapons: &asset_game::WeaponRegistry, weapon: u32) -> Option
         grenade.css_view_model
     } else if cs::is_knife(index) {
         cs::CS_KNIFE.css_view_model
+    } else if cs::is_c4(index) {
+        cs::CS_C4.css_view_model
     } else {
         cs::cs_weapon(index)?.css_view_model
     };
@@ -55,6 +57,22 @@ fn css_pack() -> Option<&'static mdl_source::Vpk> {
         mdl_source::Vpk::open(&pak).ok()
     })
     .as_ref()
+}
+
+/// Whether CS:S is installed (its models and sounds are the ones used).
+pub(crate) fn css_installed() -> bool {
+    css_pack().is_some()
+}
+
+/// MW2's bomb lying in the world (the bomb mode's carried-then-dropped or planted bomb).
+const MW2_BOMB_MODEL: &str = "prop_suitcase_bomb";
+
+/// Whether a script model of `model` is the bomb, drawn as CS:S's C4 instead (`w_c4` lying
+/// dropped, `w_c4_planted` once planted).
+pub(crate) fn replaces_bomb_model(model: &str) -> bool {
+    movement_iw4::rules::CS_RULES
+        && model.eq_ignore_ascii_case(MW2_BOMB_MODEL)
+        && css_pack().is_some_and(|pack| pack.contains("models/weapons/w_c4_planted.mdl"))
 }
 
 /// Whether `weapon` is drawn as a CS:S world model in third person (so its MW2 twin hides).
@@ -122,10 +140,11 @@ fn image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
 }
 
 /// Loads `models/weapons/<name>.mdl` with its rest pose baked into MW2's weapon tag frame, and
-/// where its muzzle ends up.
+/// where its muzzle ends up; or, `on_floor`, in its own frame standing on the floor (the bomb).
 fn load_world_model(
     pack: &mdl_source::Vpk,
     name: &str,
+    on_floor: bool,
     images: &mut Assets<Image>,
 ) -> Result<(CsViewmodelModel, Option<Vec3>), String> {
     let loaded = mdl_source::load_model(pack, &format!("models/weapons/{name}.mdl"))?;
@@ -140,15 +159,19 @@ fn load_world_model(
             .position(|b| b.name.eq_ignore_ascii_case(bone))
     };
     // Guns hang off their weapon bone; the knife and grenades off the right hand.
-    let (anchor, carry) = match find("ValveBiped.weapon_bone") {
-        Some(bone) => (bone, Affine3A::IDENTITY),
-        None => (
-            find("ValveBiped.Bip01_R_Hand").ok_or("no weapon bone or right hand")?,
-            hand_to_weapon_bone(pack).ok_or("no CS:S player model for the hand")?,
-        ),
+    let to_tag = if on_floor {
+        Affine3A::IDENTITY
+    } else {
+        let (anchor, carry) = match find("ValveBiped.weapon_bone") {
+            Some(bone) => (bone, Affine3A::IDENTITY),
+            None => (
+                find("ValveBiped.Bip01_R_Hand").ok_or("no weapon bone or right hand")?,
+                hand_to_weapon_bone(pack).ok_or("no CS:S player model for the hand")?,
+            ),
+        };
+        let anchor_frame = skin[anchor] * affine(&studio.bones[anchor].pose_to_bone).inverse();
+        weapon_bone_to_tag() * carry * anchor_frame.inverse()
     };
-    let anchor_frame = skin[anchor] * affine(&studio.bones[anchor].pose_to_bone).inverse();
-    let to_tag = weapon_bone_to_tag() * carry * anchor_frame.inverse();
     let to_tag_dir = to_tag.matrix3;
     let muzzle = studio
         .attachments
@@ -160,7 +183,7 @@ fn load_world_model(
         Some(Vec3::from(to_tag.transform_point3a(at.translation)))
     });
 
-    let vertices: Vec<CsViewmodelVertex> = studio
+    let mut vertices: Vec<CsViewmodelVertex> = studio
         .vertices
         .iter()
         .map(|v| {
@@ -183,6 +206,15 @@ fn load_world_model(
             }
         })
         .collect();
+    if on_floor {
+        let floor = vertices
+            .iter()
+            .map(|v| v.position[2])
+            .fold(f32::INFINITY, f32::min);
+        for v in &mut vertices {
+            v.position[2] -= floor;
+        }
+    }
     let textures: Vec<Option<Handle<Image>>> = loaded
         .materials
         .iter()
@@ -282,11 +314,16 @@ fn tag_from_model(model: &WorldModel, mw2_muzzle: Option<Mat4>) -> Mat4 {
 }
 
 impl CsWorldModels {
-    fn get(&mut self, name: &str, images: &mut Assets<Image>) -> Option<WorldModel> {
-        if let Some(model) = self.models.get(name) {
+    fn get(&mut self, name: &str, on_floor: bool, images: &mut Assets<Image>) -> Option<WorldModel> {
+        let key = if on_floor {
+            format!("{name} (floor)")
+        } else {
+            name.to_owned()
+        };
+        if let Some(model) = self.models.get(&key) {
             return model.clone();
         }
-        let model = css_pack().and_then(|pack| match load_world_model(pack, name, images) {
+        let model = css_pack().and_then(|pack| match load_world_model(pack, name, on_floor, images) {
             Ok((model, muzzle)) => {
                 diag::info!(
                     World,
@@ -306,21 +343,48 @@ impl CsWorldModels {
                 None
             }
         });
-        self.models.insert(name.to_owned(), model.clone());
+        self.models.insert(key, model.clone());
         model
     }
 }
 
-/// Places a CS:S world model in every posed hand holding a CS weapon. The light comes later
-/// (`render_frontend`'s CS lighting reads the map's light grid at each one).
+/// Places a CS:S world model in every posed hand holding a CS weapon, and the CS:S C4 where the
+/// bomb lies. The light comes later (`render_frontend`'s CS lighting reads the map's light grid
+/// at each one).
 pub fn update_cs_world_models(
     tags: Res<CsHeldWeaponTags>,
     weapons: Option<Res<PreparedWeapons>>,
+    presented: Res<net::PresentedSnapshot>,
+    bombs: Query<(
+        &render_scene::WorldScriptModelInstance,
+        &Transform,
+        &Visibility,
+    )>,
     mut models: ResMut<CsWorldModels>,
     mut images: ResMut<Assets<Image>>,
     mut frame: ResMut<CsWorldModelsFrame>,
 ) {
     frame.instances.clear();
+    let planted = presented
+        .snapshot()
+        .and_then(super::cs_bomb::bomb_state)
+        .is_some_and(|state| state == "planted");
+    for (owner, transform, visibility) in &bombs {
+        if *visibility == Visibility::Hidden || !replaces_bomb_model(&owner.current_model.0) {
+            continue;
+        }
+        let name = if planted { "w_c4_planted" } else { "w_c4" };
+        let Some(model) = models.get(name, true, &mut images) else {
+            continue;
+        };
+        frame.instances.push(CsWorldModelInstance {
+            model: model.gpu,
+            world_from_model: transform.to_matrix().to_cols_array_2d(),
+            ambient: [0.6; 3],
+            sun_dir: [0.0; 3],
+            sun: [0.0; 3],
+        });
+    }
     let Some(weapons) = weapons else {
         return;
     };
@@ -328,7 +392,7 @@ pub fn update_cs_world_models(
         let Some(name) = world_model_name(&weapons.0, tag.weapon) else {
             continue;
         };
-        let Some(model) = models.get(&name, &mut images) else {
+        let Some(model) = models.get(&name, false, &mut images) else {
             continue;
         };
         let tag_from_model = *models

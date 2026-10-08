@@ -75,6 +75,17 @@ impl BotTpQueue {
     }
 }
 
+/// Test controls (`bot attack`, `bot weapon`): bots that keep attack held, and the weapon a bot
+/// is told to hold, by weapon id.
+#[derive(Resource, Debug, Default)]
+pub struct BotTestControls {
+    pub attack_all: bool,
+    pub attack: std::collections::BTreeSet<ClientId>,
+    /// Bots that keep use (E) held.
+    pub use_held: std::collections::BTreeSet<ClientId>,
+    pub weapon: std::collections::BTreeMap<ClientId, u16>,
+}
+
 #[derive(Resource, Debug, Default)]
 pub struct BotFireQueue(pub Vec<BotTpTarget>);
 

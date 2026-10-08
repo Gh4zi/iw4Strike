@@ -159,6 +159,7 @@ pub(crate) struct CsCarry {
     pub held: u32,
     pub armor: u32,
     pub helmet: u32,
+    pub defuser: u32,
     pub silencers: u32,
     pub burst_modes: u32,
 }

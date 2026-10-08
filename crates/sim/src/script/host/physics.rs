@@ -24,15 +24,16 @@ fn usable<'a>(
 ) -> Result<&'a mut super::entities::Usable, String> {
     let object = object_of(world, receiver)?;
     let runtime = world.resource_mut::<Runtime>().into_inner();
-    Ok(runtime
-        .entities
-        .get_mut(&object)
-        .unwrap()
+    let entity = runtime.entities.get_mut(&object).unwrap();
+    // A use trigger is usable from the start (a hint string or cursor only labels it); a
+    // script model needs `makeUsable`.
+    let trigger = matches!(&*entity.classname, "trigger_use" | "trigger_use_touch");
+    Ok(entity
         .usable
         .get_or_insert_with(|| super::entities::Usable {
             cursor: 1,
             hint: -1,
-            enabled: false,
+            enabled: trigger,
             barred: Default::default(),
         }))
 }

@@ -477,6 +477,10 @@ fn occupy_script_model_scene_ents(
         if *visibility == Visibility::Hidden {
             continue;
         }
+        // The bomb is drawn as the CS:S C4 (`cs_world_model`).
+        if crate::occupancy::cs_world_model::replaces_bomb_model(&owner.current_model.0) {
+            continue;
+        }
         let Some(skels) = presented_skel_arcs(&assets, &owner.dobj_state) else {
             continue;
         };
@@ -585,7 +589,9 @@ fn pose_script_models(
         .map(|(xf, _, _)| xf.translation().to_array());
     let skinned_ramp = lod_skinned.args();
     for (entity, owner, transform, visibility) in &owners {
-        if is_weapon_camera_vehicle(owner, &presented, local.0) {
+        if is_weapon_camera_vehicle(owner, &presented, local.0)
+            || crate::occupancy::cs_world_model::replaces_bomb_model(&owner.current_model.0)
+        {
             continue;
         }
         let owner_id = owner

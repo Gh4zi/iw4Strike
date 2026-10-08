@@ -321,6 +321,8 @@ pub(super) const IW4: &[Builtin] = &[
     Builtin::new(Method, "controlslinkto", Entity, false),
     Builtin::new(Method, "controlsunlink", Entity, false),
     Builtin::new(Method, "createlootmail", Entity, false),
+    // Counter-Strike fork: whether a player carries a defuse kit.
+    Builtin::new(Method, "cshasdefusekit", Player, false),
     Builtin::new(Method, "damageconetrace", Entity, false),
     Builtin::new(Method, "deactivatechannelvolumes", Player, false),
     Builtin::new(Method, "deactivatereverb", Player, false),

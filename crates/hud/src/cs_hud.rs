@@ -80,14 +80,17 @@ pub(crate) enum Panel {
     Timer,
     Ammo,
     Money,
+    /// `HudC4` / `HudDefuser`: the bomb carrier's C4, or a Counter-Terrorist's defuse kit.
+    Bomb,
 }
 
-const PANELS: [Panel; 5] = [
+const PANELS: [Panel; 6] = [
     Panel::Health,
     Panel::Armor,
     Panel::Timer,
     Panel::Ammo,
     Panel::Money,
+    Panel::Bomb,
 ];
 
 /// `HudAccount` `digit_xpos`: the money is right-aligned on this edge.
@@ -103,6 +106,7 @@ impl Panel {
             Self::Timer => [w * 0.5 - 28.0, 446.0, 98.0, 25.0],
             Self::Ammo => [w - 157.0, 446.0, 142.0, 25.0],
             Self::Money => [w - 123.0, 394.0, 108.0, 45.0],
+            Self::Bomb => [16.0, 240.0, 40.0, 40.0],
         }
     }
 
@@ -110,6 +114,7 @@ impl Panel {
     fn icon(self) -> [f32; 2] {
         match self {
             Self::Money => [9.0, 16.0],
+            Self::Bomb => [7.0, 2.0],
             _ => [8.0, -4.0],
         }
     }
@@ -122,6 +127,8 @@ impl Panel {
             Self::Timer => [42.0, -4.0],
             Self::Ammo => [8.0, -4.0],
             Self::Money => [MONEY_DIGITS_RIGHT, 16.0],
+            // An icon alone.
+            Self::Bomb => [0.0, 0.0],
         }
     }
 }
@@ -137,6 +144,9 @@ pub(crate) enum CsHudPart {
     Icon(Panel),
     Digits(Panel),
     AmmoBar,
+    /// `HudProgressBar`: planting or defusing.
+    ProgressBack,
+    ProgressFill,
     AmmoReserve,
     AmmoSprite,
     AmmoGlyph,
@@ -366,6 +376,21 @@ pub(crate) fn spawn_cs_hud(
             }
             hud.spawn(text_bundle(CsHudPart::MoneyDelta, numbers))
                 .insert(TextLayout::new(Justify::Right, LineBreak::NoWrap));
+            for part in [CsHudPart::ProgressBack, CsHudPart::ProgressFill] {
+                hud.spawn((
+                    part,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        display: Display::None,
+                        ..default()
+                    },
+                    BackgroundColor(if part == CsHudPart::ProgressBack {
+                        PANEL_BG
+                    } else {
+                        ORANGE.with_alpha(0.7)
+                    }),
+                ));
+            }
             hud.spawn((
                 CsHudPart::AmmoBar,
                 Node {
@@ -568,6 +593,8 @@ struct PanelValues {
     timer_s: Option<i32>,
     ammo: Option<Ammo>,
     money: Option<i32>,
+    /// The C4 (`j`) or defuse kit (`f`) icon.
+    bomb: Option<char>,
 }
 
 struct Ammo {
@@ -577,6 +604,17 @@ struct Ammo {
     grenade: Option<char>,
 }
 
+/// Whether `ps` carries the bomb (the C4 is among its weapons).
+fn carries_c4(ps: &PlayerState, weapons: &PreparedWeapons) -> bool {
+    ps.weapons
+        .iter()
+        .filter_map(|&id| u32::try_from(id).ok().filter(|&id| id != 0))
+        .any(|id| {
+            weapon_iw4::cs::cs_weapon_index_for(&weapons.0.script_name_of(id))
+                .is_some_and(weapon_iw4::cs::is_c4)
+        })
+}
+
 fn ammo_values(ps: &PlayerState, weapons: &PreparedWeapons, presented: &PresentedSnapshot, local: &LocalPresentClient) -> Option<Ammo> {
     use weapon_iw4::cs;
     let viewmodel = weapon_iw4::get_viewmodel_weapon_index(ps);
@@ -584,7 +622,8 @@ fn ammo_values(ps: &PlayerState, weapons: &PreparedWeapons, presented: &Presente
         return None;
     }
     let index = cs::cs_weapon_index_for(&weapons.0.script_name_of(viewmodel));
-    if index.is_some_and(cs::is_knife) {
+    // The knife and the C4 show no ammo.
+    if index.is_some_and(|index| cs::is_knife(index) || cs::is_c4(index)) {
         return None;
     }
     let meta = presented.snapshot().and_then(|s| s.meta.for_client(local.0));
@@ -704,6 +743,7 @@ pub(crate) fn update_cs_hud(
     assets: Res<CsHudAssets>,
     mut feed: ResMut<CsKillFeed>,
     mut flash: ResMut<CsMoneyFlash>,
+    (time, mut progress): (Res<Time>, Local<Option<(f32, f32)>>),
     mut parts: PartQuery,
 ) {
     if !replaces_mw2_hud() {
@@ -739,8 +779,22 @@ pub(crate) fn update_cs_hud(
         values.ammo = weapons
             .as_deref()
             .and_then(|w| ammo_values(ps, w, &presented, &local));
+        // The bomb carrier sees the C4, a Counter-Terrorist with a kit the kit.
+        values.bomb = if weapons.as_deref().is_some_and(|w| carries_c4(ps, w)) {
+            Some('j')
+        } else {
+            (ps.cs_defuser != 0).then_some('f')
+        };
     }
-    if let Some(snap) = presented.snapshot() {
+    // Once the bomb is planted CS takes the round timer away (the bomb has its own).
+    let planted = presented.snapshot().is_some_and(|snap| {
+        snap.meta
+            .objectives
+            .server_info
+            .iter()
+            .any(|(name, value)| name == "cs_bomb" && value.starts_with("planted"))
+    });
+    if let Some(snap) = presented.snapshot().filter(|_| !planted) {
         let now = snap.tick.0.saturating_mul(sim::MATCH_TICK_MS) as i32;
         let left = snap.meta.objectives.time_left_ms(now);
         if left > 0 {
@@ -769,6 +823,26 @@ pub(crate) fn update_cs_hud(
     let unit = surface.height() / crate::presentation_scale::VIRTUAL_HEIGHT;
     let width_units = surface.width() / unit;
     let icons = assets.numbers.is_some();
+    // `HudProgressBar`: planting or defusing holds the player in place (the site links them);
+    // the bar fills over the 3 s plant, or the 10 s defuse (5 s with a kit).
+    let now_s = time.elapsed_secs();
+    if ps.pm_type != playerstate_iw4::PM_TYPE_NORMAL_LINKED {
+        *progress = None;
+    } else if progress.is_none() {
+        use weapon_iw4::cs;
+        let holding_c4 = weapons.as_deref().is_some_and(|w| {
+            cs::cs_weapon_index_for(&w.0.script_name_of(ps.weapon)).is_some_and(cs::is_c4)
+        });
+        let seconds = if holding_c4 {
+            cs::CS_C4_ARMING_SECONDS
+        } else if ps.cs_defuser != 0 {
+            cs::CS_DEFUSE_KIT_SECONDS
+        } else {
+            cs::CS_DEFUSE_SECONDS
+        };
+        *progress = Some((now_s, seconds));
+    }
+    let bar = progress.map(|(since, seconds)| ((now_s - since) / seconds).clamp(0.0, 1.0));
     for (part, mut node, text, font, color, image) in parts.iter_mut() {
         match *part {
             CsHudPart::Panel(panel) | CsHudPart::Icon(panel) | CsHudPart::Digits(panel) => {
@@ -789,6 +863,8 @@ pub(crate) fn update_cs_hud(
                         let tint = flash_color.mix(&ORANGE, 1.0 - flash_left);
                         (money.to_string(), '$', tint)
                     }),
+                    // `HudIcon_Green`, the same green the money gains flash.
+                    Panel::Bomb => values.bomb.map(|glyph| (String::new(), glyph, MONEY_GAIN)),
                 };
                 let Some((digits, glyph, tint)) = value else {
                     adopt_display(&mut node, Display::None);
@@ -865,6 +941,29 @@ pub(crate) fn update_cs_hud(
                 }
                 if let Some(mut font) = font {
                     set_size(&mut font, NUMBER_TALL * unit);
+                }
+            }
+            CsHudPart::ProgressBack | CsHudPart::ProgressFill => {
+                let Some(fraction) = bar else {
+                    adopt_display(&mut node, Display::None);
+                    continue;
+                };
+                let [x, y, w, h] = [width_units * 0.5 - 150.0, 300.0, 300.0, 15.0];
+                if *part == CsHudPart::ProgressBack {
+                    place(&mut node, x * unit, y * unit, Some([w * unit, h * unit]));
+                    let radius = BorderRadius::all(Val::Px((CORNER * unit).round()));
+                    if node.border_radius != radius {
+                        node.border_radius = radius;
+                    }
+                } else {
+                    let inset = 2.0;
+                    let fill = ((w - 2.0 * inset) * fraction * unit).max(1.0);
+                    place(
+                        &mut node,
+                        (x + inset) * unit,
+                        (y + inset) * unit,
+                        Some([fill, (h - 2.0 * inset) * unit]),
+                    );
                 }
             }
             CsHudPart::AmmoBar | CsHudPart::AmmoReserve => {

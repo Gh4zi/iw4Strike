@@ -198,10 +198,16 @@ pub(crate) fn capture_cs_carry(world: &mut FrameWorld, reset: bool) {
             .filter(|meta| !reset && meta.lifecycle == ClientLifecycle::Alive)
             .zip(world.player(id))
             .map(|(meta, ps)| crate::match_state::CsCarry {
+                // The C4 isn't kept: the bomb mode hands it out again each round.
                 weapons: ps
                     .weapons
                     .iter()
                     .filter_map(|&w| u32::try_from(w).ok().filter(|&w| w != 0))
+                    .filter(|&w| {
+                        !world
+                            .combat_facts_for(w)
+                            .is_some_and(|f| weapon_iw4::cs::is_c4(f.cs_weapon))
+                    })
                     .map(|w| {
                         let (clip, stock) = meta.ammo_for(w);
                         (w, clip, stock)
@@ -210,6 +216,7 @@ pub(crate) fn capture_cs_carry(world: &mut FrameWorld, reset: bool) {
                 held: ps.weapon,
                 armor: ps.cs_armor,
                 helmet: ps.cs_helmet,
+                defuser: ps.cs_defuser,
                 silencers: ps.cs_silencers,
                 burst_modes: ps.cs_burst_modes,
             });
@@ -245,6 +252,7 @@ fn give_cs_round_loadout(world: &mut FrameWorld, id: ClientId) {
         };
         ps.cs_armor = carry.armor;
         ps.cs_helmet = carry.helmet;
+        ps.cs_defuser = carry.defuser;
         ps.cs_silencers = carry.silencers;
         ps.cs_burst_modes = carry.burst_modes;
         if ps.weapons.contains(&(carry.held as i32)) {
@@ -524,6 +532,24 @@ pub(crate) fn cs_buy_armor(world: &mut FrameWorld, id: ClientId, helmet: bool) {
     }
 }
 
+/// CS `buy defuser`: a defuse kit for $200, Counter-Terrorists only, in the bomb mode, one each.
+pub(crate) fn cs_buy_defuser(world: &mut FrameWorld, id: ClientId) {
+    if !world
+        .client_meta(id)
+        .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+        || cs_bomb_side(world, id) != Some(false)
+        || world.player(id).is_none_or(|ps| ps.cs_defuser != 0)
+    {
+        return;
+    }
+    if !crate::cs_economy::pay(world, id, weapon_iw4::cs::CS_DEFUSE_KIT_PRICE) {
+        return;
+    }
+    if let Some(ps) = world.player_mut(id) {
+        ps.cs_defuser = 1;
+    }
+}
+
 pub(crate) fn finish_damage(
     world: &mut FrameWorld,
     id: ClientId,
@@ -734,7 +760,8 @@ pub(crate) fn give_weapon(
     akimbo: bool,
 ) -> Result<(), String> {
     living(world, id)?;
-    if SCRIPT_GIVES_NO_WEAPONS || world.weapon_is_melee_only(weapon) {
+    // The bomb mode hands its C4 to the bomb carrier; nothing else comes from the scripts.
+    if (SCRIPT_GIVES_NO_WEAPONS && !is_cs_c4(world, weapon)) || world.weapon_is_melee_only(weapon) {
         return Ok(());
     }
     let facts = world
@@ -772,6 +799,7 @@ pub(crate) fn take_weapon(world: &mut FrameWorld, id: ClientId, weapon: u32) {
     let Some(ps) = world.player_mut(id) else {
         return;
     };
+    let held = ps.weapon == weapon;
     if let Some(slot) = ps.weapons.iter().position(|&w| w == weapon as i32) {
         ps.weapons[slot] = 0;
         ps.weapon_data[slot * 5..slot * 5 + 5].fill(0);
@@ -787,6 +815,16 @@ pub(crate) fn take_weapon(world: &mut FrameWorld, id: ClientId, weapon: u32) {
     if meta.controls.switch_to == weapon {
         meta.controls.switch_to = 0;
     }
+    // CS: taking the weapon in hand (the planted or dropped C4) brings up the best one left.
+    if held && SCRIPT_GIVES_NO_WEAPONS {
+        crate::item::raise_best_cs_weapon(world, id);
+    }
+}
+
+fn is_cs_c4(world: &FrameWorld, weapon: u32) -> bool {
+    world
+        .combat_facts_for(weapon)
+        .is_some_and(|facts| weapon_iw4::cs::is_c4(facts.cs_weapon))
 }
 
 pub(crate) fn take_all_weapons(world: &mut FrameWorld, id: ClientId) {
