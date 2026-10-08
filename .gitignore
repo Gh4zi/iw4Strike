@@ -24,3 +24,11 @@ CLAUDE.md
 *.pem
 *.key
 *.crt
+
+# Made by the game next to itself: game shortcuts/links and the updater's working files.
+*.lnk
+/Modern Warfare 2
+iw4l.update.lock
+iw4l.update-helper
+iw4l.update.exe
+iw4l.previous.exe
