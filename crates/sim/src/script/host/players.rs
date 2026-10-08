@@ -280,7 +280,7 @@ pub(crate) fn settle_deaths(world: &mut World) {
     }
 }
 
-pub(crate) const TEAM_MENU: &str = "team_marinesopfor";
+pub(crate) const TEAM_MENU: &str = crate::TEAM_MENU;
 const CLASS_MENU: &str = "changeclass";
 
 #[derive(Clone, Debug, PartialEq)]

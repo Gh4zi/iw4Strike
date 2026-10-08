@@ -182,6 +182,9 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
         if sim::HostGameModeSelection::from_token(mode).is_none() {
             continue;
         }
+        add_bot_rows(&mut menu.items);
+        // CS has no perks or killstreaks: their rows go, the rows below move up.
+        hide_rule_rows(&mut menu.items, &["scr_game_perks", "scr_game_hardpoints"]);
         for item in &mut menu.items {
             if item.dvar == "camera_thirdperson" {
                 if item.item_type == 12 {
@@ -200,4 +203,104 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Game Rules > Team Options rows of ours, copies of a stock toggle (button plus value
+/// display) under the panel's last row: how many enemy bots, and in team modes how many
+/// friendly bots, join when the match starts.
+fn add_bot_rows(items: &mut Vec<asset_game::MenuItem>) {
+    let pair = |items: &[asset_game::MenuItem], dvar: &str| {
+        let button = items
+            .iter()
+            .position(|item| item.item_type == 1 && item.dvar == dvar)?;
+        let value = items
+            .iter()
+            .position(|item| item.item_type == 12 && item.dvar == dvar)?;
+        Some((button, value))
+    };
+    let counts = |max: u32| -> Vec<(String, String)> {
+        (0..=max).map(|n| (n.to_string(), n.to_string())).collect()
+    };
+    let Some(gameplay) = pair(items, "scr_game_onlyheadshots") else {
+        return;
+    };
+    // Team Options: the lowest row left of Gameplay Options in its panel.
+    let (left_x, top_y) = (items[gameplay.0].rect.x, items[gameplay.0].rect.y);
+    let Some((button, value)) = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            item.item_type == 1 && item.rect.x < left_x - 1.0 && item.rect.y >= top_y - 1.0
+        })
+        .filter_map(|(i, item)| pair(items, &item.dvar).filter(|(button, _)| *button == i))
+        .max_by(|a, b| items[a.0].rect.y.total_cmp(&items[b.0].rect.y))
+    else {
+        return;
+    };
+    let team_based = items.iter().any(|item| item.dvar == "scr_team_fftype");
+    let mut rows = vec![("enemy_bots", "Enemy Bots:", sim::ENEMY_BOTS_DVAR, MAX_RULE_ENEMY_BOTS)];
+    if team_based {
+        rows.push((
+            "friendly_bots",
+            "Friendly Bots:",
+            sim::FRIENDLY_BOTS_DVAR,
+            MAX_RULE_FRIENDLY_BOTS,
+        ));
+    }
+    let step = items[button].rect.h;
+    let mut y = items[button].rect.y + step;
+    for (name, label, dvar, max) in rows {
+        let choices = counts(max);
+        let values = choices
+            .iter()
+            .map(|(_, value)| value.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut row_button = items[button].clone();
+        let mut row_value = items[value].clone();
+        row_button.name = format!("sidenav_button_{name}");
+        row_button.text_key = label.into();
+        row_button.text_literal = true;
+        row_button.dvar = dvar.into();
+        row_button.rect.y = y;
+        row_button.handlers.action = vec![asset_game::MenuEvent::Script(format!(
+            "play mouse_click; exec \"toggle {dvar} {values}\";"
+        ))];
+        row_value.dvar = dvar.into();
+        row_value.rect.y = y;
+        row_value.choices = choices;
+        y += step;
+        items.push(row_button);
+        items.push(row_value);
+    }
+}
+
+/// MW2 lobbies hold 18: nine a side.
+pub const MAX_RULE_ENEMY_BOTS: u32 = 9;
+pub const MAX_RULE_FRIENDLY_BOTS: u32 = 8;
+
+/// Hides the Game Rules rows of `dvars` (button and value) and moves the rows below them in
+/// the same column up into the gap.
+fn hide_rule_rows(items: &mut [asset_game::MenuItem], dvars: &[&str]) {
+    let hidden: Vec<(f32, f32, f32)> = items
+        .iter()
+        .filter(|item| item.item_type == 1 && dvars.contains(&item.dvar.as_str()))
+        .map(|item| (item.rect.x, item.rect.y, item.rect.h))
+        .collect();
+    for item in items.iter_mut() {
+        if matches!(item.item_type, 1 | 12) && dvars.contains(&item.dvar.as_str()) {
+            item.vis_exp = "0".into();
+            item.disabled_exp = "1".into();
+            continue;
+        }
+        if !matches!(item.item_type, 1 | 12) {
+            continue;
+        }
+        let rise: f32 = hidden
+            .iter()
+            .filter(|(x, y, _)| item.rect.x >= *x - 1.0 && item.rect.y > *y + 0.5)
+            .map(|(_, _, h)| *h)
+            .sum();
+        item.rect.y -= rise;
+    }
 }

@@ -843,6 +843,10 @@ impl SimState {
         self.client_meta(ClientId(client)).and_then(|m| m.ffa_team)
     }
 
+    pub fn client_state_team(&self, id: ClientId) -> Option<i32> {
+        self.client_meta(id).map(|meta| meta.client_state_team)
+    }
+
     pub fn gsc_pers_team(&self, client: u32) -> Option<u8> {
         let meta = self.client_meta(ClientId(client))?;
         match meta.client_state_team {

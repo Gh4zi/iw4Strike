@@ -31,7 +31,7 @@ pub use query::{
 };
 pub use roster::{
     BotAddQueue, BotAddRequest, BotFireQueue, BotHold, BotTestControls, BotRoster, BotTpQueue, BotTpRequest,
-    BotTpTarget, BotTpWhere, MAX_HOST_BOTS,
+    BotSide, BotTpTarget, BotTpWhere, MAX_HOST_BOTS,
 };
 pub use sensor::{observe, observe_focused};
 pub use task::{ActionStage, Decision, SwitchReason, Task, TaskKind};
