@@ -11,8 +11,8 @@ Weapon models, sounds and HUD fonts are read at runtime from **your own Counter-
 Source install**. Gameplay numbers (damage, spread, recoil, speeds) follow CS 1.6. No game
 files are included in this repository.
 
-> **Work in progress.** The C4 isn't a CS weapon yet (the bomb is still MW2's). See
-> [Roadmap](#roadmap).
+> **Work in progress (alpha).** Windows and Linux builds; **the Linux build hasn't been tested
+> yet**. Bots don't carry, plant or defuse the bomb yet. See [Roadmap](#roadmap).
 
 ![Desert Eagle on Rust with the Counter-Strike: Source HUD](docs/screenshots/mp_rust-deagle.webp)
 
@@ -20,7 +20,9 @@ files are included in this repository.
 
 **Just want to play?** Get the Windows or Linux build from
 [**Releases**](https://github.com/Gh4zi/iw4Strike/releases). On Windows, extract the zip and run
-`iw4strike.exe`; on Linux, extract the `tar.gz` and run `./iw4strike`. See `README.txt` inside.
+`iw4strike.exe`; on Linux, extract the `tar.gz` and run `./iw4strike` (**the Linux build hasn't
+been tested yet**: it is built automatically but no one has played it on Linux, so please report
+what doesn't work). See `README.txt` inside.
 You still need MW2 and Counter-Strike: Source on Steam (see [What you need](#what-you-need)). To
 build it yourself, see [Setup](#setup).
 

@@ -4,7 +4,8 @@
 # - Publish a release on GitHub: the tar.gz is built and attached to that release.
 # - Push code to main: the tar.gz is built and kept under the run's Artifacts for 14 days.
 # - Actions > Linux build > Run workflow: build by hand; give a release tag to attach
-#   the tar.gz to that existing release.
+#   the tar.gz to that existing release. Give a source ref too (for example main) to build that
+#   instead of the tagged code.
 name: Linux build
 
 on:
@@ -25,6 +26,10 @@ on:
         description: "Attach the build to this existing release (for example v0.1.0). Leave empty to only build."
         required: false
         default: ""
+      source_ref:
+        description: "Build this branch or commit instead of the release tag (for example main). Leave empty to build the tag."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -42,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ inputs.source_ref || inputs.release_tag || github.ref }}
 
       - name: Install build dependencies
         run: |
