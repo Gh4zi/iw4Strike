@@ -39,7 +39,6 @@ const GAMEOBJECTS: &str = "maps/mp/gametypes/_gameobjects";
 ///   drops the bomb at the carrier's feet.
 const CS_BOMB_FUNCTIONS: &str = r#"csPlantThink()
 {
-    level endon ( "game_ended" );
     self endon ( "deleted" );
     for ( ;; )
     {
@@ -63,7 +62,6 @@ csBombCarrierThink( bomb )
     self endon ( "death" );
     self endon ( "disconnect" );
     self endon ( "cs_bomb_gone" );
-    level endon ( "game_ended" );
     hinted = false;
     for ( ;; )
     {
@@ -92,7 +90,6 @@ csBombDropThink( bomb )
     self endon ( "death" );
     self endon ( "disconnect" );
     self endon ( "cs_bomb_gone" );
-    level endon ( "game_ended" );
     self waittill ( "cs_drop_bomb" );
     if ( isDefined( self.carryObject ) && self.carryObject == bomb && !( isDefined( self.isPlanting ) && self.isPlanting ) )
         bomb thread maps\mp\gametypes\_gameobjects::setDropped();
@@ -566,10 +563,31 @@ const PATCHES: &[Patch] = &[
          \tsetDvar( \"cs_bomb\", \"exploded\" ); makeDvarServerInfo( \"cs_bomb\", \"exploded\" );",
         "CS C4: clients know the bomb went off",
     ),
+    // CS 1.6 plants (and defuses) after the round is decided too, during the pause before the
+    // next round: the bomb sites keep working, and a late plant or defuse leaves the round's
+    // result and money alone.
+    once(
+        GAMEOBJECTS,
+        "useObjectUseThink()\n{\n\tlevel endon ( \"game_ended\" );",
+        "useObjectUseThink()\n{",
+        "CS C4: bomb sites work in the pause after a round is decided",
+    ),
+    once(
+        GAMEOBJECTS,
+        "useHoldThinkLoop( player, lastWeapon )\n{\n\tlevel endon ( \"game_ended\" );",
+        "useHoldThinkLoop( player, lastWeapon )\n{",
+        "CS C4: a plant or defuse in that pause runs to the end",
+    ),
+    once(
+        SD,
+        "\tlevel.bombPlanted = true;",
+        "\tif ( !level.gameEnded ) level.bombPlanted = true;",
+        "CS C4: a plant after the round is decided pays nothing",
+    ),
     once(
         SD,
         "level.bombDefused = true;",
-        "level.bombDefused = true;\n\
+        "if ( !level.gameEnded ) level.bombDefused = true;\n\
          \tsetDvar( \"cs_bomb\", \"defused\" ); makeDvarServerInfo( \"cs_bomb\", \"defused\" );",
         "CS C4: clients know the bomb was defused",
     ),

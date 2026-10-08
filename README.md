@@ -396,8 +396,6 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [ ] CoD4 maps (Crossfire, Citystreets)
 
 **Known issues**
-- Some players couldn't plant the bomb after a round ended. It hasn't been reproduced yet: if
-  it happens to you, please report how (which round, whether you carried the bomb before).
 - Guns lying on the ground are still MW2 models. With only CS 1.6 installed, other players also
   still hold the MW2 gun in third person.
 - `mv_mode` isn't synced to other players yet, so everyone should use the same mode.
