@@ -16,3 +16,11 @@ iw4l-artifacts
 
 # Personal notes for Claude Code, kept local
 CLAUDE.md
+
+# Our own master server: certificates, keys, community descriptors, configs and build output
+# stay on this machine (the CA itself lives in ~/.iw4l/ca, outside the repo).
+/master/
+*.iw4l-server
+*.pem
+*.key
+*.crt
