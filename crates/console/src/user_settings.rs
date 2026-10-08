@@ -458,9 +458,13 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                 }
             }
             "shadows" => {
-                if let Ok(v) = value.parse() {
-                    settings.shadows = v;
-                }
+                // Older files saved on/off; their "off" still drew the sun's shadow, but off
+                // now means none.
+                settings.shadows = match value.trim() {
+                    "true" => frame::GameSettings::SHADOWS_ALL,
+                    "false" => frame::GameSettings::SHADOWS_OFF,
+                    other => other.parse().unwrap_or(settings.shadows),
+                };
             }
             "depth_of_field" => {
                 if let Ok(v) = value.parse() {
@@ -621,7 +625,7 @@ pub(crate) fn native_menu_settings(
                 }
             }
             "ui_third_person" | "cg_thirdPerson" => settings.third_person = value == "1",
-            "ui_shadows" => settings.shadows = value == "1",
+            "ui_shadows" => parse_into(value, &mut settings.shadows),
             "ui_dof" => settings.depth_of_field = value == "1",
             "ui_bloom" => settings.bloom = value == "1",
             "ui_max_frames_ahead" => parse_into(value, &mut settings.max_frames_ahead),
@@ -652,7 +656,8 @@ pub(crate) fn native_menu_settings(
         settings.touch();
     }
     if settings.is_changed() {
-        shadows.enabled = Some(settings.shadows);
+        shadows.enabled = Some(settings.shadows != frame::GameSettings::SHADOWS_OFF);
+        shadows.spot_enabled = Some(settings.shadows == frame::GameSettings::SHADOWS_ALL);
         dof.enable = settings.depth_of_field;
         glow.enable = settings.bloom;
     }
@@ -669,7 +674,7 @@ pub(crate) fn native_menu_settings(
         "ui_timer_warning_volume",
         format!("{:.1}", settings.timer_warning_volume),
     );
-    dvars.set("ui_shadows", if settings.shadows { "1" } else { "0" });
+    dvars.set("ui_shadows", settings.shadows.to_string());
     dvars.set("ui_dof", if settings.depth_of_field { "1" } else { "0" });
     dvars.set("ui_bloom", if settings.bloom { "1" } else { "0" });
     dvars.set("ui_max_frames_ahead", settings.max_frames_ahead.to_string());

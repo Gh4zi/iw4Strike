@@ -48,7 +48,8 @@ pub struct GameSettings {
     /// message) or `mw2` (MW2's round outcome).
     pub round_banner: String,
     pub brightness: f32,
-    pub shadows: bool,
+    /// `shadows`: 0 off, 1 the sun's shadow only, 2 sun and spot-light shadows.
+    pub shadows: u8,
     pub depth_of_field: bool,
     pub bloom: bool,
     /// `max_frames_ahead`: frames the CPU may queue ahead of the GPU (1 or 2). 2 lets the render
@@ -97,7 +98,7 @@ impl Default for GameSettings {
             vgui_menus: true,
             round_banner: "css".to_owned(),
             brightness: 0.0,
-            shadows: true,
+            shadows: Self::SHADOWS_ALL,
             depth_of_field: true,
             bloom: true,
             max_frames_ahead: Self::MAX_FRAMES_AHEAD_DEFAULT,
@@ -126,6 +127,9 @@ impl Default for GameSettings {
 impl GameSettings {
     pub const FOV_DEFAULT: f32 = 65.0;
     pub const MAX_FRAMES_AHEAD_DEFAULT: u8 = 2;
+    pub const SHADOWS_OFF: u8 = 0;
+    pub const SHADOWS_SUN: u8 = 1;
+    pub const SHADOWS_ALL: u8 = 2;
     pub const FOV_MIN: f32 = 65.0;
     pub const FOV_MAX: f32 = 120.0;
     pub const VIEWMODEL_FOV_DEFAULT: f32 = 68.0;
@@ -171,6 +175,7 @@ impl GameSettings {
         self.master_volume = self.master_volume.clamp(0.0, 1.0);
         self.sensitivity = self.sensitivity.clamp(0.1, 30.0);
         self.max_frames_ahead = self.max_frames_ahead.clamp(1, 2);
+        self.shadows = self.shadows.min(Self::SHADOWS_ALL);
         if self.pad_layout != Self::PAD_LAYOUT_CUSTOM {
             self.pad_layout = self.pad_layout.min(4);
         }

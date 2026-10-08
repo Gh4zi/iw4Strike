@@ -1567,7 +1567,7 @@ pub(crate) fn bake_spot_shadow_casters(
         smodel_plan.as_deref(),
         lod_ramp.args(),
         inputs.frame_id as u32,
-        sm_enable.enabled,
+        sm_enable.spot(),
         sm_sun_enable.enabled,
     );
     spot_lights.0 = spot_casters.shadowed_light_indices();

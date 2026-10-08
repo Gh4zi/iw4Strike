@@ -143,6 +143,20 @@ pub struct RLockPvs {
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct SmEnableDvar {
     pub enabled: Option<bool>,
+    /// The player's Shadows setting can keep the sun's shadow map and drop the spot lights'
+    /// (Sun only); `None` follows `enabled`.
+    pub spot_enabled: Option<bool>,
+}
+
+impl SmEnableDvar {
+    /// `enabled` as the spot-shadow caster plan reads it.
+    #[must_use]
+    pub fn spot(&self) -> Option<bool> {
+        match self.spot_enabled {
+            Some(false) => Some(false),
+            _ => self.enabled,
+        }
+    }
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
