@@ -716,55 +716,267 @@ fn step_authority(
     mut pending_svc: ResMut<crate::PendingSvcSounds>,
     samples: Res<ClientShotSamples>,
     mut exit_level: MessageWriter<ExitLevelCalled>,
+    mut overlap: ResMut<AuthorityStepOverlap>,
     trace: Option<ResMut<AuthorityPhaseTrace>>,
 ) {
     push_phase(trace, "Step");
+    if overlap.enabled && pending.0.is_some() {
+        // Stepped on a worker while the client presents (`spawn_overlapped_step`).
+        overlap.deferred = true;
+        return;
+    }
     pending_svc.occupy_cs(&mut world.0);
     let Some(input) = pending.0.take() else {
         return;
     };
+    prepare_step(&mut world.0, &samples);
+    let stepped = run_step(&mut world.0, clock.tick, &input);
+    match finish_step(&mut world.0, clock.tick, input, stepped) {
+        Ok(data) => pending_step.0 = Some(data),
+        Err(StepFailed { exit_level: true }) => {
+            exit_level.write(ExitLevelCalled);
+        }
+        Err(StepFailed { exit_level: false }) => {}
+    }
+}
 
-    world
-        .0
-        .set_lagcomp_commands(samples.0.iter().map(|(key, sample)| (*key, *sample)));
-    let stepped = sim::try_step(
-        &mut world.0,
-        sim::Tick(clock.tick),
-        &input,
+fn prepare_step(world: &mut sim::SimWorld, samples: &ClientShotSamples) {
+    world.set_lagcomp_commands(samples.0.iter().map(|(key, sample)| (*key, *sample)));
+}
+
+fn run_step(
+    world: &mut sim::SimWorld,
+    tick: u32,
+    input: &sim::TickInput,
+) -> Result<sim::Snapshot, sim::script::Fault> {
+    sim::try_step(
+        world,
+        sim::Tick(tick),
+        input,
         crate::AUTHORITY_MS,
         sim::StepReason::AuthorityFrame,
-    );
+    )
+}
+
+struct StepFailed {
+    exit_level: bool,
+}
+
+fn finish_step(
+    world: &mut sim::SimWorld,
+    tick: u32,
+    input: sim::TickInput,
+    stepped: Result<sim::Snapshot, sim::script::Fault>,
+) -> Result<ServerTickData, StepFailed> {
     // A terminal script error drops the match to the lobby;
     // the world stays frozen until the swap replaces it.
     let snapshot = stepped.inspect_err(|error| {
         // A step that keeps failing freezes the match for every client; say so once a second.
-        if clock.tick % sim::ticks_for_ms(1000) == 0 {
+        if tick.is_multiple_of(sim::ticks_for_ms(1000)) {
             diag::warn!(Net, "authority step failed: {}", error.message);
         }
     });
     let Ok(snapshot) = snapshot else {
-        if let Some(fault) = world.0.take_script_fault() {
+        let fault = world.take_script_fault();
+        if let Some(fault) = &fault {
             diag::error!(Sim, "GSC execution failed: {fault}");
             diag::script_boundary(
                 "fault",
                 &format!(" fault=\"{}\"", fault.message.replace('"', "'")),
             );
-            exit_level.write(ExitLevelCalled);
         }
-        return;
+        return Err(StepFailed {
+            exit_level: fault.is_some(),
+        });
     };
-    let weapon_script_names = world.0.weapon_script_names();
-    let pending_final_kill = world.0.take_pending_final_kill();
-    let script_seats = world.0.script_seats();
-    let script_exit_level = world.0.take_script_exit_level();
-    pending_step.0 = Some(ServerTickData {
+    let weapon_script_names = world.weapon_script_names();
+    let pending_final_kill = world.take_pending_final_kill();
+    let script_seats = world.script_seats();
+    let script_exit_level = world.take_script_exit_level();
+    Ok(ServerTickData {
         input,
         snapshot,
         weapon_script_names,
         pending_final_kill,
         script_seats,
         script_exit_level,
+    })
+}
+
+type OverlappedStep = (
+    AuthorityWorld,
+    sim::TickInput,
+    u32,
+    Result<sim::Snapshot, sim::script::Fault>,
+);
+
+/// A listen authority steps its tick on a worker while the client runs Present, instead of on
+/// the main thread before the frame: the step (~1 ms a tick, ~2 ms with a dozen bots) leaves the
+/// main thread. The host then sees that tick one frame later; its own movement is predicted and
+/// does not wait for it. `IW4L_AUTHORITY_OVERLAP=0` steps inline as before.
+#[derive(Resource, Default)]
+pub struct AuthorityStepOverlap {
+    enabled: bool,
+    /// FixedUpdate left this tick's input for `spawn_overlapped_step`.
+    deferred: bool,
+    /// A step is on the worker; the authority world is out of the ECS until it is joined.
+    in_flight: bool,
+    worker: Option<AuthorityStepWorker>,
+}
+
+impl AuthorityStepOverlap {
+    fn for_role(role: RuntimeRole) -> Self {
+        let wanted = std::env::var_os("IW4L_AUTHORITY_OVERLAP")
+            .is_none_or(|_| perf::switch("IW4L_AUTHORITY_OVERLAP"));
+        Self {
+            enabled: role == RuntimeRole::Listen && wanted,
+            ..Self::default()
+        }
+    }
+}
+
+/// A thread of its own: on a shared task pool the step queued behind loading work (audio decode,
+/// image uploads) and the join stalled the main thread for hundreds of milliseconds.
+struct AuthorityStepWorker {
+    jobs: std::sync::mpsc::Sender<(AuthorityWorld, sim::TickInput, u32)>,
+    done: std::sync::Mutex<std::sync::mpsc::Receiver<OverlappedStep>>,
+}
+
+impl AuthorityStepWorker {
+    fn spawn() -> Option<Self> {
+        let (jobs, job_rx) = std::sync::mpsc::channel::<(AuthorityWorld, sim::TickInput, u32)>();
+        let (done_tx, done) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("iw4l-authority-step".into())
+            // The GSC interpreter recurses; the main thread it used to run on is not small either.
+            .stack_size(8 << 20)
+            .spawn(move || {
+                while let Ok((mut authority, input, tick)) = job_rx.recv() {
+                    let stepped = run_step(&mut authority.0, tick, &input);
+                    if done_tx.send((authority, input, tick, stepped)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .ok()?;
+        Some(Self {
+            jobs,
+            done: std::sync::Mutex::new(done),
+        })
+    }
+}
+
+/// FixedUpdate, before the tick's Advance: a tick still deferred (a second tick in one frame) or
+/// still on a worker is finished and published first, so ticks keep their order.
+fn catch_up_overlapped_step(world: &mut World) {
+    join_overlapped_step(world);
+    if !world.resource::<AuthorityStepOverlap>().deferred {
+        return;
+    }
+    world.resource_mut::<AuthorityStepOverlap>().deferred = false;
+    step_deferred_inline(world);
+    world.run_schedule(frame::AuthorityPublish);
+}
+
+fn step_deferred_inline(world: &mut World) {
+    let Some(input) = world.resource_mut::<PendingAuthorityInput>().0.take() else {
+        return;
+    };
+    let Some(mut authority) = world.remove_resource::<AuthorityWorld>() else {
+        return;
+    };
+    let tick = world.resource::<AuthorityClock>().tick;
+    world
+        .resource_mut::<crate::PendingSvcSounds>()
+        .occupy_cs(&mut authority.0);
+    prepare_step(&mut authority.0, world.resource::<ClientShotSamples>());
+    let stepped = run_step(&mut authority.0, tick, &input);
+    let finished = finish_step(&mut authority.0, tick, input, stepped);
+    world.insert_resource(authority);
+    adopt_finished_step(world, finished);
+}
+
+fn adopt_finished_step(world: &mut World, finished: Result<ServerTickData, StepFailed>) {
+    match finished {
+        Ok(data) => world.resource_mut::<PendingStepResult>().0 = Some(data),
+        Err(StepFailed { exit_level: true }) => {
+            world.write_message(ExitLevelCalled);
+        }
+        Err(StepFailed { exit_level: false }) => {}
+    }
+}
+
+/// FixedUpdate, in the Snapshot slot: publishes the tick just stepped, unless it was deferred.
+fn publish_stepped_tick(world: &mut World) {
+    if world.resource::<AuthorityStepOverlap>().deferred {
+        return;
+    }
+    world.run_schedule(frame::AuthorityPublish);
+}
+
+/// Update, just before Present: moves the authority world and the deferred tick's input to a
+/// worker. The world is out of the ECS until `join_overlapped_step`.
+fn spawn_overlapped_step(world: &mut World) {
+    if !world.resource::<AuthorityStepOverlap>().deferred {
+        return;
+    }
+    world.resource_mut::<AuthorityStepOverlap>().deferred = false;
+    let Some(input) = world.resource_mut::<PendingAuthorityInput>().0.take() else {
+        return;
+    };
+    let Some(mut authority) = world.remove_resource::<AuthorityWorld>() else {
+        return;
+    };
+    let tick = world.resource::<AuthorityClock>().tick;
+    world
+        .resource_mut::<crate::PendingSvcSounds>()
+        .occupy_cs(&mut authority.0);
+    prepare_step(&mut authority.0, world.resource::<ClientShotSamples>());
+    let mut overlap = world.resource_mut::<AuthorityStepOverlap>();
+    if overlap.worker.is_none() {
+        overlap.worker = AuthorityStepWorker::spawn();
+    }
+    let sent = match overlap.worker.as_ref() {
+        Some(worker) => worker.jobs.send((authority, input, tick)).map_err(|e| e.0),
+        None => Err((authority, input, tick)),
+    };
+    match sent {
+        Ok(()) => overlap.in_flight = true,
+        Err((mut authority, input, tick)) => {
+            // No worker: step here, as without the overlap.
+            overlap.worker = None;
+            let stepped = run_step(&mut authority.0, tick, &input);
+            let finished = finish_step(&mut authority.0, tick, input, stepped);
+            world.insert_resource(authority);
+            adopt_finished_step(world, finished);
+            world.run_schedule(frame::AuthorityPublish);
+        }
+    }
+}
+
+/// Update, just after Present (and again in Last, should Present not have run): takes the
+/// worker's step back, puts the world back and publishes the tick.
+fn join_overlapped_step(world: &mut World) {
+    let mut overlap = world.resource_mut::<AuthorityStepOverlap>();
+    if !std::mem::take(&mut overlap.in_flight) {
+        return;
+    }
+    let received = overlap.worker.as_ref().map(|worker| {
+        worker
+            .done
+            .lock()
+            .expect("authority step channel is never poisoned")
+            .recv()
     });
+    let Some(Ok((mut authority, input, tick, stepped))) = received else {
+        // The step panicked on the worker and took the authority world with it, as it would have
+        // taken the main thread.
+        panic!("authority step worker died while stepping a tick");
+    };
+    let finished = finish_step(&mut authority.0, tick, input, stepped);
+    world.insert_resource(authority);
+    adopt_finished_step(world, finished);
+    world.run_schedule(frame::AuthorityPublish);
 }
 
 fn publish_server_tick(
@@ -1166,17 +1378,40 @@ pub fn register_listen_runtime(app: &mut App) {
         .init_resource::<LastAuthorityRoster>()
         .init_resource::<PendingConnectionFaults>();
     let role = *app.world().resource::<RuntimeRole>();
+    app.insert_resource(AuthorityStepOverlap::for_role(role));
+    // Snapshot, fanout and bookkeeping live in `AuthorityPublish`: FixedUpdate runs it right
+    // after the step, or the Present bracket runs it once an overlapped step is back.
+    app.add_systems(
+        FixedUpdate,
+        (
+            catch_up_overlapped_step
+                .before(AuthoritySet::Advance)
+                .before(frame::AuthorityEdge(0))
+                .before(begin_fixed_census),
+            begin_fixed_census
+                .before(AuthoritySet::Advance)
+                .before(frame::AuthorityEdge(0)),
+            advance_authority_clock.in_set(AuthoritySet::Advance),
+            ingress_authority.in_set(AuthoritySet::Ingress),
+            gather_authority_input.in_set(AuthoritySet::Gather),
+            step_authority.in_set(AuthoritySet::Step),
+            publish_stepped_tick.in_set(AuthoritySet::Snapshot),
+            end_fixed_census.after(AuthoritySet::Bookkeeping),
+        )
+            .run_if(authority_should_tick),
+    );
+    app.add_systems(
+        Update,
+        (
+            spawn_overlapped_step.in_set(frame::AuthorityOverlapSet::Spawn),
+            join_overlapped_step.in_set(frame::AuthorityOverlapSet::Join),
+        ),
+    )
+    .add_systems(Last, join_overlapped_step);
     if role != RuntimeRole::Dedicated {
         app.add_systems(
-            FixedUpdate,
+            frame::AuthorityPublish,
             (
-                begin_fixed_census
-                    .before(AuthoritySet::Advance)
-                    .before(frame::AuthorityEdge(0)),
-                advance_authority_clock.in_set(AuthoritySet::Advance),
-                ingress_authority.in_set(AuthoritySet::Ingress),
-                gather_authority_input.in_set(AuthoritySet::Gather),
-                step_authority.in_set(AuthoritySet::Step),
                 publish_server_tick.in_set(AuthoritySet::Snapshot),
                 fanout_loopback.in_set(AuthoritySet::Fanout),
                 apply_connection_faults
@@ -1184,21 +1419,13 @@ pub fn register_listen_runtime(app: &mut App) {
                     .before(retire_departed_peers),
                 retire_departed_peers.in_set(AuthoritySet::Bookkeeping),
                 authority_bookkeeping.in_set(frame::AuthorityBookkeeping),
-                end_fixed_census.after(AuthoritySet::Bookkeeping),
             )
                 .run_if(authority_should_tick),
         );
     } else {
         app.add_systems(
-            FixedUpdate,
+            frame::AuthorityPublish,
             (
-                begin_fixed_census
-                    .before(AuthoritySet::Advance)
-                    .before(frame::AuthorityEdge(0)),
-                advance_authority_clock.in_set(AuthoritySet::Advance),
-                ingress_authority.in_set(AuthoritySet::Ingress),
-                gather_authority_input.in_set(AuthoritySet::Gather),
-                step_authority.in_set(AuthoritySet::Step),
                 publish_server_tick.in_set(AuthoritySet::Snapshot),
                 fanout_loopback
                     .in_set(AuthoritySet::Fanout)
@@ -1208,7 +1435,6 @@ pub fn register_listen_runtime(app: &mut App) {
                     .before(retire_departed_peers),
                 retire_departed_peers.in_set(AuthoritySet::Bookkeeping),
                 authority_bookkeeping.in_set(frame::AuthorityBookkeeping),
-                end_fixed_census.after(AuthoritySet::Bookkeeping),
             )
                 .run_if(authority_should_tick),
         );

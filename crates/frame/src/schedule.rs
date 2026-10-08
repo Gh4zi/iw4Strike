@@ -281,6 +281,19 @@ pub fn configure_authority_sets(app: &mut App) {
         );
     }
     app.configure_sets(
+        AuthorityPublish,
+        (
+            AuthoritySet::Snapshot,
+            AuthoritySet::Fanout,
+            AuthoritySet::Bookkeeping,
+        )
+            .chain(),
+    );
+    app.configure_sets(
+        AuthorityPublish,
+        AuthorityBookkeeping.in_set(AuthoritySet::Bookkeeping),
+    );
+    app.configure_sets(
         FixedUpdate,
         AuthorityBookkeeping.in_set(AuthoritySet::Bookkeeping),
     );
@@ -311,7 +324,33 @@ pub fn configure_client_sets(app: &mut App) {
         );
     }
     app.configure_sets(Update, FxSoundPublished.in_set(ClientSet::Effects));
+    app.configure_sets(
+        Update,
+        (
+            AuthorityOverlapSet::Spawn
+                .after(ClientSet::Send)
+                .before(ClientSet::Present),
+            AuthorityOverlapSet::Join
+                .after(ClientSet::Present)
+                .before(ClientSet::Ui),
+        ),
+    );
     configure_worker_cmd_sets(app);
+}
+
+/// The authority's snapshot, fanout and bookkeeping for a stepped tick. It runs right after the
+/// step inside FixedUpdate, or, when the listen authority steps alongside the client's Present,
+/// once that step is collected.
+#[derive(bevy::ecs::schedule::ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AuthorityPublish;
+
+/// Brackets the client's Present set: a listen authority's tick may step on a worker between
+/// `Spawn` and `Join`, and the authority world is out of the ECS in between. A system that reads
+/// `AuthorityWorld` in Update must run outside the bracket.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AuthorityOverlapSet {
+    Spawn,
+    Join,
 }
 
 pub fn configure_worker_cmd_sets(app: &mut App) {

@@ -1327,7 +1327,7 @@ pub fn register_master_bridge(app: &mut App) {
             refresh_relay_authority_hello.in_set(crate::AuthoritySet::Advance),
         );
         app.add_systems(
-            FixedUpdate,
+            frame::AuthorityPublish,
             report_committed_authority_progress.after(crate::AuthoritySet::Snapshot),
         );
     }

@@ -14,7 +14,8 @@ pub use class_presets::{ClassPreset, pick_showcase, showcase_classes};
 pub use pad::{ActivePad, InputDevices, PromptStyle, TestControllerRumble};
 pub use retire::Retiring;
 pub use schedule::{
-    AUTHORITY_TOC, AuthorityBookkeeping, AuthorityEdge, AuthoritySet, CLIENT_TOC,
+    AUTHORITY_TOC, AuthorityBookkeeping, AuthorityEdge, AuthorityOverlapSet, AuthorityPublish,
+    AuthoritySet, CLIENT_TOC,
     ClassEquipResolved, ClientEdge, ClientSet, FxSoundPublished, LifeFrontPublished,
     ModelLightingSeated, PresentedPublished, RenderSet, SessionSwapApplied, WORKER_CMD_AFTER,
     WORKER_CMD_END_FENCE, WORKER_CMD_NOT_RENDER_THREAD, WORKER_CMD_RETAIL_NAMES, WORKER_CMD_TOC,

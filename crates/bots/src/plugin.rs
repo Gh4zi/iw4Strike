@@ -119,7 +119,9 @@ impl Plugin for BotsPlugin {
                     boot_bots,
                     apply_bot_tp,
                 )
-                    .chain(),
+                    .chain()
+                    // They read the authority world, which is on a worker inside the bracket.
+                    .before(frame::AuthorityOverlapSet::Spawn),
             )
             .add_systems(
                 Update,

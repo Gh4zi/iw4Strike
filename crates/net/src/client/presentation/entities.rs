@@ -398,7 +398,7 @@ pub(crate) fn register_authority_entities(app: &mut App) {
         .init_resource::<NetIdentityGaps>()
         .init_resource::<CEntityBirthCensus>()
         .add_systems(
-            FixedUpdate,
+            frame::AuthorityPublish,
             sync_authority_entities.in_set(AuthoritySet::Fanout),
         );
 }

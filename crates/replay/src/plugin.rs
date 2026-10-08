@@ -72,7 +72,7 @@ impl Plugin for ReplayPlugin {
         let role = app.world().get_resource::<RuntimeRole>().copied();
         if role.is_some_and(|role| role.runs_authority() || role == RuntimeRole::Replay) {
             app.add_systems(
-                FixedUpdate,
+                frame::AuthorityPublish,
                 record_server_tick
                     .in_set(AuthoritySet::Fanout)
                     .run_if(authority_should_tick),
