@@ -4,10 +4,10 @@
 //! `cstrike.ttf` digits and HUD icons, `cs.ttf` grenade icons, `csd.ttf` kill icons — read from
 //! the CS:S install at runtime, with the ammo icons cut from its `sprites/640hud1` sheet. While
 //! it is up the MW2 weapon bar, score bar, splashes, player cards and kill feed stand down; the
-//! MW2 minimap stays.
+//! MW2 minimap stays. Playing with CS 1.6 instead, [`crate::cs16_hud`] draws its HUD.
 
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use assets::PreparedWeapons;
 use bevy::asset::RenderAssetUsages;
@@ -64,7 +64,7 @@ const DEATH_DROP: f32 = 0.44;
 /// Grenade icons in the ammo panel.
 const GRENADE_TALL: f32 = 24.0;
 /// `HudDeathNotice`: `MaxDeathNotices`, `LineHeight`, top `ypos`, right margin (640 - `wide` 628).
-const FEED_LINES: usize = 4;
+pub(crate) const FEED_LINES: usize = 4;
 const FEED_LINE_HEIGHT: f32 = 22.0;
 const FEED_TOP: f32 = 12.0;
 const FEED_RIGHT: f32 = 12.0;
@@ -192,21 +192,23 @@ enum IconFont {
 }
 
 #[derive(Clone, Debug)]
-struct FeedLine {
+pub(crate) struct FeedLine {
     start_ms: i32,
-    attacker: Option<(String, Color)>,
-    victim: (String, Color),
+    pub(crate) attacker: Option<(String, Color)>,
+    pub(crate) victim: (String, Color),
     icon: (IconFont, char),
-    headshot: bool,
+    /// The CS 1.6 kill sprite (`d_ak47` … `d_skull`).
+    pub(crate) goldsrc_icon: &'static str,
+    pub(crate) headshot: bool,
 }
 
 /// CS:S death notices: the newest last, at most [`FEED_LINES`].
 #[derive(Resource, Default)]
 pub(crate) struct CsKillFeed {
-    lines: VecDeque<FeedLine>,
+    pub(crate) lines: VecDeque<FeedLine>,
 }
 
-/// Fallback when Windows has no Verdana/Tahoma.
+/// Fallback when the PC has no Verdana/Tahoma (or DejaVu Sans on Linux).
 const EMBEDDED_FONT: &[u8] = include_bytes!("../../console/assets/FreeMono.otf");
 
 fn read_font(fonts: &mut Assets<Font>, path: &Path) -> Option<Handle<Font>> {
@@ -214,14 +216,11 @@ fn read_font(fonts: &mut Assets<Font>, path: &Path) -> Option<Handle<Font>> {
     Some(fonts.add(Font::from_bytes(bytes)))
 }
 
-fn system_font(fonts: &mut Assets<Font>) -> Handle<Font> {
-    let dir = std::env::var_os("WINDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("C:/Windows"))
-        .join("Fonts");
-    ["verdanab.ttf", "tahomabd.ttf"]
-        .iter()
-        .find_map(|name| read_font(fonts, &dir.join(name)))
+/// A bold sans-serif from the PC (`names`, best first; DejaVu Sans on Linux), else the embedded
+/// fallback.
+pub(crate) fn system_font(fonts: &mut Assets<Font>, names: &[&str]) -> Handle<Font> {
+    crate::system_fonts::read(names)
+        .map(|bytes| fonts.add(Font::from_bytes(bytes)))
         .unwrap_or_else(|| fonts.add(Font::from_bytes(EMBEDDED_FONT.to_vec())))
 }
 
@@ -281,7 +280,7 @@ fn load_assets(fonts: &mut Assets<Font>, images: &mut Assets<Image>) -> CsHudAss
         numbers,
         types,
         death,
-        names: system_font(fonts),
+        names: system_font(fonts, &["verdanab.ttf", "tahomabd.ttf"]),
         sprites,
     }
 }
@@ -335,6 +334,7 @@ pub(crate) fn spawn_cs_hud(
     mut fonts: ResMut<Assets<Font>>,
     mut images: ResMut<Assets<Image>>,
     mut assets: ResMut<CsHudAssets>,
+    mut goldsrc: ResMut<crate::cs16_hud::Cs16HudAssets>,
 ) {
     if !replaces_mw2_hud() || !existing.is_empty() {
         return;
@@ -343,6 +343,12 @@ pub(crate) fn spawn_cs_hud(
         return;
     };
     *assets = load_assets(&mut fonts, &mut images);
+    // Playing with CS 1.6: its own sprite HUD instead of the CS:S panels.
+    if let Some(found) = asset_transport::find_cstrike()
+        .and_then(|dir| crate::cs16_hud::load(&dir, &mut fonts, &mut images))
+    {
+        *goldsrc = found;
+    }
     let names = &assets.names;
     let numbers = assets.numbers.as_ref().unwrap_or(names);
     let death = assets.death.as_ref().unwrap_or(names);
@@ -358,6 +364,10 @@ pub(crate) fn spawn_cs_hud(
             },
         ))
         .with_children(|hud| {
+            if goldsrc.active {
+                crate::cs16_hud::spawn_parts(hud, &goldsrc);
+                return;
+            }
             for panel in PANELS {
                 hud.spawn((
                     CsHudPart::Panel(panel),
@@ -573,11 +583,16 @@ pub(crate) fn obituary(
         Some(weapon) if has_attacker => kill_icon(weapon),
         _ => (IconFont::Death, 'C'),
     };
+    let goldsrc_icon = match weapon.as_deref() {
+        Some(weapon) if has_attacker => crate::cs16_hud::kill_sprite(weapon),
+        _ => crate::cs16_hud::WORLD_KILL,
+    };
     feed.lines.push_back(FeedLine {
         start_ms: milliseconds() as i32,
         attacker: has_attacker.then(|| player(payload.attacker_entity_num)),
         victim: player(payload.other_entity_num),
         icon,
+        goldsrc_icon,
         headshot: hud_iw4::obituary_mod(payload.event_parm) == Some(hud_iw4::MOD_HEAD_SHOT),
     });
     while feed.lines.len() > FEED_LINES {
@@ -604,8 +619,51 @@ struct Ammo {
     grenade: Option<char>,
 }
 
+fn server_info<'a>(snap: Option<&'a sim::Snapshot>, key: &str) -> Option<&'a str> {
+    snap?
+        .meta
+        .objectives
+        .server_info
+        .iter()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.as_str())
+}
+
+/// Whether the match plays the bomb mode (the server names the attacking side).
+pub(crate) fn bomb_mode(snap: Option<&sim::Snapshot>) -> bool {
+    server_info(snap, "cs_attackers").is_some()
+}
+
+/// The round timer's whole seconds left, rounded up. `None` when no timer runs, and once the
+/// bomb is planted: CS takes the round timer away then (the bomb has its own).
+pub(crate) fn round_seconds_left(snap: Option<&sim::Snapshot>) -> Option<i32> {
+    if server_info(snap, "cs_bomb").is_some_and(|bomb| bomb.starts_with("planted")) {
+        return None;
+    }
+    let snap = snap?;
+    let now = snap.tick.0.saturating_mul(sim::MATCH_TICK_MS) as i32;
+    let left = snap.meta.objectives.time_left_ms(now);
+    (left > 0).then(|| (left + 999) / 1000)
+}
+
+/// How long the plant or defuse a player is linked into takes: the 3 s plant with the C4 in
+/// hand, else the 10 s defuse (5 s with a kit).
+pub(crate) fn progress_seconds(ps: &PlayerState, weapons: Option<&PreparedWeapons>) -> f32 {
+    use weapon_iw4::cs;
+    let holding_c4 = weapons.is_some_and(|w| {
+        cs::cs_weapon_index_for(&w.0.script_name_of(ps.weapon)).is_some_and(cs::is_c4)
+    });
+    if holding_c4 {
+        cs::CS_C4_ARMING_SECONDS
+    } else if ps.cs_defuser != 0 {
+        cs::CS_DEFUSE_KIT_SECONDS
+    } else {
+        cs::CS_DEFUSE_SECONDS
+    }
+}
+
 /// Whether `ps` carries the bomb (the C4 is among its weapons).
-fn carries_c4(ps: &PlayerState, weapons: &PreparedWeapons) -> bool {
+pub(crate) fn carries_c4(ps: &PlayerState, weapons: &PreparedWeapons) -> bool {
     ps.weapons
         .iter()
         .filter_map(|&id| u32::try_from(id).ok().filter(|&id| id != 0))
@@ -652,7 +710,7 @@ fn ammo_values(ps: &PlayerState, weapons: &PreparedWeapons, presented: &Presente
     })
 }
 
-fn set_px(slot: &mut Val, px: f32) -> bool {
+pub(crate) fn set_px(slot: &mut Val, px: f32) -> bool {
     let want = Val::Px(px.round());
     if *slot == want {
         return false;
@@ -680,7 +738,7 @@ fn place_right(node: &mut Mut<Node>, right: f32, top: f32) {
     }
 }
 
-fn place(node: &mut Mut<Node>, left: f32, top: f32, size: Option<[f32; 2]>) {
+pub(crate) fn place(node: &mut Mut<Node>, left: f32, top: f32, size: Option<[f32; 2]>) {
     let mut next = Node::clone(node);
     let mut changed = set_px(&mut next.left, left) | set_px(&mut next.top, top);
     if let Some([w, h]) = size {
@@ -744,6 +802,7 @@ pub(crate) fn update_cs_hud(
     mut feed: ResMut<CsKillFeed>,
     mut flash: ResMut<CsMoneyFlash>,
     (time, mut progress): (Res<Time>, Local<Option<(f32, f32)>>),
+    goldsrc: Res<crate::cs16_hud::Cs16HudAssets>,
     mut parts: PartQuery,
 ) {
     if !replaces_mw2_hud() {
@@ -752,6 +811,10 @@ pub(crate) fn update_cs_hud(
     let now_ms = milliseconds() as i32;
     feed.lines
         .retain(|line| now_ms.saturating_sub(line.start_ms) < FEED_SECONDS_MS);
+    // The CS 1.6 HUD draws instead (`cs16_hud`); the feed above is shared.
+    if goldsrc.active {
+        return;
+    }
     if !surface.is_ready() || view.in_killcam() {
         hide_all(&mut parts);
         return;
@@ -768,14 +831,7 @@ pub(crate) fn update_cs_hud(
         values.armor = Some((ps.cs_armor as i32, ps.cs_helmet != 0));
         // Money only means something in the bomb mode (free-for-all and team deathmatch buy
         // for free), so the account shows there alone.
-        let bomb_mode = presented.snapshot().is_some_and(|snap| {
-            snap.meta
-                .objectives
-                .server_info
-                .iter()
-                .any(|(name, _)| name == "cs_attackers")
-        });
-        values.money = bomb_mode.then_some(ps.cs_money as i32);
+        values.money = bomb_mode(presented.snapshot()).then_some(ps.cs_money as i32);
         values.ammo = weapons
             .as_deref()
             .and_then(|w| ammo_values(ps, w, &presented, &local));
@@ -786,21 +842,7 @@ pub(crate) fn update_cs_hud(
             (ps.cs_defuser != 0).then_some('f')
         };
     }
-    // Once the bomb is planted CS takes the round timer away (the bomb has its own).
-    let planted = presented.snapshot().is_some_and(|snap| {
-        snap.meta
-            .objectives
-            .server_info
-            .iter()
-            .any(|(name, value)| name == "cs_bomb" && value.starts_with("planted"))
-    });
-    if let Some(snap) = presented.snapshot().filter(|_| !planted) {
-        let now = snap.tick.0.saturating_mul(sim::MATCH_TICK_MS) as i32;
-        let left = snap.meta.objectives.time_left_ms(now);
-        if left > 0 {
-            values.timer_s = Some((left + 999) / 1000);
-        }
-    }
+    values.timer_s = round_seconds_left(presented.snapshot());
     // A money change flashes the account green or red and shows the amount above it for 3 s.
     if let Some(money) = values.money {
         if let Some(last) = flash.last
@@ -829,18 +871,7 @@ pub(crate) fn update_cs_hud(
     if ps.pm_type != playerstate_iw4::PM_TYPE_NORMAL_LINKED {
         *progress = None;
     } else if progress.is_none() {
-        use weapon_iw4::cs;
-        let holding_c4 = weapons.as_deref().is_some_and(|w| {
-            cs::cs_weapon_index_for(&w.0.script_name_of(ps.weapon)).is_some_and(cs::is_c4)
-        });
-        let seconds = if holding_c4 {
-            cs::CS_C4_ARMING_SECONDS
-        } else if ps.cs_defuser != 0 {
-            cs::CS_DEFUSE_KIT_SECONDS
-        } else {
-            cs::CS_DEFUSE_SECONDS
-        };
-        *progress = Some((now_s, seconds));
+        *progress = Some((now_s, progress_seconds(ps, weapons.as_deref())));
     }
     let bar = progress.map(|(since, seconds)| ((now_s - since) / seconds).clamp(0.0, 1.0));
     for (part, mut node, text, font, color, image) in parts.iter_mut() {

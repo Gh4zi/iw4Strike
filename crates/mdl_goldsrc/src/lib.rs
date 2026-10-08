@@ -9,6 +9,8 @@
 //!
 //! The layouts follow the public `studio.h` structure definitions; the code is our own.
 
+pub mod spr;
+
 use std::fmt;
 
 /// A row-major 3x4 transform: rotation in the first three columns, translation in the fourth.

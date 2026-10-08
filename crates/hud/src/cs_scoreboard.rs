@@ -4,8 +4,6 @@
 //! installed game: Counter-Strike: Source's rounded dark panel, or Counter-Strike 1.6's flat box
 //! with orange headers. Our own layout, no Valve files beyond the system fonts.
 
-use std::path::PathBuf;
-
 use bevy::prelude::*;
 use entity_iw4::{TEAM_ALLIES, TEAM_AXIS};
 use frame::LaunchIdentity;
@@ -81,14 +79,7 @@ fn color([r, g, b]: [u8; 3], alpha: f32) -> Color {
 }
 
 fn system_font(fonts: &mut Assets<Font>, names: &[&str]) -> Option<Handle<Font>> {
-    let dir = std::env::var_os("WINDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("C:/Windows"))
-        .join("Fonts");
-    names
-        .iter()
-        .find_map(|name| std::fs::read(dir.join(name)).ok())
-        .map(|bytes| fonts.add(Font::from_bytes(bytes)))
+    crate::system_fonts::read(names).map(|bytes| fonts.add(Font::from_bytes(bytes)))
 }
 
 /// Builds the (hidden) board root under the HUD root once, under CS rules.

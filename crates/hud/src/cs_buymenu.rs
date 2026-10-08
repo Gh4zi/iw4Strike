@@ -817,14 +817,7 @@ struct Fonts {
 }
 
 fn system_font(fonts: &mut Assets<Font>, names: &[&str]) -> Handle<Font> {
-    let dir = std::env::var_os("WINDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("C:/Windows"))
-        .join("Fonts");
-    names
-        .iter()
-        .find_map(|name| std::fs::read(dir.join(name)).ok())
-        .map(|bytes| fonts.add(Font::from_bytes(bytes)))
+    crate::system_fonts::read(names).map(|bytes| fonts.add(Font::from_bytes(bytes)))
         .unwrap_or_default()
 }
 

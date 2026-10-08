@@ -3431,6 +3431,7 @@ dependencies = [
  "gamemode_iw4",
  "hud_iw4",
  "math_iw4",
+ "mdl_goldsrc",
  "mdl_source",
  "movement_iw4",
  "net",
