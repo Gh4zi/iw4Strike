@@ -26,6 +26,15 @@ what doesn't work). See `README.txt` inside.
 You still need MW2 and Counter-Strike: Source on Steam (see [What you need](#what-you-need)). To
 build it yourself, see [Setup](#setup).
 
+### Help test it
+
+Right now iw4Strike has a single tester: me. Please play it and try to break it. Look for
+exploits and bugs (movement, buying and money, the bomb, weapons, walls and props, playing with
+friends online) and anything that feels unlike CS. Report what you find in
+[**Issues**](https://github.com/Gh4zi/iw4Strike/issues): what you did, the map and mode, and
+the log (`iw4l-artifacts/logs/latest.log` next to the game). **Pull requests are more than
+welcome, even small fixes.**
+
 ---
 
 ## Features
@@ -58,7 +67,8 @@ build it yourself, see [Setup](#setup).
   1.25 s), with no put-away delay
 
 **HUD and game**
-- Counter-Strike: Source HUD: health, armor, ammo, round timer, kill feed and crosshair
+- Counter-Strike: Source HUD: health, armor, ammo, round timer, kill feed and crosshair. When
+  you play with CS 1.6, CS 1.6's own HUD, drawn with the sprites from your CS 1.6 install
 - Counter-Strike scoreboard on **TAB**: Counter-Terrorists and Terrorists with score, deaths
   and latency, in the CS:S look (or the CS 1.6 look when you play with CS 1.6)
 - MW2 minimap kept as the radar
@@ -111,7 +121,7 @@ build it yourself, see [Setup](#setup).
 
 If Counter-Strike: Source isn't installed, the models and sounds fall back to a
 Counter-Strike 1.6 install, which you select yourself in the game folders window (see below).
-The CS:S HUD needs CS:S.
+Playing with CS 1.6, the HUD is CS 1.6's, read from that install.
 
 ---
 
@@ -376,6 +386,9 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [x] The C4: plant at a bomb site, defuse with E, defuse kit, CS bomb sounds
 - [x] Other players hold the CS:S weapon models in third person
 - [x] Game folders window (MW2, CS:S, CS 1.6), with a Use box for each Counter-Strike game
+- [x] CS 1.6 HUD for players with CS 1.6: health, armor, timer, money, ammo, C4 and kit icons
+  and the kill feed, drawn with CS 1.6's own sprites
+- [x] Linux build (not tested yet)
 
 **Planned**
 - [ ] Bots that play Defusal: carry, plant and defuse the bomb themselves
@@ -385,7 +398,6 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   adds the switch
 - [ ] CS models for guns lying on the ground, and CS 1.6 models in third person for players
   without CS:S
-- [ ] A CS 1.6 HUD for players without CS:S
 - [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
   player moves the same way
 - [ ] Valve-style menus (CS:S look, read from your install), step by step: the panel system,
@@ -399,6 +411,9 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   with the CS 1.6 HUD and CS:S hands
 - [ ] Shooting through walls (CS penetration)
 - [ ] Better FPS: the server's game logic on its own thread
+- [ ] CS crosshair settings in the game options, like CS:GO's: style, size, gap, thickness,
+  colour, outline and dot
+- [ ] 4:3 resolutions (stretched or with black bars) with the HUD fitted to them
 - [ ] CoD4 maps (Crossfire, Citystreets)
 
 **Known issues**
@@ -436,6 +451,7 @@ live in these crates:
 | CS 1.6 model loading (fallback) | `crates/mdl_goldsrc` |
 | CS sounds | `crates/asset_audio/src/cs_sounds.rs` |
 | CS:S HUD and crosshair | `crates/hud/src/cs_hud.rs`, `cs_crosshair.rs` |
+| CS 1.6 HUD (GoldSrc sprites) | `crates/hud/src/cs16_hud.rs`, `crates/mdl_goldsrc/src/spr.rs` |
 | Gun drawing and AWP scope | `crates/render_gpu/src/drawsurf/cs_viewmodel.rs`, `cs_scope.rs` |
 
 IW4L's engine docs are in [`docs/`](docs/INDEX.md), and its README is
