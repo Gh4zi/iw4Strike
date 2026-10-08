@@ -62,9 +62,9 @@ fn add_ladder_steps(catalog: &mut SoundCatalog, waves: &[(u32, i32, Vec<u8>)]) -
 }
 
 /// The bomb's sounds under install-free names (`cs_c4_plant`, `cs_c4_disarm`, `cs_c4_disarmed`,
-/// `cs_c4_explode`, `cs_c4_click`, `cs_c4_beep1`; CS 1.6 also `cs_c4_beep2..5`), each mixed like
-/// the MW2 bomb sound it stands in for. CS:S has one beep that speeds up; CS 1.6 steps through
-/// five.
+/// `cs_c4_explode`, `cs_c4_click`, `cs_c4_beep1..5`), each mixed like the MW2 bomb sound it
+/// stands in for. CS:S has one beep that speeds up and carries farther step by step; CS 1.6
+/// steps through five sounds.
 pub const CS_C4_PREFIX: &str = "cs_c4_";
 
 /// The CS sounds the bomb mode's script plays by name. The server checks every script sound
@@ -102,14 +102,19 @@ const CS16_C4: [(&str, &str); 10] = [
     ("beep5", "c4_beep5"),
 ];
 
-/// CS:S sound script entries behind each bomb sound.
-const CSS_C4: [(&str, &str); 6] = [
+/// CS:S sound script entries behind each bomb sound. CS:S has one beep; its five steps are the
+/// same sound carrying farther as the timer runs down (see [`beep_reach`]).
+const CSS_C4: [(&str, &str); 10] = [
     ("plant", "c4.plant"),
     ("disarm", "c4.disarmstart"),
     ("disarmed", "c4.disarmfinish"),
     ("explode", "c4.explode"),
     ("click", "c4.click"),
     ("beep1", "c4.plantsound"),
+    ("beep2", "c4.plantsound"),
+    ("beep3", "c4.plantsound"),
+    ("beep4", "c4.plantsound"),
+    ("beep5", "c4.plantsound"),
 ];
 
 /// Voices and bomb sounds play at their own pitch: the gunshot aliases CS sounds borrow their
@@ -121,10 +126,16 @@ fn steady_pitch(row: &mut crate::CapturedAlias) {
 
 /// How far a bomb beep carries (units). CS 1.6 (`C4Think`) beeps quietly at first and louder
 /// as the timer runs out (attenuation 1.5, 1.0, 0.8, 0.5, 0.2: a GoldSrc sound fades out at
-/// 1000 / attenuation units); CS:S's single beep carries about as far as the middle ones.
+/// 1000 / attenuation units). CS:S (`C_PlantedC4::ClientThink`) gives each beep the attenuation
+/// `0.3 + 0.6 × time left`, from 0.9 to 0.3; its five steps take the middle of each fifth of
+/// the timer.
 fn beep_reach(event: &str, css: bool) -> f32 {
     match (event, css) {
-        (_, true) => 1500.0,
+        ("beep1", true) => 1000.0 / 0.84,
+        ("beep2", true) => 1000.0 / 0.72,
+        ("beep3", true) => 1000.0 / 0.6,
+        ("beep4", true) => 1000.0 / 0.48,
+        (_, true) => 1000.0 / 0.36,
         ("beep1", _) => 667.0,
         ("beep2", _) => 1000.0,
         ("beep3", _) => 1250.0,

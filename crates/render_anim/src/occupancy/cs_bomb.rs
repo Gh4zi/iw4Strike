@@ -69,11 +69,31 @@ pub(crate) struct Beeps {
     next_wave: i64,
     wave_ms: f64,
     wave: u32,
+    /// The beep sound last started, cut off by the next one or when the bomb stops ticking.
+    playing: Option<String>,
 }
 
-/// CS:S beeps once, every `max(0.1 + 0.9 × left / timer, 0.15)` s; CS 1.6 (`C4Think`) beeps every
-/// 1.4 s from half a second in, its sound stepping `c4_beep1..5` after a quarter of the timer,
-/// then 0.9 of the step before.
+/// The CS:S beep step (1-5) for the fraction of the timer `left`: the same sound, carrying
+/// farther each fifth of the way down (`cs_c4_beep1..5`).
+fn css_step(left: f32) -> u32 {
+    5 - ((left.clamp(0.0, 1.0) * 5.0) as u32).min(4)
+}
+
+fn stop_beep(beeps: &mut Beeps, sounds: &mut MessageWriter<audio::AliasCommand>) {
+    if let Some(alias) = beeps.playing.take() {
+        sounds.write(audio::AliasCommand::Stop {
+            namespace: asset_core::AssetNamespace::Iw4,
+            alias,
+            snd_ent: None,
+        });
+    }
+}
+
+/// CS:S beeps once, every `max(0.1 + 0.9 × left / timer, 0.15)` s, carrying farther as the timer
+/// runs down; CS 1.6 (`C4Think`) beeps every 1.4 s from half a second in, its sound stepping
+/// `c4_beep1..5` after a quarter of the timer, then 0.9 of the step before. Both play the beep
+/// on the bomb's voice channel: a beep cuts the one before (CS 1.6's sounds run 1.5 s, longer
+/// than the 1.4 s between them), and defusing or the blast cuts the last.
 pub(crate) fn beep_cs_bomb(
     presented: Res<net::PresentedSnapshot>,
     mut beeps: Local<Beeps>,
@@ -86,17 +106,20 @@ pub(crate) fn beep_cs_bomb(
         return;
     };
     let Some(bomb) = planted_bomb(snap) else {
+        stop_beep(&mut beeps, &mut sounds);
         beeps.bomb = None;
         return;
     };
     let now = server_ms(snap);
     if beeps.bomb != Some(bomb) {
+        stop_beep(&mut beeps, &mut sounds);
         *beeps = Beeps {
             bomb: Some(bomb),
             next_beep: bomb.planted_ms + 500,
             next_wave: bomb.planted_ms,
             wave_ms: bomb.timer_ms as f64 / 4.0,
             wave: 0,
+            playing: None,
         };
     }
     let blow = bomb.planted_ms + bomb.timer_ms;
@@ -114,11 +137,16 @@ pub(crate) fn beep_cs_bomb(
     }
     let (alias, next) = if css {
         let left = (blow - now) as f32 / bomb.timer_ms.max(1) as f32;
-        ("cs_c4_beep1".to_owned(), (0.1 + 0.9 * left).max(0.15))
+        (
+            format!("cs_c4_beep{}", css_step(left)),
+            (0.1 + 0.9 * left).max(0.15),
+        )
     } else {
         (format!("cs_c4_beep{}", beeps.wave.max(1)), 1.4)
     };
     beeps.next_beep = now + (next * 1000.0) as i64;
+    stop_beep(&mut beeps, &mut sounds);
+    beeps.playing = Some(alias.clone());
     sounds.write(audio::AliasCommand::Play(audio::PlayAlias {
         event: None,
         namespace: asset_core::AssetNamespace::Iw4,
@@ -145,5 +173,16 @@ mod tests {
         );
         assert_eq!(parse_planted("defused"), None);
         assert_eq!(parse_planted("none"), None);
+    }
+
+    #[test]
+    fn css_beep_carries_farther_each_fifth_of_the_timer() {
+        assert_eq!(css_step(1.0), 1);
+        assert_eq!(css_step(0.85), 1);
+        assert_eq!(css_step(0.79), 2);
+        assert_eq!(css_step(0.5), 3);
+        assert_eq!(css_step(0.3), 4);
+        assert_eq!(css_step(0.1), 5);
+        assert_eq!(css_step(0.0), 5);
     }
 }
