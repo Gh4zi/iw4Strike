@@ -21,6 +21,17 @@ const REPORT_SECONDS: f32 = 10.0;
 
 const REPORT_ROWS: usize = 45;
 
+/// `IW4L_PROFILE_BY_THREAD=1` keys system rows by the thread they ran on as well, so a system
+/// that runs on several threads (the sim schedule: listen authority and client prediction) splits.
+fn thread_suffix() -> String {
+    static BY_THREAD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*BY_THREAD.get_or_init(|| perf::switch("IW4L_PROFILE_BY_THREAD")) {
+        return String::new();
+    }
+    let thread = std::thread::current();
+    format!(" @{}", thread.name().unwrap_or("unnamed"))
+}
+
 fn all_spans() -> bool {
     static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ALL.get_or_init(|| perf::switch("IW4L_PROFILE_ALL_SPANS"))
@@ -108,11 +119,19 @@ where
             return;
         };
         let totals = totals.get_or_insert_with(HashMap::new);
-        if let Some(row) = totals.get_mut(name.0.as_str()) {
+        // A span is created once, on the thread that built the schedule; the thread it ran on is
+        // only known here.
+        let suffix = thread_suffix();
+        let key = if suffix.is_empty() {
+            std::borrow::Cow::Borrowed(name.0.as_str())
+        } else {
+            std::borrow::Cow::Owned(format!("{}{suffix}", name.0))
+        };
+        if let Some(row) = totals.get_mut(key.as_ref()) {
             row.0 += ns;
             row.1 += 1;
         } else {
-            totals.insert(name.0.clone(), (ns, 1));
+            totals.insert(key.into_owned(), (ns, 1));
         }
     }
 }
