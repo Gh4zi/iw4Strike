@@ -301,9 +301,44 @@ pub fn pick_folder(title: &str, start: Option<&Path>) -> Option<PathBuf> {
     }
 }
 
+/// Asks for a folder with the desktop's folder picker — `zenity` (GNOME and most desktops), else
+/// `kdialog` (KDE); `None` when cancelled or when neither is installed. Blocks the calling thread
+/// until the dialog closes.
 #[cfg(not(windows))]
 #[must_use]
-pub fn pick_folder(_title: &str, _start: Option<&Path>) -> Option<PathBuf> {
+pub fn pick_folder(title: &str, start: Option<&Path>) -> Option<PathBuf> {
+    use std::process::Command;
+    let start = start.filter(|dir| dir.is_dir());
+    let mut zenity = Command::new("zenity");
+    zenity.args(["--file-selection", "--directory", "--title", title]);
+    if let Some(dir) = start {
+        // A trailing slash opens the folder itself rather than selecting it in its parent.
+        zenity.arg(format!("--filename={}/", dir.display()));
+    }
+    let mut kdialog = Command::new("kdialog");
+    kdialog
+        .arg("--getexistingdirectory")
+        .arg(start.unwrap_or(Path::new(".")))
+        .args(["--title", title]);
+    for mut picker in [zenity, kdialog] {
+        match picker.output() {
+            Ok(output) => {
+                let picked = String::from_utf8_lossy(&output.stdout);
+                let picked = picked.trim_end_matches(['\n', '\r']);
+                return (output.status.success() && !picked.is_empty())
+                    .then(|| PathBuf::from(picked));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                diag::warn!(Zone, "folder picker failed: {error}");
+                return None;
+            }
+        }
+    }
+    diag::warn!(
+        Zone,
+        "no folder picker: install zenity or kdialog, or set the folders in .env"
+    );
     None
 }
 

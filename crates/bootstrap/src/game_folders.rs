@@ -618,7 +618,8 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
                         DIM,
                         format!(
                             "{settings}Reopen this window from Options > Game Folders, or start \
-                             iw4strike.exe paths. Your games are read in place, never copied."
+                             {} paths. Your games are read in place, never copied.",
+                            if cfg!(windows) { "iw4strike.exe" } else { "iw4strike" }
                         ),
                     ),
                     Node {

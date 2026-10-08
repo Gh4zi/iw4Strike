@@ -1,0 +1,90 @@
+# Builds the Linux game (iw4strike) and packages it with its README, LICENSE and NOTICE. Built on
+# the oldest supported Ubuntu runner so the binary also runs on older glibc distributions.
+#
+# - Publish a release on GitHub: the tar.gz is built and attached to that release.
+# - Push code to main: the tar.gz is built and kept under the run's Artifacts for 14 days.
+# - Actions > Linux build > Run workflow: build by hand; give a release tag to attach
+#   the tar.gz to that existing release.
+name: Linux build
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "packaging/linux/**"
+      - ".github/workflows/linux-build.yml"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Attach the build to this existing release (for example v0.1.0). Leave empty to only build."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-build-${{ github.ref }}-${{ inputs.release_tag || github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++ pkg-config libx11-dev \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+      - name: Install Rust (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-play
+
+      - name: Build iw4strike
+        env:
+          # Shown in the game folders window; empty for a plain push build.
+          IW4STRIKE_VERSION: ${{ env.RELEASE_TAG }}
+        run: cargo build --profile play --locked -p launcher
+
+      - name: Package
+        run: |
+          sha=$(git rev-parse --short HEAD)
+          label=${RELEASE_TAG:-$sha}
+          name="iw4Strike-$label-linux"
+          dir="out/$name"
+          mkdir -p "$dir"
+          cp target/play/iw4strike "$dir/"
+          strip "$dir/iw4strike"
+          cp LICENSE NOTICE packaging/linux/README.txt "$dir/"
+          printf '\nBuilt from commit %s (%s).\n' "$sha" "$label" >> "$dir/README.txt"
+          tar -C out -czf "out/$name.tar.gz" "$name"
+          echo "PACKAGE=$name" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: out/${{ env.PACKAGE }}.tar.gz
+          retention-days: 14
+
+      - name: Attach to release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" "out/$PACKAGE.tar.gz" --clobber --repo "${{ github.repository }}"

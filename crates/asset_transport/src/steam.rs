@@ -1,14 +1,24 @@
-#[cfg(windows)]
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::ZoneGame;
 use crate::discover::{GamesRoot, env_or_dotenv};
-use crate::game_paths::{CSS_PAK, GameFolder, saved};
-#[cfg(windows)]
 use crate::discover::{search_roots, zone_game_for_path};
+use crate::game_paths::{CSS_PAK, GameFolder, saved};
 
-pub const MW2_SHORTCUT: &str = "Modern Warfare 2.lnk";
+/// A game shortcut's file name in the games root: a Windows shortcut (`.lnk`), or on Linux a
+/// symbolic link to the game folder.
+macro_rules! shortcut {
+    ($name:literal) => {
+        if cfg!(windows) {
+            concat!($name, ".lnk")
+        } else {
+            $name
+        }
+    };
+}
+
+pub const MW2_SHORTCUT: &str = shortcut!("Modern Warfare 2");
 
 #[derive(Clone, Debug, Default)]
 pub struct SteamProbe {
@@ -25,7 +35,6 @@ pub enum SteamCandidate {
     ShortcutFailed(String),
 }
 
-#[cfg(windows)]
 pub fn link_steam_games(root: &GamesRoot) -> SteamProbe {
     let mut probe = SteamProbe::default();
     let roots = search_roots(&root.0);
@@ -33,10 +42,14 @@ pub fn link_steam_games(root: &GamesRoot) -> SteamProbe {
         (ZoneGame::Iw4, MW2_SHORTCUT, "Call of Duty Modern Warfare 2"),
         (
             ZoneGame::Iw5,
-            "Modern Warfare 3.lnk",
+            shortcut!("Modern Warfare 3"),
             "Call of Duty Modern Warfare 3",
         ),
-        (ZoneGame::T5, "Black Ops.lnk", "Call of Duty Black Ops"),
+        (
+            ZoneGame::T5,
+            shortcut!("Black Ops"),
+            "Call of Duty Black Ops",
+        ),
     ];
     let only_mw2 = crate::discover::only_mw2();
     let missing = titles
@@ -95,11 +108,6 @@ pub fn link_steam_games(root: &GamesRoot) -> SteamProbe {
     probe
 }
 
-#[cfg(not(windows))]
-pub fn link_steam_games(_root: &GamesRoot) -> SteamProbe {
-    SteamProbe::default()
-}
-
 /// Environment override naming a Counter-Strike: Source `cstrike` folder.
 pub const CSS_ENV: &str = "IW4L_CSS";
 
@@ -135,7 +143,6 @@ fn css_pak_in(dir: &Path) -> Option<PathBuf> {
 /// Counter-Strike: Source's pack in a Steam library.
 #[must_use]
 pub fn steam_css_pak() -> Option<PathBuf> {
-    #[cfg(windows)]
     for library in steam_libraries() {
         let dir = library
             .join("steamapps")
@@ -174,7 +181,6 @@ pub fn find_cstrike() -> Option<PathBuf> {
     saved(GameFolder::Cs16)
 }
 
-#[cfg(windows)]
 fn has_game(roots: &[PathBuf], game: ZoneGame) -> bool {
     roots.iter().any(|root| {
         std::iter::once(root.clone())
@@ -187,7 +193,6 @@ fn has_game(roots: &[PathBuf], game: ZoneGame) -> bool {
     })
 }
 
-#[cfg(windows)]
 fn subdirs(dir: &Path) -> Vec<PathBuf> {
     match std::fs::read_dir(dir) {
         Ok(entries) => entries
@@ -230,8 +235,20 @@ fn create_shortcut(link: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
+#[cfg(unix)]
+fn create_shortcut(link: &Path, target: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(target, link)
+        .map_err(|error| format!("cannot create {}: {error}", link.display()))
+}
+
+#[cfg(not(any(windows, unix)))]
+fn create_shortcut(link: &Path, _target: &Path) -> Result<(), String> {
+    Err(format!("cannot create {} on this system", link.display()))
+}
+
+/// Steam's own folders on this PC: the registry's paths and the default installs.
 #[cfg(windows)]
-fn steam_libraries() -> Vec<PathBuf> {
+fn steam_installs() -> Vec<PathBuf> {
     let mut installs = Vec::new();
     for install in [
         registry_string(true, "Software\\Valve\\Steam", "SteamPath"),
@@ -247,6 +264,35 @@ fn steam_libraries() -> Vec<PathBuf> {
             installs.push(install);
         }
     }
+    installs
+}
+
+/// Steam's own folders on this PC: the native install (`~/.local/share/Steam`, also reached
+/// through `~/.steam/steam`), Flatpak's and Snap's.
+#[cfg(not(windows))]
+fn steam_installs() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    let xdg_data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| home.join(".local/share"));
+    [
+        xdg_data.join("Steam"),
+        home.join(".steam/steam"),
+        home.join(".steam/root"),
+        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
+        home.join("snap/steam/common/.local/share/Steam"),
+    ]
+    .into_iter()
+    .filter(|install| install.join("steamapps").is_dir())
+    .collect()
+}
+
+/// Every Steam library: each install and the folders its `libraryfolders.vdf` lists, once each.
+fn steam_libraries() -> Vec<PathBuf> {
+    let installs = steam_installs();
     let mut libraries: Vec<PathBuf> = Vec::new();
     let mut seen = HashSet::new();
     for install in &installs {
@@ -269,7 +315,6 @@ fn steam_libraries() -> Vec<PathBuf> {
     libraries
 }
 
-#[cfg(windows)]
 fn steam_library_paths(vdf: &str) -> Vec<PathBuf> {
     vdf.lines()
         .filter_map(|line| line.trim().strip_prefix("\"path\""))
@@ -312,4 +357,33 @@ fn registry_string(current_user: bool, key: &str, value: &str) -> Option<PathBuf
     }
     let len = (bytes as usize / 2).saturating_sub(1);
     Some(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..len])))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn library_paths_read_windows_and_linux_vdf() {
+        let vdf = r#""libraryfolders"
+{
+	"0"
+	{
+		"path"		"C:\\Program Files (x86)\\Steam"
+	}
+	"1"
+	{
+		"path"		"/home/player/Games/SteamLibrary"
+		"label"		""
+	}
+}
+"#;
+        assert_eq!(
+            steam_library_paths(vdf),
+            [
+                PathBuf::from(r"C:\Program Files (x86)\Steam"),
+                PathBuf::from("/home/player/Games/SteamLibrary"),
+            ]
+        );
+    }
 }

@@ -18,10 +18,11 @@ files are included in this repository.
 
 ## Download
 
-**Just want to play?** Get the Windows build from
-[**Releases**](https://github.com/Gh4zi/iw4Strike/releases). Extract the zip, run `iw4strike.exe`,
-and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on Steam (see
-[What you need](#what-you-need)). To build it yourself, see [Setup](#setup).
+**Just want to play?** Get the Windows or Linux build from
+[**Releases**](https://github.com/Gh4zi/iw4Strike/releases). On Windows, extract the zip and run
+`iw4strike.exe`; on Linux, extract the `tar.gz` and run `./iw4strike`. See `README.txt` inside.
+You still need MW2 and Counter-Strike: Source on Steam (see [What you need](#what-you-need)). To
+build it yourself, see [Setup](#setup).
 
 ---
 
@@ -101,9 +102,10 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 |---|---|
 | **Call of Duty: Modern Warfare 2** (2009, Steam) | Maps and engine data |
 | **Counter-Strike: Source** (Steam) | Weapon models, sounds and HUD fonts |
-| **Windows** | Steam games are found automatically on Windows |
+| **Windows or Linux** | Steam games are found automatically on both. On Linux, install MW2 through Steam Play (Proton); iw4Strike only reads its files |
 | **Rust** ([rustup](https://rustup.rs)) | To build the game |
-| **Visual Studio Build Tools** | Pick the *Desktop development with C++* workload |
+| **Visual Studio Build Tools** (Windows) | Pick the *Desktop development with C++* workload |
+| **Build packages** (Linux) | `sudo apt install g++ pkg-config libx11-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev` |
 
 If Counter-Strike: Source isn't installed, the models and sounds fall back to a
 Counter-Strike 1.6 install, which you select yourself in the game folders window (see below).
@@ -122,9 +124,10 @@ cd iw4Strike
 
 ### 2. Game folders
 
-MW2 and Counter-Strike: Source are found in your Steam libraries automatically. The first time
-you start the game menu (`iw4strike.exe` with no arguments), a small **game folders** window shows
-what was found:
+MW2 and Counter-Strike: Source are found in your Steam libraries automatically (on Linux:
+`~/.local/share/Steam`, Flatpak and Snap Steam, and every library folder Steam lists). The first
+time you start the game menu (`iw4strike.exe` with no arguments), a small **game folders** window
+shows what was found:
 
 | | |
 |---|---|
@@ -132,7 +135,8 @@ what was found:
 | **Counter-Strike: Source** (recommended) | Weapon models, sounds and HUD |
 | **Counter-Strike 1.6** (optional) | Your `Half-Life` folder. Never searched for |
 
-Press **Browse...** to select a folder yourself, then **Play**. Each Counter-Strike game has a
+Press **Browse...** to select a folder yourself (on Linux this needs `zenity` or `kdialog`), then
+**Play**. Each Counter-Strike game has a
 **Use** box: untick Counter-Strike: Source to play with CS 1.6 even when CS:S is installed
 (with both ticked, CS:S is used). **Clear** forgets a folder you picked. The folders are saved in
 `iw4l-artifacts\settings.cfg`. The game also shows this window whenever it can't find MW2.
@@ -156,18 +160,18 @@ cargo run --profile play -p launcher -- map mp_boneyard --cmds "wait world; spaw
 This builds the game and starts a match on Boneyard with three bots. The first build takes
 a while. With GNU Make installed, `make map mp_boneyard CMDS='...'` does the same.
 
-### Automatic Windows builds
+### Automatic builds
 
-GitHub builds `iw4strike.exe` for you with the
-[Windows build](.github/workflows/windows-build.yml) workflow:
+GitHub builds the game for you with the
+[Windows build](.github/workflows/windows-build.yml) (`iw4strike.exe`, a zip) and
+[Linux build](.github/workflows/linux-build.yml) (`iw4strike`, a `tar.gz`) workflows:
 
 - **Publish a release** (Releases → *Draft a new release* → new tag such as `v0.2.0` →
-  *Publish release*). About 30–60 minutes later the zip is attached to that release.
-- **Push code to `main`.** The zip is built and kept for 14 days under
-  [Actions](https://github.com/Gh4zi/iw4Strike/actions/workflows/windows-build.yml) → the
-  run → *Artifacts*.
-- **Build by hand:** Actions → *Windows build* → *Run workflow*. Fill in a release tag to
-  attach the zip to that release.
+  *Publish release*). About 30–60 minutes later both builds are attached to that release.
+- **Push code to `main`.** Both builds are kept for 14 days under
+  [Actions](https://github.com/Gh4zi/iw4Strike/actions) → the run → *Artifacts*.
+- **Build by hand:** Actions → *Windows build* or *Linux build* → *Run workflow*. Fill in a
+  release tag to attach the build to that release.
 
 ---
 
@@ -412,6 +416,8 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
   gunfire can still clip.
 - Walking over a gun picks it up only when its slot is empty, as in CS. To take a gun in a
   slot you already use, drop yours with **G** first.
+- The Linux build is new: GitHub builds it, but it hasn't been played on a Linux PC yet.
+  Please report what doesn't work.
 
 ---
 

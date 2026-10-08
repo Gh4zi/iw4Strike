@@ -15,7 +15,7 @@ HOW TO PLAY
      Counter-Strike: Source are found through Steam automatically.
      - Not found: press Browse... and select the game's folder.
      - No CS:Source at all: select your Half-Life folder (Counter-Strike 1.6)
-       instead. It is only used when CS:Source is missing.
+       instead. It is used when CS:Source is missing or its Use box is off.
      Then press Play. Open the window again from Options > Game Folders.
 
 IN GAME

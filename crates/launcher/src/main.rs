@@ -54,22 +54,24 @@ fn main() {
     bootstrap::launch(games, artifacts, mode, acceptance, cheats);
 }
 
+/// Runs the game from its own folder, so its settings and logs (`iw4l-artifacts`) stay beside
+/// it wherever it was started from. On Linux a build inside a source checkout (`make`, `cargo
+/// run`) keeps the working directory the developer chose.
 fn prepare_process_root() -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        let exe =
-            std::env::current_exe().map_err(|error| format!("cannot locate iw4strike.exe: {error}"))?;
-        let root = exe
-            .parent()
-            .ok_or_else(|| format!("iw4strike.exe has no parent directory: {}", exe.display()))?;
-        std::env::set_current_dir(root).map_err(|error| {
-            format!(
-                "cannot enter launcher directory {}: {error}",
-                root.display()
-            )
-        })?;
+    let exe =
+        std::env::current_exe().map_err(|error| format!("cannot locate iw4strike: {error}"))?;
+    let root = exe
+        .parent()
+        .ok_or_else(|| format!("iw4strike has no parent directory: {}", exe.display()))?;
+    if cfg!(not(windows)) && root.ancestors().any(|dir| dir.join("Cargo.toml").is_file()) {
+        return Ok(());
     }
-    Ok(())
+    std::env::set_current_dir(root).map_err(|error| {
+        format!(
+            "cannot enter launcher directory {}: {error}",
+            root.display()
+        )
+    })
 }
 
 fn announce_log(path: PathBuf) {

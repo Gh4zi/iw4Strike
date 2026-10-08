@@ -72,7 +72,6 @@ pub fn games_root_from_env() -> Result<GamesRoot, String> {
     Ok(GamesRoot(path))
 }
 
-#[cfg(windows)]
 fn default_games_root() -> Result<PathBuf, String> {
     std::env::current_exe()
         .ok()
@@ -80,11 +79,6 @@ fn default_games_root() -> Result<PathBuf, String> {
         .ok_or_else(|| {
             "IW4L_GAMES is unset and the portable launcher directory is unavailable".to_owned()
         })
-}
-
-#[cfg(not(windows))]
-fn default_games_root() -> Result<PathBuf, String> {
-    Err("IW4L_GAMES is not set — copy .env.example to .env and set the games root".to_owned())
 }
 
 /// iw4Strike plays with MW2 alone, always: game shortcuts to other titles' installs (MW3, Black
@@ -152,39 +146,50 @@ pub fn auto_mw2_folder(root: &Path) -> Option<PathBuf> {
         .and_then(|path| game_root_for_zone(&path).ok())
 }
 
-/// The targets of the game shortcuts (`.lnk`) in `root`, MW2's alone unless [`only_mw2`] is off.
+/// The targets of the game shortcuts in `root` (Windows `.lnk` shortcuts; on Linux, symbolic
+/// links), MW2's alone unless [`only_mw2`] is off.
 fn shortcut_targets(root: &Path) -> Vec<PathBuf> {
-    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut targets = Vec::new();
-    #[cfg(windows)]
-    {
-        let Ok(entries) = std::fs::read_dir(root) else {
-            return targets;
-        };
-        let mut links = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"))
-            })
-            .collect::<Vec<_>>();
-        links.sort();
-        for link_path in links {
-            match shortcut_target_root(&link_path) {
-                Ok(target) if only_mw2() && !holds_mw2(&target) => {}
-                Ok(target) => targets.push(target),
-                Err(error) => diag::warn!(
-                    Zone,
-                    "game shortcut {} ignored: {error}",
-                    link_path.display()
-                ),
-            }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return targets;
+    };
+    let mut links = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| is_shortcut(path))
+        .collect::<Vec<_>>();
+    links.sort();
+    for link_path in links {
+        match shortcut_target_root(&link_path) {
+            Ok(target) if only_mw2() && !holds_mw2(&target) => {}
+            Ok(target) => targets.push(target),
+            Err(error) => diag::warn!(
+                Zone,
+                "game shortcut {} ignored: {error}",
+                link_path.display()
+            ),
         }
     }
-    #[cfg(not(windows))]
-    let _ = root;
     targets
+}
+
+#[cfg(windows)]
+fn is_shortcut(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"))
+}
+
+#[cfg(not(windows))]
+fn is_shortcut(path: &Path) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+}
+
+#[cfg(not(windows))]
+fn shortcut_target_root(link_path: &Path) -> Result<PathBuf, String> {
+    let target = std::fs::canonicalize(link_path)
+        .map_err(|error| format!("cannot follow the link: {error}"))?;
+    game_root_for_shortcut_target(&target)
 }
 
 #[cfg(windows)]
@@ -214,7 +219,6 @@ fn shortcut_target_root(link_path: &Path) -> Result<PathBuf, String> {
     game_root_for_shortcut_target(&target)
 }
 
-#[cfg(windows)]
 fn game_root_for_shortcut_target(target: &Path) -> Result<PathBuf, String> {
     if target.is_dir() {
         return Ok(target.to_path_buf());
