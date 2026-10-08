@@ -1237,7 +1237,20 @@ fn apply_master_lifecycle(
     if let Some(hub) = hub.as_mut()
         && matches!(state, MasterBridgeState::Hosting { .. })
     {
-        hub.reconcile_relay_membership(state.members(), state.identity().member_id);
+        // Slots bots and players already hold: a joiner must not be given one of them, or the
+        // host refuses its account (`ClientInUse`) — a host with bots could not be joined.
+        let occupied: Vec<_> = authority
+            .as_ref()
+            .map(|authority| {
+                authority
+                    .0
+                    .clients_scoreboard()
+                    .into_iter()
+                    .map(|(client, _)| client.0)
+                    .collect()
+            })
+            .unwrap_or_else(Vec::new);
+        hub.reconcile_relay_membership(state.members(), state.identity().member_id, &occupied);
     }
     for fact in bridge.drain_facts() {
         match fact {

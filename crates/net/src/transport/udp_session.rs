@@ -327,23 +327,30 @@ impl UdpAuthorityHub {
         self.bootstrap = Some(lane);
     }
 
-    fn enroll_relay_member(&mut self, member_id: MemberId) -> ConnectionId {
+    fn enroll_relay_member(&mut self, member_id: MemberId, occupied: &[u32]) -> ConnectionId {
         if let Some((conn, _)) = self.member_by_conn.iter().find(|(_, id)| **id == member_id) {
             return *conn;
         }
-        let (conn, _) = self.connections.accept_new();
+        let (conn, _) = self.connections.accept_new(occupied);
         self.peers.insert(conn, member_id);
         self.replication.insert(conn, PeerReplicationState::new());
         self.member_by_conn.insert(conn, member_id);
         conn
     }
 
-    pub fn reconcile_relay_membership(&mut self, members: &[MemberId], local: MemberId) {
+    /// Enrolls every room member but the host; `occupied` are the client slots already in the
+    /// world (bots, players), which new members must not take.
+    pub fn reconcile_relay_membership(
+        &mut self,
+        members: &[MemberId],
+        local: MemberId,
+        occupied: &[u32],
+    ) {
         for member_id in members {
             if *member_id == local || self.denied.contains(member_id) {
                 continue;
             }
-            self.enroll_relay_member(*member_id);
+            self.enroll_relay_member(*member_id, occupied);
         }
     }
 

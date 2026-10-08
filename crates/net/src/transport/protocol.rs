@@ -715,7 +715,12 @@ impl ConnectionTable {
         }
     }
 
-    pub fn accept_new(&mut self) -> (ConnectionId, u32) {
+    /// A new connection and its client slot, skipping `occupied` slots (bots and players
+    /// already in the world), so a joiner never lands on a bot's slot.
+    pub fn accept_new(&mut self, occupied: &[u32]) -> (ConnectionId, u32) {
+        while occupied.contains(&self.next_client) {
+            self.next_client = self.next_client.wrapping_add(1);
+        }
         self.next_conn = self.next_conn.wrapping_add(1);
         let conn = ConnectionId(self.next_conn);
         let client = self.next_client;
