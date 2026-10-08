@@ -89,6 +89,10 @@ pub struct DpvsFrameStats {
 
     pub cell_clips: Vec<CellClipPlanes>,
 
+    /// Every portal visit of the walk, in order: the cell and the planes it was seen through.
+    /// A cell seen through several portals appears once per portal.
+    pub cell_clip_visits: Vec<(u32, CellClipPlanes)>,
+
     pub cell_vis_all: bool,
 }
 
@@ -146,6 +150,7 @@ pub fn apply_dpvs_cull(
     stats.cell_vis.clear();
     stats.cell_vis_count = 0;
     stats.cell_clips.clear();
+    stats.cell_clip_visits.clear();
     stats.cell_vis_all = false;
     stats.view_prepared = 0;
     stats.lock_pvs = 0;
@@ -222,6 +227,9 @@ pub fn apply_dpvs_cull(
                 &mut scratch,
                 Some(&mut cell_clips),
                 bevels.as_ref(),
+                Some(&mut |visited: usize, planes: &CellClipPlanes| {
+                    stats.cell_clip_visits.push((visited as u32, *planes));
+                }),
             );
             stats.cell_clips = cell_clips;
         }

@@ -22,10 +22,10 @@ pub use prepare::gfx_scene::{
 pub use prepare::scene::world::*;
 pub use prepare::sun::{add_bsp_sun_shadow_partition, pack_sun_shadow_caster_lists};
 pub use prepare::worker_cmds::{
-    AddWorkerCmd, BoundEntWorkerCmd, CellFrustumWorkerCmd, DpvsEntWorkerCmd,
-    SkinCachedStaticModelCmd, SpotShadowEntWorkerCmd, WORKER_CMD_BOUND_ENT, WORKER_CMD_BUSY,
-    WORKER_CMD_CELL_DYN_BRUSH, WORKER_CMD_CELL_DYN_MODEL, WORKER_CMD_CELL_SCENE_ENT,
-    WORKER_CMD_COUNT, WORKER_CMD_DPVS_ENT, WORKER_CMD_SMODELCACHE, WORKER_CMD_SPOT_SHADOW_ENT,
-    WorkerCmdBusy, WorkerCmdBusyInput, WorkerCmdError, WorkerCmdQueues, enqueue_cell_frustum_cmds,
-    worker_cmd_dispatch_skips_device_lost,
+    AddWorkerCmd, BoundEntWorkerCmd, CELL_VISIT_FIRST, CELL_VISIT_FRUSTUM, CellFrustumWorkerCmd,
+    DpvsEntWorkerCmd, SkinCachedStaticModelCmd, SpotShadowEntWorkerCmd, WORKER_CMD_BOUND_ENT,
+    WORKER_CMD_BUSY, WORKER_CMD_CELL_DYN_BRUSH, WORKER_CMD_CELL_DYN_MODEL,
+    WORKER_CMD_CELL_SCENE_ENT, WORKER_CMD_COUNT, WORKER_CMD_DPVS_ENT, WORKER_CMD_SMODELCACHE,
+    WORKER_CMD_SPOT_SHADOW_ENT, WorkerCmdBusy, WorkerCmdBusyInput, WorkerCmdError,
+    WorkerCmdQueues, enqueue_cell_frustum_cmds, worker_cmd_dispatch_skips_device_lost,
 };
