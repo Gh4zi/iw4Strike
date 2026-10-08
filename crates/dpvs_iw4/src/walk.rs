@@ -302,6 +302,9 @@ pub(crate) fn finalize_queued_hull_no_frustum(item: &mut Queued, view_dir: [f32;
     true
 }
 
+/// Called for every portal visit of a cell, with the planes it was seen through.
+pub type CellVisit<'a> = dyn FnMut(usize, &CellClipPlanes) + 'a;
+
 pub fn visit_cells(
     graph: &CellPortalGraph<'_>,
     camera_cell: usize,
@@ -313,7 +316,7 @@ pub fn visit_cells(
     scratch: &mut WalkScratch,
     mut cell_clips: Option<&mut [CellClipPlanes]>,
     bevels: Option<&PortalBevels>,
-    mut on_visit: Option<&mut dyn FnMut(usize, &CellClipPlanes)>,
+    mut on_visit: Option<&mut CellVisit<'_>>,
 ) -> WalkStats {
     let mut stats = WalkStats::default();
     let near = clip_planes.first().copied();

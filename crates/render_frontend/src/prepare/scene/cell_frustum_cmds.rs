@@ -46,13 +46,12 @@ fn enqueue_cell_frustum_cmds_after_vis(
     };
     let frustum_n = u8::try_from(stats.frustum_planes.len()).unwrap_or(u8::MAX);
     let cells = admitted_cell_indices(&stats.cell_vis, stats.cell_vis_count);
-    let mut enqueue = |cmd: CellFrustumWorkerCmd| {
-        match enqueue_cell_frustum_cmds(&mut worker_cmds.queues, cmd) {
-            Ok(adds) if adds.iter().any(|a| *a == AddWorkerCmd::OverflowInline) => false,
+    let mut enqueue =
+        |cmd: CellFrustumWorkerCmd| match enqueue_cell_frustum_cmds(&mut worker_cmds.queues, cmd) {
+            Ok(adds) if adds.contains(&AddWorkerCmd::OverflowInline) => false,
             Err(_) => false,
             Ok(_) => true,
-        }
-    };
+        };
     // One command per portal visit, each culling the cell's entities against the planes it
     // was seen through, as IW4 does: an entity seen through any of a cell's portals is drawn.
     let visits = &stats.cell_clip_visits;

@@ -1046,9 +1046,7 @@ pub(crate) fn update_command_context_code_sources(
         // no sun map is drawn, and lit surfaces take the sun technique without the shadow lookup.
         let (sm_enable, sm_sun_enable) = &sm;
         let sun_shadows = sm_enable.enabled != Some(false) && sm_sun_enable.enabled != Some(false);
-        if sun_shadows
-            && let Some(bounds) = scene.as_deref().and_then(|scene| scene.world_bounds)
-        {
+        if sun_shadows && let Some(bounds) = scene.as_deref().and_then(|scene| scene.world_bounds) {
             let world_mid = [bounds[0], bounds[1], bounds[2]];
             let world_half = [bounds[3], bounds[4], bounds[5]];
             let shadow_forward = super::sun_shadow_forward_from_light_dir(light.direction);
