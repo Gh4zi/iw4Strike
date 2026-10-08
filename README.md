@@ -106,6 +106,8 @@ welcome, even small fixes.**
   `cl_roundbanner css|cs16|mw2`, saved): CS:S's win panel (default), CS 1.6's centre message,
   or MW2's round outcome
 
+  ![Options > Multiplayer Options > Round End Banner](docs/screenshots/options-round-end-banner.webp)
+
 ---
 
 ## What you need
@@ -154,6 +156,12 @@ Press **Browse...** to select a folder yourself (on Linux this needs `zenity` or
 `iw4l-artifacts\settings.cfg`. The game also shows this window whenever it can't find MW2.
 To open it again, use **Options > Game Folders**, the `game_paths` console command, or run
 `iw4strike.exe paths`. `map ...` launches skip the window and use the saved folders.
+
+**To change games** (for example to play with CS 1.6 instead of CS:S), use **Options > Game
+Folders**. **Warning: this quits the game** (leave your match first) and opens the game folders
+window; press **Play** there to start again with the new choice.
+
+![Options > Game Folders](docs/screenshots/options-game-folders.webp)
 
 iw4Strike only reads from these folders. It never changes or copies their files.
 
@@ -231,6 +239,10 @@ The buy menu comes in two looks, switched with `_vgui_menus` (saved), as in CS 1
   CS:S.
 - `_vgui_menus 0`: CS 1.6's old numbered text menu at the left of the screen (its text comes
   from your CS 1.6 install when you have one). Pick with the number keys while you keep moving.
+
+| `_vgui_menus 1` (buy window) | `_vgui_menus 0` (text menu) |
+|---|---|
+| ![Buy window, _vgui_menus 1](docs/screenshots/buy-menu-vgui.webp) | ![Text buy menu, _vgui_menus 0](docs/screenshots/buy-menu-classic.webp) |
 
 In free-for-all there are no sides: **9** in the buy menu switches between the Terrorist and
 Counter-Terrorist guns.
