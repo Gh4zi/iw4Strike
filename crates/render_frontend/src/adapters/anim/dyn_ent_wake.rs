@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use bevy::platform::collections::HashMap;
 use std::time::Instant;
 
 use bevy::prelude::*;
@@ -87,16 +87,20 @@ fn wake_query_cell_n(lo: (i32, i32, i32), hi: (i32, i32, i32)) -> i64 {
 }
 
 impl DynEntWakeBroadphase {
-    fn rebuild(&mut self, entries: impl IntoIterator<Item = DynEntWakeEntry>) {
-        self.entries.clear();
-        self.cells.clear();
-        self.candidate_indices.clear();
-        self.candidates.clear();
+    fn reset_frame_counters(&mut self) {
         self.query_n = 0;
         self.candidate_n = 0;
         self.full_scan_n = 0;
         self.fallback_n = 0;
         self.query_ms = 0.0;
+    }
+
+    fn rebuild(&mut self, entries: impl IntoIterator<Item = DynEntWakeEntry>) {
+        self.entries.clear();
+        self.cells.clear();
+        self.candidate_indices.clear();
+        self.candidates.clear();
+        self.reset_frame_counters();
         self.built = true;
 
         for entry in entries {
@@ -180,11 +184,25 @@ impl DynEntWakeBroadphase {
     }
 }
 
+type MovedDynEnt = (
+    With<DynEntModelEntity>,
+    Or<(Changed<WorldDynEntInstance>, Changed<Transform>)>,
+);
+
 pub(crate) fn rebuild_dyn_ent_wake_broadphase(
     catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     instances: Query<(Entity, &WorldDynEntInstance, &Transform), With<DynEntModelEntity>>,
+    moved: Query<(), MovedDynEnt>,
+    mut removed: RemovedComponents<DynEntModelEntity>,
     mut broadphase: ResMut<DynEntWakeBroadphase>,
 ) {
+    // Most props sit still: rebuild only when one moved, changed model, appeared or went away.
+    let removed_any = removed.read().count() > 0;
+    let catalog_changed = catalog.as_ref().is_some_and(|catalog| catalog.is_changed());
+    if broadphase.built && !removed_any && !catalog_changed && moved.is_empty() {
+        broadphase.reset_frame_counters();
+        return;
+    }
     let catalog = catalog.as_deref();
     broadphase.rebuild(instances.iter().map(|(entity, inst, transform)| {
         let radius = can_wake(inst)

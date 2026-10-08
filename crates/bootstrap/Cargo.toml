@@ -18,9 +18,11 @@ bevy-debug = ["bevy/debug", "bevy/track_location"]
 # long" into a statement about where the time went.
 bevy-trace = ["bevy/trace", "bevy/trace_chrome"]
 # Per-system CPU time totals logged every 10 s (`system_profile.rs`); no trace file.
-bevy-profile = ["bevy/trace", "bevy/debug"]
+bevy-profile = ["bevy/trace", "bevy/debug", "dep:profiling"]
 
 [dependencies]
+# Only for `bevy-profile`: turns wgpu's `profiling::scope!` markers into tracing spans.
+profiling = { version = "1.0.18", optional = true, features = ["profile-with-tracing"] }
 bevy.workspace = true
 asset_audio.workspace = true
 asset_core.workspace = true

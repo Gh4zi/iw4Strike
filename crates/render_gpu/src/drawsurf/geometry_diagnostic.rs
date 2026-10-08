@@ -1,5 +1,5 @@
 use crate::drawsurf::scene_depth::{SCENE_DEPTH_FORMAT, SceneDepthTexture};
-use std::collections::HashSet;
+use bevy::platform::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 

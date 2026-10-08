@@ -21,6 +21,19 @@ const REPORT_SECONDS: f32 = 10.0;
 
 const REPORT_ROWS: usize = 45;
 
+fn all_spans() -> bool {
+    static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ALL.get_or_init(|| perf::switch("IW4L_PROFILE_ALL_SPANS"))
+}
+
+/// `IW4L_PROFILE_ROWS=<n>` logs more (or fewer) rows than the default.
+fn report_rows() -> usize {
+    std::env::var("IW4L_PROFILE_ROWS")
+        .ok()
+        .and_then(|rows| rows.trim().parse().ok())
+        .unwrap_or(REPORT_ROWS)
+}
+
 static TOTALS: Mutex<Option<HashMap<String, (u64, u64)>>> = Mutex::new(None);
 
 struct SystemName(String);
@@ -34,26 +47,40 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_new_span(&self, attrs: &span::Attributes<'_>, id: &span::Id, ctx: Context<'_, S>) {
-        if attrs.metadata().name() != "system" {
-            return;
-        }
-        struct NameField(Option<String>);
+        // Besides systems: a render system's command encoder is finished in its deferred apply,
+        // outside the system span, and wgpu encodes every recorded pass there.
+        let (field_name, prefix) = match attrs.metadata().name() {
+            "system" => ("name", ""),
+            "RenderContextState::apply" => ("system", "encoder finish: "),
+            name if name == "queue_submit" || all_spans() => {
+                // `IW4L_PROFILE_ALL_SPANS=1`: every other span by its static name, wgpu's
+                // `profiling::scope!` markers among them.
+                if let Some(span) = ctx.span(id) {
+                    span.extensions_mut()
+                        .insert(SystemName(format!("span: {name}")));
+                }
+                return;
+            }
+            _ => return,
+        };
+        struct NameField(&'static str, Option<String>);
         impl Visit for NameField {
             fn record_str(&mut self, field: &Field, value: &str) {
-                if field.name() == "name" {
-                    self.0 = Some(value.to_owned());
+                if field.name() == self.0 {
+                    self.1 = Some(value.to_owned());
                 }
             }
             fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-                if field.name() == "name" {
-                    self.0 = Some(format!("{value:?}"));
+                if field.name() == self.0 {
+                    self.1 = Some(format!("{value:?}"));
                 }
             }
         }
-        let mut name = NameField(None);
+        let mut name = NameField(field_name, None);
         attrs.record(&mut name);
-        if let (Some(name), Some(span)) = (name.0, ctx.span(id)) {
-            span.extensions_mut().insert(SystemName(name));
+        if let (Some(name), Some(span)) = (name.1, ctx.span(id)) {
+            span.extensions_mut()
+                .insert(SystemName(format!("{prefix}{name}")));
         }
     }
 
@@ -116,7 +143,7 @@ fn report(mut clock: Local<ReportClock>) {
         "system profile: {frames} frames, all systems {:.3} ms/frame (summed over threads)",
         all_ns as f64 / 1e6 / frames as f64
     );
-    for (name, (ns, count)) in rows.into_iter().take(REPORT_ROWS) {
+    for (name, (ns, count)) in rows.into_iter().take(report_rows()) {
         diag::info!(
             Launch,
             "system profile: {:>8.3} ms/frame {:>6.2} runs/frame  {name}",

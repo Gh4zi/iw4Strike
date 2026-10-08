@@ -11,6 +11,7 @@ pub(crate) struct BarracksMenuState {
     reward_hover: usize,
     rewards: Vec<u32>,
     status: String,
+    published: bool,
 }
 
 pub(crate) fn register(registry: &mut ConsoleRegistry) {
@@ -47,11 +48,23 @@ pub(crate) fn route(
         commands.read().for_each(drop);
         return;
     }
-    let rows = reward_rows(&catalog);
-    for command in commands
+    let pending: Vec<&ConsoleCommand> = commands
         .read()
         .filter(|command| command.name.starts_with("ui_barracks_"))
+        .collect();
+    // The barracks rows only change on a barracks command or a new profile, catalog or name.
+    if pending.is_empty()
+        && state.published
+        && !profile.is_changed()
+        && !settings.is_changed()
+        && !catalog.is_changed()
+        && !loc.is_changed()
     {
+        return;
+    }
+    state.published = true;
+    let rows = reward_rows(&catalog);
+    for command in pending {
         let arg = command.args.first().map(String::as_str).unwrap_or("");
         let index = arg.parse::<usize>().ok();
         let table_name = if state.emblems {

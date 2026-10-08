@@ -9,13 +9,27 @@ pub fn publish_gap_hud(
     report: Option<Res<LaunchReport>>,
     class_store: Res<SessionClassStore>,
     mut hud: ResMut<GapHud>,
+    mut published: Local<bool>,
+    loading: Option<Res<assets::LoadingScreen>>,
+    screen: Res<frame::AppScreen>,
 ) {
+    // Hidden in game, in menus and while loading: nothing reads it there.
+    if !crate::gap_hud::gap_should_show(loading, screen) {
+        *published = false;
+        return;
+    }
     let Some(identity) = identity else {
         return;
     };
     let Some(report) = report else {
         return;
     };
+    // Rebuilding the text every frame only to compare it costs a frame budget's worth of
+    // formatting; the inputs say when it can differ.
+    if *published && !report.is_changed() && !identity.is_changed() && !class_store.is_changed() {
+        return;
+    }
+    *published = true;
 
     let mut body = vec![
         format!("role: {}", identity.role_label),

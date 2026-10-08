@@ -9,18 +9,35 @@ pub struct UiPartyState {
 
 #[derive(Resource, Default, Debug)]
 pub struct UiMenuDvars {
-    values: std::collections::HashMap<String, String>,
+    values: bevy::platform::collections::HashMap<String, String>,
+}
+
+/// Menu systems republish their dvars every frame, so the common case — a name that is already
+/// lower case and a value that has not changed — must not allocate.
+fn lower_name(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(name.to_ascii_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(name)
+    }
 }
 
 impl UiMenuDvars {
     pub fn get(&self, name: &str) -> Option<&str> {
         self.values
-            .get(&name.to_ascii_lowercase())
+            .get(lower_name(name).as_ref())
             .map(String::as_str)
     }
 
-    pub fn set(&mut self, name: &str, value: impl Into<String>) {
-        self.values.insert(name.to_ascii_lowercase(), value.into());
+    pub fn set(&mut self, name: &str, value: impl AsRef<str> + Into<String>) {
+        let name = lower_name(name);
+        if let Some(current) = self.values.get_mut(name.as_ref()) {
+            if current.as_str() != value.as_ref() {
+                *current = value.into();
+            }
+            return;
+        }
+        self.values.insert(name.into_owned(), value.into());
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {

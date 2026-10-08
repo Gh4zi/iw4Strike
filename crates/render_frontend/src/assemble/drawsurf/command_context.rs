@@ -875,6 +875,10 @@ pub(crate) fn update_command_context_code_sources(
     prepared: Res<PreparedSceneView>,
     cameras: Query<&Camera, With<FpvLens>>,
     scene: Option<Res<crate::prepare::scene::world::WorldScene>>,
+    sm: (
+        Res<crate::prepare::scene::view_parms::SmEnableDvar>,
+        Res<crate::prepare::scene::view_parms::SmSunEnableDvar>,
+    ),
 ) {
     if !prepared.ready {
         return;
@@ -1038,7 +1042,13 @@ pub(crate) fn update_command_context_code_sources(
     if let Some(light) = dir_light.as_deref() {
         let _ = produce_sun_shadow_code_texture(&mut mat_frame.code_sources);
 
-        if let Some(bounds) = scene.as_deref().and_then(|scene| scene.world_bounds) {
+        // Shadows off (`sm_enable 0` / `sm_sunEnable 0`): no sun frame, so no casters are baked,
+        // no sun map is drawn, and lit surfaces take the sun technique without the shadow lookup.
+        let (sm_enable, sm_sun_enable) = &sm;
+        let sun_shadows = sm_enable.enabled != Some(false) && sm_sun_enable.enabled != Some(false);
+        if sun_shadows
+            && let Some(bounds) = scene.as_deref().and_then(|scene| scene.world_bounds)
+        {
             let world_mid = [bounds[0], bounds[1], bounds[2]];
             let world_half = [bounds[3], bounds[4], bounds[5]];
             let shadow_forward = super::sun_shadow_forward_from_light_dir(light.direction);

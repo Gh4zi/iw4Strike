@@ -449,26 +449,41 @@ fn cull_dyn_ent_cell_models(
         (&WorldDynEntInstance, &Transform, &mut Visibility),
         With<DynEntModelEntity>,
     >,
+    mut radii: Local<bevy::platform::collections::HashMap<String, f32>>,
 ) {
     let planes = fpv_frustum_planes(&cameras);
     let vis = admitted_vis(&cell_vis);
+    // The catalog is ordered by name; a thousand props a frame each walking it by string compare
+    // is most of this system, and a map holds a few dozen distinct models.
+    if catalog.as_ref().is_none_or(|catalog| catalog.is_changed()) {
+        radii.clear();
+    }
     let catalog = catalog.as_deref();
+    // `set_if_neq`: a map holds a thousand props, and writing an unchanged visibility still marks
+    // every one of them changed for the visibility propagation behind this.
     for (inst, transform, mut visibility) in &mut instances {
         if inst.dead {
-            *visibility = Visibility::Hidden;
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         }
         if cell_admission_hides(u32::from(inst.index), &membership, vis) {
-            *visibility = Visibility::Hidden;
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         }
         let origin = transform.translation.to_array();
-        let radius = xmodel_radius(catalog, &inst.current_model);
+        let radius = match radii.get(inst.current_model.0.as_str()) {
+            Some(&radius) => radius,
+            None => {
+                let radius = xmodel_radius(catalog, &inst.current_model);
+                radii.insert(inst.current_model.0.clone(), radius);
+                radius
+            }
+        };
         let culled = sphere_behind_frustum(origin, radius, &planes);
         if culled {
-            *visibility = Visibility::Hidden;
+            visibility.set_if_neq(Visibility::Hidden);
         } else {
-            *visibility = Visibility::Inherited;
+            visibility.set_if_neq(Visibility::Inherited);
         }
     }
 }
@@ -479,8 +494,12 @@ fn pose_dyn_ents(
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<FpvLens>>,
     lod_skinned: Res<render_scene::LodRampSkinnedDvar>,
     prepared: Res<crate::anim::model_materials::PreparedModelMaterials>,
+    sm_enable: Res<render_scene::SmEnableDvar>,
     mut product: ResMut<DynEntPoseProduct>,
 ) {
+    // A prop the camera cannot see is posed only to cast a shadow; with shadow maps off it is
+    // nothing but per-frame work.
+    let pose_hidden = sm_enable.enabled != Some(false);
     product.owners.clear();
     if catalog.as_ref().is_some_and(|c| c.is_changed()) {
         product.assets.clear();
@@ -500,6 +519,9 @@ fn pose_dyn_ents(
         }
 
         let camera_hidden = *visibility == Visibility::Hidden;
+        if camera_hidden && !pose_hidden {
+            continue;
+        }
         let skel = match catalog.get(&inst.current_model) {
             Some(
                 asset_world::MapXModelSceneAsset::Iw4(skel)

@@ -30,7 +30,7 @@ struct GapTitleText;
 #[derive(Component)]
 struct GapBodyText;
 
-fn gap_should_show(loading: Option<Res<LoadingScreen>>, screen: Res<AppScreen>) -> bool {
+pub(crate) fn gap_should_show(loading: Option<Res<LoadingScreen>>, screen: Res<AppScreen>) -> bool {
     if loading.is_some() || *screen == AppScreen::MainMenu {
         return false;
     }

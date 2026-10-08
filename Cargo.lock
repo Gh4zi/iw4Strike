@@ -2028,6 +2028,7 @@ dependencies = [
  "master_protocol",
  "net",
  "perf",
+ "profiling",
  "render",
  "render_frontend",
  "render_gpu",
