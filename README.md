@@ -59,8 +59,10 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
 - Counter-Strike scoreboard on **TAB**: Counter-Terrorists and Terrorists with score, deaths
   and latency, in the CS:S look (or the CS 1.6 look when you play with CS 1.6)
 - MW2 minimap kept as the radar
-- MW2 perks, killstreaks, XP, challenges, class menu and exploding cars and barrels are
-  turned off
+- MW2 perks, killstreaks, XP, challenges, medals, hitmarkers, class menu and exploding cars
+  and barrels are turned off
+- Create Game offers Free-for-all, Team Deathmatch and Search and Destroy (Defusal); MW2's
+  other modes are hidden
 
 **Defusal** (Search and Destroy, `IW4L_GAMETYPE=sd` or Create Game)
 - First to 13 rounds, sides switch after 12, 1:55 rounds, 6 s freeze time at the start of each
@@ -81,6 +83,8 @@ and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on St
   Counter-Terrorists hold **E** on it to defuse: 10 s, or 5 s with a defuse kit ($200 in the
   equipment menu, `buy defuser`), with CS:S's progress bar
 - Guns are picked up by walking over them (E only defuses)
+- The round timer ticks in its last 10 seconds; set how loud under **Options > Audio > Round
+  Timer Warning** (`snd_timer_warning_volume`)
 - 3 s plant, 10 s defuse, 40 s bomb; the round ends 7 s after it is decided so you can still
   get away. Killcams are off for now
 - CS's radio voice ends each round ("Terrorists win!", "Counter-Terrorists win!", "Round
@@ -353,35 +357,50 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 
 ## Roadmap
 
-- [x] CS movement, 100 Hz tick
-- [x] AK-47, M4A1, AWP, Deagle, USP, Glock-18
-- [x] Knife, HE, flashbang, smoke
-- [x] Kevlar and helmet, drop and pick up
-- [x] Counter-Strike: Source HUD
-- [x] M4A1 and USP silencers, Glock and FAMAS burst fire
-- [x] The rest of the CS weapons (pistols, shotguns, SMGs, rifles, snipers, M249)
-- [x] Other players holding the CS weapon models in third person (CS:S models; with CS 1.6 only
-  they still hold the MW2 gun)
+**Done**
+- [x] CS movement: CS:GO by default, plus CS:S, CS 1.6, surf and bunny hop modes, and CS:GO
+  stepped like a 64 or 128 tick server, on a 100 Hz server tick
+- [x] Every CS 1.6 weapon with its CS:S model: pistols, shotguns, SMGs, rifles, snipers and the
+  M249, with silencers, burst fire and scopes
+- [x] Knife, HE, flashbang and smoke grenades, kevlar and helmet, dropping and picking up guns
+- [x] Counter-Strike: Source HUD, CS scoreboard and the round-end banner (CS:S, CS 1.6 or MW2)
+- [x] Defusal: CS2 match format, freeze time, kept loadouts and CS 1.6 money
+- [x] Buy menu (CS:S and CS 1.6 windows, CS 1.6 text menu), buy zones and buy time, autobuy
+  and rebuy
+- [x] The C4: plant at a bomb site, defuse with E, defuse kit, CS bomb sounds
+- [x] Other players hold the CS:S weapon models in third person
+- [x] Game folders window (MW2, CS:S, CS 1.6), with a Use box for each Counter-Strike game
+
+**Planned**
+- [ ] Bots that play Defusal: carry, plant and defuse the bomb themselves
+- [ ] 1:1 CS sensitivity: your `sensitivity` and `zoom_sensitivity_ratio` from CS:GO, CS2 or
+  CS:S turn exactly the same here, scoped and unscoped
+- [ ] `m_rawinput 0/1`: the game already reads raw mouse input (no Windows acceleration); this
+  adds the switch
+- [ ] CS models for guns lying on the ground, and CS 1.6 models in third person for players
+  without CS:S
+- [ ] A CS 1.6 HUD for players without CS:S
 - [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
   player moves the same way
 - [ ] Valve-style menus (CS:S look, read from your install), step by step: the panel system,
   main and pause menu, loading screen, scoreboard, a "Start Server" dialog with gamemode and
   map dropdowns (where the server-side settings like `mv_mode` and `sv_tickrate` live), then
   options and the multiplayer screens
-- [x] Game folders window (MW2, CS:S, CS 1.6) instead of `.env`, with a version display
 - [ ] Counter-Strike: Condition Zero as a supported install (GoldSrc models and sounds, read
   from your own copy like CS 1.6)
 - [ ] A per-player mix-and-match in the game options for every installed game (CS:S, CS 1.6,
   CS:CZ): pick weapon models, HUD, player hands and sounds separately, for example CZ weapons
   with the CS 1.6 HUD and CS:S hands
-- [x] Defusal rounds (CS2 format), freeze time, kept loadouts and CS 1.6 money
-- [x] Buy menu (CS:S and CS 1.6 VGUI, CS 1.6 classic text menu), buy zones and buy time
-- [ ] C4 as a CS weapon (slot 5, plant by holding fire in a bomb site, defuse kit)
 - [ ] Shooting through walls (CS penetration)
-- [ ] Better FPS
+- [ ] Better FPS: the server's game logic on its own thread
 - [ ] CoD4 maps (Crossfire, Citystreets)
 
 **Known issues**
+- Some players couldn't plant the bomb after a round ended. It hasn't been reproduced yet: if
+  it happens to you, please report how (which round, whether you carried the bomb before).
+- Guns lying on the ground are still MW2 models. With only CS 1.6 installed, other players also
+  still hold the MW2 gun in third person.
+- `mv_mode` isn't synced to other players yet, so everyone should use the same mode.
 - Smoke grenades go off twice: the explosion is fired a second time about 6.5 seconds later so
   the cloud lasts about 18 seconds, like CS:S. This will be reworked to match the CS:S smoke
   timer properly.
@@ -390,12 +409,11 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - Terminal: broken glass can turn red when you look at it from certain angles. This may be
   one of the reasons for low FPS.
 - Favela: rendering issues and low FPS (cause not found yet).
-- The map ambient sound was too loud on every map (Terminal's planes, Highrise's wind): MW2's
-  looping sound emitters stack up to only a few dB under a rifle. It now plays about 9 dB
-  quieter by default; tune it with `snd_ambient_volume`. Gunfire can still clip when it is
-  very loud.
-- Walking over a weapon picks it up only when its slot is empty, as in CS. With the slot taken,
-  press **F** to swap. Dropping and throwing a weapon (**G**) will be reworked.
+- The map ambient sound plays about 9 dB quieter than MW2's by default (MW2's looping emitters
+  stack up to only a few dB under a rifle); tune it with `snd_ambient_volume`. Very loud
+  gunfire can still clip.
+- Walking over a gun picks it up only when its slot is empty, as in CS. To take a gun in a
+  slot you already use, drop yours with **G** first.
 
 ---
 
