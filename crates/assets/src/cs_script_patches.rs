@@ -359,6 +359,27 @@ const PATCHES: &[Patch] = &[
         "attacker notify( \"got_killstreak\", attacker.pers[\"cur_kill_streak\"] );",
         "no killstreak rewards",
     ),
+    once(
+        "maps/mp/gametypes/_damagefeedback",
+        "updateDamageFeedback( typeHit )\n{",
+        "updateDamageFeedback( typeHit )\n{\n\treturn;",
+        "no hitmarker or hit sound (CS has none)",
+    ),
+    // The round timer: no "match ending soon" at a minute left, and the countdown ticks only in
+    // the last 10 seconds (MW2 ticked every other second from 30). `snd_timer_warning_volume`
+    // sets how loud they are.
+    once(
+        GAMELOGIC,
+        "if ( (timeLeftInt >= 30 && timeLeftInt <= 60) )",
+        "if ( 0 )",
+        "round timer: no one-minute warning",
+    ),
+    once(
+        GAMELOGIC,
+        "if ( timeLeftInt <= 10 || (timeLeftInt <= 30 && timeLeftInt % 2 == 0) )",
+        "if ( timeLeftInt <= 10 )",
+        "round timer: ticks in the last 10 seconds only",
+    ),
     // ---- The CS C4. The bomb mode keeps MW2's sites, timer and round end; the player side is
     // CS 1.6's: the carrier holds the C4 (slot 5, MW2's own `briefcase_bomb_mp`) and plants it
     // by holding attack in a site for 3 s, frozen in place; E only defuses (10 s, 5 s with a
@@ -445,6 +466,12 @@ const PATCHES: &[Patch] = &[
         "bombZone maps\\mp\\gametypes\\_gameobjects::setUseHintText( &\"PLATFORM_HOLD_TO_PLANT_EXPLOSIVES\" );",
         "",
         "CS C4: no \"hold E to plant\" hint (the C4 plants with attack)",
+    ),
+    once(
+        SD,
+        "level.sdBomb maps\\mp\\gametypes\\_gameobjects::setCarryIcon( \"hud_suitcase_bomb\" );",
+        "",
+        "CS C4: no MW2 bomb icon on the carrier's HUD (the CS HUD shows the C4)",
     ),
     once(
         SD,

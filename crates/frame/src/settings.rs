@@ -39,6 +39,8 @@ pub struct GameSettings {
     pub master_volume: f32,
     /// `snd_ambient_volume`: the map's own ambience (background bed and looping emitters), 0-1.
     pub ambient_volume: f32,
+    /// `snd_timer_warning_volume`: the round timer's last-seconds countdown ticks, 0-1.
+    pub timer_warning_volume: f32,
     /// `_vgui_menus`: the buy menu as a window you click (CS:S, or CS 1.6 VGUI), or 0 for
     /// CS 1.6's old numbered text menu.
     pub vgui_menus: bool,
@@ -87,6 +89,7 @@ impl Default for GameSettings {
             third_person: false,
             master_volume: 1.0,
             ambient_volume: Self::AMBIENT_VOLUME_DEFAULT,
+            timer_warning_volume: 1.0,
             vgui_menus: true,
             round_banner: "css".to_owned(),
             brightness: 0.0,

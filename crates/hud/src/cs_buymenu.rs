@@ -567,10 +567,14 @@ fn load_controls(data: &Data, path: &str) -> Option<Vec<Control>> {
         if image.as_deref().is_some_and(|i| i.contains("market_sticker")) {
             continue;
         }
-        // No ammo for sale (guns come with full reserves) and no weekly bargain.
+        // No ammo for sale (guns come with full reserves), no weekly bargain, no night vision or
+        // shield.
         let command = get("command").unwrap_or_default().trim().to_ascii_lowercase();
         let command = command.strip_prefix("buy ").unwrap_or(&command);
-        if matches!(command, "primammo" | "secammo" | "bargainbuy") {
+        if matches!(
+            command,
+            "primammo" | "secammo" | "bargainbuy" | "nvgs" | "nightvision" | "shield"
+        ) {
             continue;
         }
         let raw = data.localize(get("labeltext").unwrap_or_default());
@@ -1534,6 +1538,14 @@ fn classic_lines(name: &str, mut lines: Vec<String>, buyer: &Buyer) -> Vec<Strin
         // gap they leave.
         lines.retain(|line| !matches!(key_of(line), Some(6 | 7)));
         lines.dedup_by(|a, b| a.trim().is_empty() && b.trim().is_empty());
+    }
+    // The equipment menus sell no night vision or shield: drop their lines.
+    if matches!(name.to_ascii_lowercase().as_str(), "ct_buyitem" | "t_buyitem") {
+        lines.retain(|line| {
+            !key_of(line).is_some_and(|key| {
+                classic_action(name, key, buyer.terrorist, buyer.ffa) == Some(Action::Unavailable)
+            })
+        });
     }
     for line in &mut lines {
         let body = line.trim_start_matches("\\w").trim_start_matches("\\d");

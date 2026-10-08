@@ -169,6 +169,7 @@ fn submit_presented_audio(
     if let Some(settings) = settings {
         runtime.set_master_volume(settings.master_volume);
         crate::ambient::set_ambient_volume(settings.ambient_volume);
+        asset_audio::set_timer_warning_volume(settings.timer_warning_volume);
     }
     let mut desired = Vec::new();
     if let Some(destructibles) = destructibles {

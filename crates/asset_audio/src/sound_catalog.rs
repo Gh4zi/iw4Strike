@@ -138,6 +138,23 @@ pub struct CapturedSndCurve {
     pub knots: Vec<(f32, f32)>,
 }
 
+/// MW2's round timer countdown tick, scaled by `snd_timer_warning_volume`.
+pub const TIMER_WARNING_ALIAS: &str = "ui_mp_timer_countdown";
+
+static TIMER_WARNING_VOLUME: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x3f80_0000);
+
+/// `snd_timer_warning_volume` (0-1): how loud the round timer's countdown ticks.
+pub fn set_timer_warning_volume(volume: f32) {
+    let volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { 1.0 };
+    TIMER_WARNING_VOLUME.store(volume.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn timer_warning_volume() -> f32 {
+    f32::from_bits(TIMER_WARNING_VOLUME.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CapturedAlias {
     pub alias_name: String,
@@ -537,6 +554,12 @@ impl SoundCatalog {
     }
 
     pub fn alias_volume(&self, namespace: AssetNamespace, row: &CapturedAlias, t: f32) -> f32 {
+        // `snd_timer_warning_volume`: the round timer's last-seconds countdown.
+        let warning = if row.alias_name.eq_ignore_ascii_case(TIMER_WARNING_ALIAS) {
+            timer_warning_volume()
+        } else {
+            1.0
+        };
         let volume = if namespace != AssetNamespace::T5 && row.vol_min == 0.0 && row.vol_max == 0.0
         {
             1.0
@@ -553,7 +576,7 @@ impl SoundCatalog {
             .and_then(|(group, volumes)| volumes.get(group as usize))
             .copied()
             .unwrap_or(1.0);
-        volume * scale
+        volume * scale * warning
     }
 
     pub fn publish(&mut self) {
@@ -794,6 +817,18 @@ impl SoundCatalog {
     /// from outside the zones (Counter-Strike's own wave files). False when the template is missing
     /// or no clip could be added.
     pub fn add_loose_alias(&mut self, name: &str, template: &str, clips: Vec<LooseClip>) -> bool {
+        self.add_loose_alias_tuned(name, template, clips, |_| {})
+    }
+
+    /// [`Self::add_loose_alias`], with `tune` adjusting the template's mixing (pitch, distance)
+    /// for this sound.
+    pub fn add_loose_alias_tuned(
+        &mut self,
+        name: &str,
+        template: &str,
+        clips: Vec<LooseClip>,
+        tune: impl Fn(&mut CapturedAlias),
+    ) -> bool {
         let Some(mut row) = self
             .sound_in(AssetNamespace::Iw4, template)
             .and_then(|sound| sound.aliases.first())
@@ -816,6 +851,7 @@ impl SoundCatalog {
                 row.flags = Some((flags & !(mask << shift)) | ((index as u32) << shift));
             }
         }
+        tune(&mut row);
         let mut aliases = Vec::with_capacity(clips.len());
         for clip in clips {
             let lanes = clip.channels.max(1) as usize;

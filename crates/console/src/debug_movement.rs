@@ -36,6 +36,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "cl_roundbanner [css|cs16|mw2] — round-end banner: CS:S win panel, CS 1.6 centre message or MW2's round outcome",
         ));
     }
+    if registry.resolve("snd_timer_warning_volume").is_none() {
+        registry.register(crate::CommandSpec::new("snd_timer_warning_volume").usage(
+            "snd_timer_warning_volume [0-1] — how loud the round timer ticks in its last 10 seconds",
+        ));
+    }
     if registry.resolve("snd_ambient_volume").is_none() {
         registry.register(crate::CommandSpec::new("snd_ambient_volume").usage(
             "snd_ambient_volume [0-1] — how loud the map's own ambience plays (wind, engines, hum)",
@@ -150,6 +155,18 @@ pub(crate) fn route_movement_commands(
                     format!("cl_roundbanner = {}", game.round_banner)
                 }
                 _ => "usage: cl_roundbanner [css|cs16|mw2]".to_owned(),
+            },
+            "snd_timer_warning_volume" => match cmd.args.as_slice() {
+                [] => format!("snd_timer_warning_volume = {:.2}", game.timer_warning_volume),
+                [arg] => match arg.parse::<f32>() {
+                    Ok(volume) if volume.is_finite() => {
+                        game.timer_warning_volume = volume.clamp(0.0, 1.0);
+                        game.touch();
+                        format!("snd_timer_warning_volume = {:.2}", game.timer_warning_volume)
+                    }
+                    _ => "usage: snd_timer_warning_volume [0-1]".to_owned(),
+                },
+                _ => "usage: snd_timer_warning_volume [0-1]".to_owned(),
             },
             "snd_ambient_volume" => match cmd.args.as_slice() {
                 [] => format!("snd_ambient_volume = {:.2}", game.ambient_volume),

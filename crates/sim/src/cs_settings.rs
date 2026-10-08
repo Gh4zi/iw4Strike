@@ -22,5 +22,11 @@ pub(crate) const MUTED_LOCAL_SOUNDS: [&str; 2] = ["breathing_hurt", "breathing_b
 
 /// Map entities MW2's destructible scripts drive (`common_scripts/_destructible`,
 /// `maps/mp/_destructables`), by targetname.
-pub(crate) const DESTRUCTIBLE_TARGETNAMES: [&str; 3] =
-    ["destructible_vehicle", "destructible_toy", "destructable"];
+pub(crate) const DESTRUCTIBLE_TARGETNAMES: [&str; 5] = [
+    "destructible_vehicle",
+    "destructible_toy",
+    "destructable",
+    // MW2's red barrels and crates (`_explosive_barrels`), on Afghan among others.
+    "explodable_barrel",
+    "flammable_crate",
+];

@@ -334,6 +334,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("vsync={}", settings.vsync),
         format!("master_volume={:.3}", settings.master_volume),
         format!("snd_ambient_volume={:.2}", settings.ambient_volume),
+        format!("snd_timer_warning_volume={:.2}", settings.timer_warning_volume),
         format!("_vgui_menus={}", u8::from(settings.vgui_menus)),
         format!("cl_roundbanner={}", settings.round_banner),
         format!("brightness={:.3}", settings.brightness),
@@ -424,6 +425,13 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                 }
             }
             "viewmodel_fov" => parse_into(value, &mut settings.viewmodel_fov),
+            "snd_timer_warning_volume" => {
+                if let Ok(volume) = value.trim().parse::<f32>()
+                    && volume.is_finite()
+                {
+                    settings.timer_warning_volume = volume.clamp(0.0, 1.0);
+                }
+            }
             "snd_ambient_volume" => {
                 if let Ok(volume) = value.trim().parse::<f32>()
                     && volume.is_finite()
@@ -575,6 +583,13 @@ pub(crate) fn native_menu_settings(
                 }
             }
             "ui_player_name" => settings.player_name = value.clone(),
+            "ui_timer_warning_volume" => {
+                if let Ok(v) = value.parse::<f32>()
+                    && v.is_finite()
+                {
+                    settings.timer_warning_volume = v.clamp(0.0, 1.0);
+                }
+            }
             "ui_round_banner" => {
                 if hud::RoundBanner::parse(value).is_some() {
                     settings.round_banner = value.trim().to_ascii_lowercase();
@@ -643,6 +658,10 @@ pub(crate) fn native_menu_settings(
     }
     dvars.set("ui_player_name", settings.player_name.clone());
     dvars.set("ui_round_banner", settings.round_banner.clone());
+    dvars.set(
+        "ui_timer_warning_volume",
+        format!("{:.1}", settings.timer_warning_volume),
+    );
     dvars.set("ui_shadows", if settings.shadows { "1" } else { "0" });
     dvars.set("ui_dof", if settings.depth_of_field { "1" } else { "0" });
     dvars.set("ui_bloom", if settings.bloom { "1" } else { "0" });

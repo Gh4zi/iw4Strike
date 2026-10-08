@@ -112,14 +112,42 @@ const CSS_C4: [(&str, &str); 6] = [
     ("beep1", "c4.plantsound"),
 ];
 
+/// Voices and bomb sounds play at their own pitch: the gunshot aliases CS sounds borrow their
+/// mixing from vary it shot to shot, which made the radio voice sound off now and then.
+fn steady_pitch(row: &mut crate::CapturedAlias) {
+    row.pitch_min = 1.0;
+    row.pitch_max = 1.0;
+}
+
+/// How far a bomb beep carries (units). CS 1.6 (`C4Think`) beeps quietly at first and louder
+/// as the timer runs out (attenuation 1.5, 1.0, 0.8, 0.5, 0.2: a GoldSrc sound fades out at
+/// 1000 / attenuation units); CS:S's single beep carries about as far as the middle ones.
+fn beep_reach(event: &str, css: bool) -> f32 {
+    match (event, css) {
+        (_, true) => 1500.0,
+        ("beep1", _) => 667.0,
+        ("beep2", _) => 1000.0,
+        ("beep3", _) => 1250.0,
+        ("beep4", _) => 2000.0,
+        _ => 5000.0,
+    }
+}
+
 /// Register one bomb sound (`event` of [`CS_C4_PREFIX`]) with its waves, mixed like MW2's
-/// bomb sound for the same moment.
-fn add_c4_sound(catalog: &mut SoundCatalog, event: &str, waves: &[(u32, i32, Vec<u8>)]) -> bool {
+/// bomb sound for the same moment; the beeps are positional, from the bomb, and fade out at
+/// CS's distance.
+fn add_c4_sound(
+    catalog: &mut SoundCatalog,
+    event: &str,
+    waves: &[(u32, i32, Vec<u8>)],
+    css: bool,
+) -> bool {
     let preferred: &[&str] = match event {
         "plant" => &["mp_bomb_plant"],
         "disarm" | "disarmed" => &["mp_bomb_defuse"],
         "explode" => &["exp_suitcase_bomb_main"],
-        _ => &["ui_mp_suitcasebomb_timer"],
+        // A world sound (MW2's bomb timer is a flat UI sound heard everywhere).
+        _ => &[],
     };
     let Some(template) = preferred
         .iter()
@@ -139,7 +167,14 @@ fn add_c4_sound(catalog: &mut SoundCatalog, event: &str, waves: &[(u32, i32, Vec
             pcm16: pcm.clone(),
         })
         .collect();
-    catalog.add_loose_alias(&name, template, clips)
+    let beep = event.starts_with("beep").then(|| beep_reach(event, css));
+    catalog.add_loose_alias_tuned(&name, template, clips, |row| {
+        steady_pitch(row);
+        if let Some(reach) = beep {
+            row.dist_min = 60.0;
+            row.dist_max = reach;
+        }
+    })
 }
 
 /// The CS 1.6 radio wave behind each announcement.
@@ -265,12 +300,24 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 channels,
                 pcm16: pcm.clone(),
             };
-            let both = catalog.add_loose_alias(&alias, &world, vec![clip(alias.clone())])
-                && catalog.add_loose_alias(
-                    &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
-                    &player,
-                    vec![clip(format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"))],
-                );
+            // The radio voice keeps its pitch; guns vary theirs as MW2's do.
+            let voice = prefix == CS_RADIO_SOUND_PREFIX;
+            let tune = |row: &mut crate::CapturedAlias| {
+                if voice {
+                    steady_pitch(row);
+                }
+            };
+            let both = catalog.add_loose_alias_tuned(
+                &alias,
+                &world,
+                vec![clip(alias.clone())],
+                tune,
+            ) && catalog.add_loose_alias_tuned(
+                &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
+                &player,
+                vec![clip(format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"))],
+                tune,
+            );
             if both {
                 added += 1;
             }
@@ -278,7 +325,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 && let Some((_, event)) = CS16_EVENTS.iter().find(|(wave, _)| *wave == stem)
             {
                 let event = format!("{CS_EVENT_PREFIX}{event}");
-                catalog.add_loose_alias(&event, &player, vec![clip(event.clone())]);
+                catalog.add_loose_alias_tuned(&event, &player, vec![clip(event.clone())], steady_pitch);
             }
         }
     }
@@ -286,7 +333,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     for (event, wave) in CS16_C4 {
         let path = dir.join(format!("{wave}.wav"));
         if let Some(decoded) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b)) {
-            add_c4_sound(catalog, event, &[decoded]);
+            add_c4_sound(catalog, event, &[decoded], false);
         }
     }
     // Ladder steps: CS 1.6's own, else Half-Life's (the same waves).
@@ -400,17 +447,27 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 ..c.clone()
             })
             .collect();
-        if catalog.add_loose_alias(&alias, &world, clips)
-            && catalog.add_loose_alias(
+        // Voices and the bomb keep their pitch; guns vary theirs as MW2's do.
+        let voice = ["radio.", "event.", "c4.", "bot."]
+            .iter()
+            .any(|group| name.starts_with(group));
+        let tune = |row: &mut crate::CapturedAlias| {
+            if voice {
+                steady_pitch(row);
+            }
+        };
+        if catalog.add_loose_alias_tuned(&alias, &world, clips, tune)
+            && catalog.add_loose_alias_tuned(
                 &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
                 &player,
                 player_clips,
+                tune,
             )
         {
             added += 1;
         }
         if let Some((event, clips)) = event {
-            catalog.add_loose_alias(&event, &player, clips);
+            catalog.add_loose_alias_tuned(&event, &player, clips, steady_pitch);
         }
     }
     // The bomb's sounds.
@@ -421,7 +478,7 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             .filter_map(|wave| vpk.read(&format!("sound/{wave}")))
             .filter_map(|bytes| decode_wav(&bytes))
             .collect();
-        add_c4_sound(catalog, event, &waves);
+        add_c4_sound(catalog, event, &waves, true);
     }
     // Ladder steps: Half-Life 2's, in CS:S's own pack or the `hl2` sound pack beside it.
     let hl2 = pak
