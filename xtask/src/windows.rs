@@ -197,7 +197,7 @@ pub fn run_cli(env: &Env, args: &[String]) -> Res<()> {
             let profile = profile(env)?;
             let ca = public_ca(env)?;
             let bins = build(&profile, &ca)?;
-            println!("iw4l.exe={}", bins.game.display());
+            println!("iw4strike.exe={}", bins.game.display());
             Ok(())
         }
         other => Err(format!(

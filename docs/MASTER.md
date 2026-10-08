@@ -49,7 +49,7 @@ the honest description: it forwards packets and vouches for nobody.
 
 ## Hand out to players
 
-Give players a trusted `community.iw4l-server` and the self-updating `iw4l.exe`:
+Give players a trusted `community.iw4l-server` and the self-updating `iw4strike.exe`:
 
 ```toml
 schema = 1

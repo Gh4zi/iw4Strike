@@ -221,12 +221,12 @@ fn mw2_not_found(
 ) -> String {
     use asset_transport::SteamCandidate;
     let mut text = "MW2 Multiplayer was not found.\n\n\
-        Put a shortcut to the game folder next to iw4l.exe:\n\
+        Put a shortcut to the game folder next to iw4strike.exe:\n\
         1. In Steam, right-click Call of Duty: Modern Warfare 2 > Manage > Browse local \
         files and copy the folder path from the address bar.\n\
-        2. In the folder with iw4l.exe, right-click > New > Shortcut, paste the path and \
+        2. In the folder with iw4strike.exe, right-click > New > Shortcut, paste the path and \
         name the shortcut Modern Warfare 2.\n\
-        3. Launch iw4l.exe again.\n\nSearched:\n"
+        3. Launch iw4strike.exe again.\n\nSearched:\n"
         .to_owned();
     for folder in asset_transport::search_roots(&games.0) {
         text.push_str(&format!("  {}\n", folder.display()));
@@ -334,7 +334,7 @@ fn run_menu(
     app.add_plugins(crate::plugins::default_plugins_with_quiet_log(
         WindowPlugin {
             primary_window: Some(Window {
-                title: "iw4l".into(),
+                title: "iw4Strike".into(),
                 resolution: (1280, 720).into(),
                 ..default()
             }),

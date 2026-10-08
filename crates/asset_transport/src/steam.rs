@@ -109,11 +109,12 @@ pub const CSS_ENV: &str = "IW4L_CSS";
 /// the player cleared it in the window.
 #[must_use]
 pub fn find_css_pak() -> Option<PathBuf> {
-    if let Some(dir) = css_env_override() {
-        return css_pak_in(Path::new(&dir));
-    }
+    // Turned off in the game folders window: not used, whatever names it.
     if crate::game_paths::turned_off(GameFolder::Css) {
         return None;
+    }
+    if let Some(dir) = css_env_override() {
+        return css_pak_in(Path::new(&dir));
     }
     saved(GameFolder::Css)
         .and_then(|dir| css_pak_in(&dir))
@@ -163,7 +164,7 @@ pub fn cstrike_env_override() -> Option<String> {
 /// and it is ignored whenever CS:S is found. Nothing is copied.
 #[must_use]
 pub fn find_cstrike() -> Option<PathBuf> {
-    if find_css_pak().is_some() {
+    if find_css_pak().is_some() || crate::game_paths::turned_off(GameFolder::Cs16) {
         return None;
     }
     if let Some(dir) = cstrike_env_override() {

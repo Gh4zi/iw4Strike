@@ -213,7 +213,7 @@ pub fn run(root: &Path, source: &Path) -> Result<bool> {
         .canonicalize()
         .map_err(|e| e.to_string())?;
     let source = source.canonicalize().map_err(|e| e.to_string())?;
-    let binary = cwd.join("iw4l");
+    let binary = cwd.join("iw4strike");
     let temporary = cwd.join(format!("iw4l.stage-{}", std::process::id()));
     fs::hard_link(&source, &temporary)
         .or_else(|_| fs::copy(&source, &temporary).map(drop))

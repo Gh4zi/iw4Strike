@@ -65,7 +65,7 @@ pub fn run(root: &Path, args: Vec<String>) -> bool {
 fn parse(root: &Path, args: Vec<String>) -> Result<Config, String> {
     let mut pairs = 10;
     let mut warmup_pairs = 1;
-    let mut binary = root.join("target/play/iw4l");
+    let mut binary = root.join("target/play/iw4strike");
     let mut workdir = root.to_owned();
     let mut zone = "mp_boneyard".to_owned();
     let mut commands = None;

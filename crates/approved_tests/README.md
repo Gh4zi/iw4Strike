@@ -38,7 +38,7 @@ make approved ARGS='--replay iw4l-artifacts/approved-tests/<run>/run.json'
 make approved ARGS='--cache shared'            # reuse the repo cache (not cold)
 ```
 
-The runner builds nothing; `make approved` builds `target/play/iw4l` first.
+The runner builds nothing; `make approved` builds `target/play/iw4strike` first.
 Each run owns one directory, `iw4l-artifacts/approved-tests/<run-id>/`.
 `heavy_gameplay_lifecycle` starts the game with that directory as its working
 directory, so everything

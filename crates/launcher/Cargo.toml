@@ -6,7 +6,7 @@ license.workspace = true
 description = "The binary. Process entry only: allocator, argv, env, log init; assembly lives in bootstrap."
 
 [[bin]]
-name = "iw4l"
+name = "iw4strike"
 path = "src/main.rs"
 
 [features]

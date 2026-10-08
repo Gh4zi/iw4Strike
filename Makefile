@@ -53,7 +53,7 @@ CHAOS_CMDS ?= wait world; spawn 0; wait 2s; move -1066 1391 7 174 85; wait 1s; b
 BENCH_LIVE_CMDS ?= wait world; spawn 0; force_match_start; hold +attack; hold +forward; mouserate 10; bot add 16; wait 10s; quit
 PERF_OVERHEAD_PAIRS ?= 10
 PERF_OVERHEAD_WARMUP_PAIRS ?= 1
-PROFILE_BIN = $(ROOT)/target/$(if $(filter dev,$(PROFILE)),debug,$(PROFILE))/iw4l
+PROFILE_BIN = $(ROOT)/target/$(if $(filter dev,$(PROFILE)),debug,$(PROFILE))/iw4strike
 
 # Sync-by-default: `map`/`demo`/`disconnect`/`spawn`/`move` hold the FIFO until their
 # fact (scene resident / torn hold / InGame / presented pose), so recipes carry no ritual gates.
@@ -159,7 +159,7 @@ bench-perf: require-games
 	@mkdir -p $(PERF_DIR)
 	cd $(ROOT) && RUSTFLAGS="-Cforce-frame-pointers=yes" cargo build --profile perf -p launcher
 	cd $(ROOT) && perf record -F $(PERF_FREQ) --call-graph fp -o $(PERF_DIR)/bench-live.data -- \
-	  $(ROOT)/target/perf/iw4l map $(or $(ZONE),$(ARGS),$(SCENARIO_ZONE)) --cmds '$(or $(CMDS),$(BENCH_LIVE_CMDS))'
+	  $(ROOT)/target/perf/iw4strike map $(or $(ZONE),$(ARGS),$(SCENARIO_ZONE)) --cmds '$(or $(CMDS),$(BENCH_LIVE_CMDS))'
 	@echo "perf.data: $(PERF_DIR)/bench-live.data"
 	@echo "read it:   perf report -i $(PERF_DIR)/bench-live.data --stdio --no-children"
 

@@ -125,8 +125,9 @@ struct Folders {
     chosen: [Option<PathBuf>; 3],
     /// A pick (or saved folder) without the game's data, for the status line.
     rejected: [Option<PathBuf>; 3],
-    /// A Counter-Strike game the player cleared: not used, not even from Steam.
-    off: [bool; 3],
+    /// Whether each game is used (the "Use" boxes; MW2 always). A Counter-Strike game turned
+    /// off is not used at all, whatever names it; with both on, CS:S wins.
+    used: [bool; 3],
     auto_mw2: Option<PathBuf>,
     steam_css: Option<PathBuf>,
     css_env: Option<String>,
@@ -161,14 +162,12 @@ impl Folders {
             .unwrap_or_default();
         let mut chosen: [Option<PathBuf>; 3] = Default::default();
         let mut rejected: [Option<PathBuf>; 3] = Default::default();
-        let mut off = [false; 3];
+        let used = settings
+            .as_deref()
+            .map_or([true; 3], game_paths::read_used);
         for folder in GameFolder::ALL {
             let raw = saved[folder.index()].trim();
-            if raw.is_empty() {
-                continue;
-            }
-            if raw.eq_ignore_ascii_case(game_paths::TURNED_OFF) {
-                off[folder.index()] = folder != GameFolder::Mw2;
+            if raw.is_empty() || raw.eq_ignore_ascii_case(game_paths::TURNED_OFF) {
                 continue;
             }
             match folder.resolve(Path::new(raw)) {
@@ -181,7 +180,7 @@ impl Folders {
             opened,
             chosen,
             rejected,
-            off,
+            used,
             auto_mw2: asset_transport::discover::auto_mw2_folder(&games.0),
             steam_css: asset_transport::steam_css_pak()
                 .and_then(|pak| pak.parent().map(Path::to_path_buf)),
@@ -224,6 +223,16 @@ impl Folders {
                 }
             }
             GameFolder::Css => {
+                if !self.used[index] {
+                    let path = self.css_found();
+                    return (
+                        path,
+                        Tone::Dim,
+                        "Turned off: not used. Tick Use to use it; Counter-Strike 1.6 below is \
+                         used instead when it is on."
+                            .into(),
+                    );
+                }
                 if let Some(env) = &self.css_env {
                     let dir = PathBuf::from(env);
                     return if dir.join(game_paths::CSS_PAK).is_file() {
@@ -239,15 +248,7 @@ impl Folders {
                         )
                     };
                 }
-                if self.off[index] {
-                    (
-                        None,
-                        Tone::Dim,
-                        "Not used (cleared). Browse to use it again; Counter-Strike 1.6 below is \
-                         used instead when selected."
-                            .into(),
-                    )
-                } else if let Some(path) = &self.chosen[index] {
+                if let Some(path) = &self.chosen[index] {
                     (Some(path.clone()), Tone::Good, format!("{rejected}Selected."))
                 } else if let Some(path) = &self.steam_css {
                     (
@@ -267,6 +268,13 @@ impl Folders {
                 }
             }
             GameFolder::Cs16 => {
+                if !self.used[index] {
+                    return (
+                        self.chosen[index].clone(),
+                        Tone::Dim,
+                        "Turned off: not used. Tick Use to use it.".into(),
+                    );
+                }
                 let found = if let Some(env) = &self.cs16_env {
                     let dir = PathBuf::from(env);
                     if !dir.join("models").is_dir() {
@@ -280,21 +288,18 @@ impl Folders {
                         );
                     }
                     Some((dir, "Set by IW4L_CSTRIKE in .env (it overrides this window)."))
-                } else if self.off[index] {
-                    return (
-                        None,
-                        Tone::Dim,
-                        "Not used (cleared). Browse to use it again.".into(),
-                    );
                 } else {
                     self.chosen[index].clone().map(|dir| (dir, "Selected."))
                 };
-                let css = self.status(GameFolder::Css).0.is_some();
+                let css = self.used[GameFolder::Css.index()]
+                    && self.status(GameFolder::Css).0.is_some();
                 match found {
                     Some((dir, _)) if css => (
                         Some(dir),
                         Tone::Dim,
-                        "Not used while Counter-Strike: Source is found.".into(),
+                        "Not used while Counter-Strike: Source is on (both on: CS:S wins). Untick \
+                         its Use box to play with Counter-Strike 1.6."
+                            .into(),
                     ),
                     Some((dir, how)) => (Some(dir), Tone::Good, format!("{rejected}{how}")),
                     None if css => (
@@ -315,6 +320,16 @@ impl Folders {
         }
     }
 
+    /// The Counter-Strike: Source folder that would be used if it were on.
+    fn css_found(&self) -> Option<PathBuf> {
+        self.css_env
+            .as_ref()
+            .map(PathBuf::from)
+            .filter(|dir| dir.join(game_paths::CSS_PAK).is_file())
+            .or_else(|| self.chosen[GameFolder::Css.index()].clone())
+            .or_else(|| self.steam_css.clone())
+    }
+
     fn can_play(&self) -> bool {
         self.status(GameFolder::Mw2).0.is_some()
     }
@@ -325,15 +340,12 @@ impl Folders {
             .as_deref()
             .ok_or("there is no settings file location")?;
         let paths = GameFolder::ALL.map(|folder| {
-            if self.off[folder.index()] {
-                return game_paths::TURNED_OFF.to_owned();
-            }
             self.chosen[folder.index()]
                 .as_ref()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default()
         });
-        game_paths::write_saved(file, &paths)
+        game_paths::write_saved(file, &paths, self.used)
     }
 }
 
@@ -345,6 +357,8 @@ struct Picker(Option<(GameFolder, Arc<Mutex<Option<Option<PathBuf>>>>)>);
 enum Action {
     Browse(GameFolder),
     Clear(GameFolder),
+    /// A Counter-Strike game's Use box.
+    Toggle(GameFolder),
     Play,
     Quit,
 }
@@ -354,6 +368,10 @@ struct PathText(GameFolder);
 
 #[derive(Component)]
 struct StatusText(GameFolder);
+
+/// The tick in a Use box.
+#[derive(Component)]
+struct UseMark(GameFolder);
 
 #[derive(Component)]
 struct BannerText;
@@ -429,6 +447,52 @@ fn button(
         });
 }
 
+/// A Counter-Strike game's "Use" box: a sunken square holding an X while the game is on.
+fn use_box(
+    parent: &mut ChildSpawnerCommands,
+    bold: &Handle<Font>,
+    regular: &Handle<Font>,
+    folder: GameFolder,
+) {
+    parent
+        .spawn((
+            Button,
+            Action::Toggle(folder),
+            Node {
+                column_gap: Val::Px(6.0),
+                align_items: AlignItems::Center,
+                flex_shrink: 0.0,
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+        ))
+        .with_children(|toggle| {
+            let (border, _) = bevel(1.0);
+            toggle
+                .spawn((
+                    Node {
+                        width: Val::Px(20.0),
+                        height: Val::Px(20.0),
+                        border,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BorderColor {
+                        top: BORDER_DARK,
+                        left: BORDER_DARK,
+                        bottom: BORDER_LIGHT,
+                        right: BORDER_LIGHT,
+                    },
+                    BackgroundColor(FIELD),
+                ))
+                .with_children(|square| {
+                    square.spawn((text(bold, 14.0, ACCENT, ""), UseMark(folder)));
+                });
+            toggle.spawn(text(regular, 14.0, TEXT, "Use"));
+        });
+}
+
 fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders: Res<Folders>) {
     let regular = load_font(&mut fonts, &["verdana.ttf", "tahoma.ttf"]);
     let bold = load_font(&mut fonts, &["verdanab.ttf", "tahomabd.ttf", "verdana.ttf"]);
@@ -499,6 +563,9 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
                             ..default()
                         })
                         .with_children(|row| {
+                            if folder != GameFolder::Mw2 {
+                                use_box(row, &bold, &regular, folder);
+                            }
                             let (border, _) = bevel(1.0);
                             row.spawn((
                                 Node {
@@ -551,7 +618,7 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
                         DIM,
                         format!(
                             "{settings}Reopen this window from Options > Game Folders, or start \
-                             iw4l.exe paths. Your games are read in place, never copied."
+                             iw4strike.exe paths. Your games are read in place, never copied."
                         ),
                     ),
                     Node {
@@ -614,11 +681,13 @@ fn press_buttons(
                 picker.0 = Some((folder, answer));
             }
             Action::Clear(folder) => {
-                // MW2 goes back to being found automatically; a Counter-Strike game is turned
-                // off, so a Steam copy isn't picked up again either.
+                // Forgets the picked folder: MW2 and CS:S go back to being found automatically.
+                // Whether a Counter-Strike game is used is its Use box.
                 folders.chosen[folder.index()] = None;
                 folders.rejected[folder.index()] = None;
-                folders.off[folder.index()] = folder != GameFolder::Mw2;
+            }
+            Action::Toggle(folder) => {
+                folders.used[folder.index()] = !folders.used[folder.index()];
             }
             Action::Play => match folders.save() {
                 Ok(()) => {
@@ -659,7 +728,7 @@ fn poll_picker(mut picker: ResMut<Picker>, mut folders: ResMut<Folders>) {
             diag::info!(Launch, "game folders: {} = {}", folder.title(), found.display());
             folders.chosen[folder.index()] = Some(found);
             folders.rejected[folder.index()] = None;
-            folders.off[folder.index()] = false;
+            folders.used[folder.index()] = true;
         }
         None => folders.rejected[folder.index()] = Some(picked),
     }
@@ -672,7 +741,17 @@ fn refresh(
     mut banner: Query<(&mut Text, &mut TextColor), (With<BannerText>, Without<PathText>, Without<StatusText>)>,
     buttons: Query<(&Action, &Children)>,
     mut labels: Query<&mut TextColor, (Without<PathText>, Without<StatusText>, Without<BannerText>)>,
+    mut marks: Query<
+        (&UseMark, &mut Text),
+        (Without<PathText>, Without<StatusText>, Without<BannerText>),
+    >,
 ) {
+    for (UseMark(folder), mut text) in &mut marks {
+        let mark = if folders.used[folder.index()] { "X" } else { "" };
+        if text.0 != mark {
+            text.0 = mark.to_owned();
+        }
+    }
     for (PathText(folder), mut text, mut color) in &mut paths {
         let (path, _, _) = folders.status(*folder);
         match path {

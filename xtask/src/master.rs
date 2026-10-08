@@ -323,7 +323,7 @@ fn hand_out(ssh: &Ssh, channel: Channel, ca: &Ca) -> Res<()> {
     )
     .map_err(|e| e.to_string())?;
     println!(
-        "Upload client updates to {remote_lib}/updates/{channel}, then give {} and iw4l.exe to players over a trusted channel.",
+        "Upload client updates to {remote_lib}/updates/{channel}, then give {} and iw4strike.exe to players over a trusted channel.",
         path.display()
     );
     Ok(())

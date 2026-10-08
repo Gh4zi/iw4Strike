@@ -1,4 +1,4 @@
-# Builds the Windows game (iw4l.exe) with MSVC and packages it with its README, LICENSE and
+# Builds the Windows game (iw4strike.exe) with MSVC and packages it with its README, LICENSE and
 # NOTICE. Players pick their game folders in the game's own window, so no .env is shipped.
 #
 # - Publish a release on GitHub: the zip is built and attached to that release.
@@ -51,7 +51,7 @@ jobs:
         with:
           shared-key: windows-play
 
-      - name: Build iw4l.exe
+      - name: Build iw4strike.exe
         env:
           # Shown in the game folders window; empty for a plain push build.
           IW4STRIKE_VERSION: ${{ env.RELEASE_TAG }}
@@ -65,7 +65,7 @@ jobs:
           $name = "iw4Strike-$label-windows"
           $dir = "out/$name"
           New-Item -ItemType Directory -Force $dir | Out-Null
-          Copy-Item target/play/iw4l.exe $dir/
+          Copy-Item target/play/iw4strike.exe $dir/
           Copy-Item LICENSE, NOTICE $dir/
           Copy-Item packaging/windows/README.txt $dir/
           Add-Content $dir/README.txt "`r`nBuilt from commit $sha ($label)."

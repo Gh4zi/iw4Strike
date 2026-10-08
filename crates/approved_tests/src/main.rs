@@ -94,7 +94,7 @@ fn parse_args(root: &Path) -> Result<Args, String> {
         seed: None,
         replay: None,
         cache: CacheMode::Cold,
-        bin: root.join(format!("target/play/iw4l{}", std::env::consts::EXE_SUFFIX)),
+        bin: root.join(format!("target/play/iw4strike{}", std::env::consts::EXE_SUFFIX)),
     };
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));

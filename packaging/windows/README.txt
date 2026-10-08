@@ -8,7 +8,7 @@ YOU NEED
 HOW TO PLAY
   1. Extract this folder somewhere you can write to, for example your
      Desktop or Documents (not inside Program Files).
-  2. Run iw4l.exe.
+  2. Run iw4strike.exe.
      If Windows SmartScreen warns you, click "More info" then "Run anyway"
      (the program is not signed).
   3. The first time, a "game folders" window shows what was found. MW2 and
@@ -25,7 +25,7 @@ IN GAME
     https://github.com/Gh4zi/iw4Strike#console-commands
 
 Settings, demos and logs are saved in the iw4l-artifacts folder that
-appears next to iw4l.exe.
+appears next to iw4strike.exe.
 
 Built on IW4L (https://github.com/vladtrc/iw4L), Apache 2.0 - see LICENSE
 and NOTICE. MW2 belongs to Activision; Counter-Strike belongs to Valve.

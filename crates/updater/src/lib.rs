@@ -73,7 +73,7 @@ impl Manifest {
         if manifest.schema != 1 || manifest.release.trim().is_empty() || manifest.protocol == 0 {
             return Err("unsupported or incomplete update manifest".into());
         }
-        if file.name != "iw4l.exe"
+        if file.name != "iw4strike.exe"
             || file.sha256.len() != 64
             || !file.sha256.bytes().all(|b| b.is_ascii_hexdigit())
             || file.path != format!("iw4l-{}.exe.zst", file.sha256.to_ascii_lowercase())

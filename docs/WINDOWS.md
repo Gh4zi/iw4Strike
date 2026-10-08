@@ -8,7 +8,7 @@ The archive password is `t.me/contextrot`. Extract into a dedicated writable fol
 
 ```text
 IW4L/
-├── iw4l.exe
+├── iw4strike.exe
 ├── Modern Warfare 2.lnk
 ├── Black Ops.lnk            optional
 ├── Modern Warfare 3.lnk     optional
@@ -16,18 +16,18 @@ IW4L/
 └── iw4l-artifacts/          created on first launch: saves, caches, demos, logs
 ```
 
-`iw4l.exe licenses` prints the licence and notice texts compiled into the executable.
+`iw4strike.exe licenses` prints the licence and notice texts compiled into the executable.
 
 The runtime reads the installations those shortcuts point to. MW2 multiplayer data
 is required for the menu; BO1 and MW3 are optional. For each missing title,
-`iw4l.exe` checks the Steam libraries and creates its shortcut when exactly one
+`iw4strike.exe` checks the Steam libraries and creates its shortcut when exactly one
 install has supported multiplayer data. Existing shortcuts and titles already
 found in the configured folders are preserved. If several installs qualify,
 create a shortcut to the one you want. If MW2 is still missing, the launcher shows
 the folders it tried and how to add the shortcut: right-click inside the launcher
 folder, New > Shortcut, paste the game folder path.
 
-Launch `iw4l.exe`. Before starting the game or contacting QUIC, it checks its
+Launch `iw4strike.exe`. Before starting the game or contacting QUIC, it checks its
 community's HTTPS manifest. An unchanged executable starts normally. An update
 is downloaded, decompressed with a size limit and verified against SHA-256.
 A temporary copy of the same executable waits for the original process, replaces
@@ -47,5 +47,5 @@ One adjacent `.iw4l-server` is selected automatically; with several, set
 `IW4L_COMMUNITY` to the chosen file path before launching. See [`MASTER.md`](MASTER.md).
 
 On Windows the executable directory is the working directory. Game discovery
-uses `IW4L_GAMES` or shortcuts beside `iw4l.exe`, then Steam for MW2, BO1 and MW3; local `.env` settings remain
+uses `IW4L_GAMES` or shortcuts beside `iw4strike.exe`, then Steam for MW2, BO1 and MW3; local `.env` settings remain
 available for game configuration. Publishing: [`DEPLOY.md`](DEPLOY.md).

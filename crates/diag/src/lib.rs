@@ -288,7 +288,7 @@ pub fn exit_launch_error(message: &str) -> ! {
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
         let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
-        let (text, caption) = (wide(message), wide("iw4l"));
+        let (text, caption) = (wide(message), wide("iw4Strike"));
         // SAFETY: both strings are NUL-terminated and outlive the modal call.
         unsafe {
             MessageBoxW(

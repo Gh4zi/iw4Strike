@@ -41,7 +41,7 @@ switches the master only when its hash changed, and atomically renames the
 manifest after master health succeeds. It does not rewrite systemd units;
 existing installations need the new units from `provision` before publishing.
 
-The player starts the single `iw4l.exe`; its HTTPS check precedes QUIC, so a
+The player starts the single `iw4strike.exe`; its HTTPS check precedes QUIC, so a
 breaking protocol update remains downloadable. See [`WINDOWS.md`](WINDOWS.md).
 A first adoption requires distributing this executable and its descriptor.
 

@@ -58,10 +58,10 @@ fn prepare_process_root() -> Result<(), String> {
     #[cfg(windows)]
     {
         let exe =
-            std::env::current_exe().map_err(|error| format!("cannot locate iw4l.exe: {error}"))?;
+            std::env::current_exe().map_err(|error| format!("cannot locate iw4strike.exe: {error}"))?;
         let root = exe
             .parent()
-            .ok_or_else(|| format!("iw4l.exe has no parent directory: {}", exe.display()))?;
+            .ok_or_else(|| format!("iw4strike.exe has no parent directory: {}", exe.display()))?;
         std::env::set_current_dir(root).map_err(|error| {
             format!(
                 "cannot enter launcher directory {}: {error}",

@@ -311,7 +311,7 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
         .map_err(|error| format!("creating {}: {error}", updates_dir.display()))?;
 
     let blob = package_game(root, &bins.game, &updates_dir)?;
-    copy(&bins.game, &client_dir.join("iw4l.exe"))?;
+    copy(&bins.game, &client_dir.join("iw4strike.exe"))?;
     write_toml(
         &client_dir.join("community.iw4l-server"),
         &community(channel, &host, &ca_cert)?,
@@ -356,7 +356,7 @@ pub fn prepare(root: &Path, env: &Env, channel: Channel, profile: &str) -> Res<P
         release: sha256_hex(client_identity.to_string().as_bytes())[..16].into(),
         protocol: PROTOCOL_VERSION,
         file: updater::ManifestFile {
-            name: "iw4l.exe".into(),
+            name: "iw4strike.exe".into(),
             path: blob.name.clone(),
             sha256: blob.exe_sha.clone(),
             size: blob.exe_size,
@@ -432,7 +432,7 @@ pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
         let stage = scratch.path.join(channel.as_str());
         std::fs::create_dir_all(&stage)
             .map_err(|error| format!("creating {}: {error}", stage.display()))?;
-        copy(&bins.game, &stage.join("iw4l.exe"))?;
+        copy(&bins.game, &stage.join("iw4strike.exe"))?;
         write_toml(
             &stage.join("community.iw4l-server"),
             &community(channel, &host, &ca_cert)?,
@@ -445,7 +445,7 @@ pub fn bundles(root: &Path, env: &Env, profile: &str) -> Res<()> {
 }
 
 fn player_archive(stage: &Path, archive: &Path, descriptor: bool) -> Res<()> {
-    let mut names = vec!["iw4l.exe"];
+    let mut names = vec!["iw4strike.exe"];
     if descriptor {
         names.push("community.iw4l-server");
     }

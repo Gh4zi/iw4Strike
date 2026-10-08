@@ -19,7 +19,7 @@ files are included in this repository.
 ## Download
 
 **Just want to play?** Get the Windows build from
-[**Releases**](https://github.com/Gh4zi/iw4Strike/releases). Extract the zip, run `iw4l.exe`,
+[**Releases**](https://github.com/Gh4zi/iw4Strike/releases). Extract the zip, run `iw4strike.exe`,
 and see `README.txt` inside. You still need MW2 and Counter-Strike: Source on Steam (see
 [What you need](#what-you-need)). To build it yourself, see [Setup](#setup).
 
@@ -119,23 +119,26 @@ cd iw4Strike
 ### 2. Game folders
 
 MW2 and Counter-Strike: Source are found in your Steam libraries automatically. The first time
-you start the game menu (`iw4l.exe` with no arguments), a small **game folders** window shows
+you start the game menu (`iw4strike.exe` with no arguments), a small **game folders** window shows
 what was found:
 
 | | |
 |---|---|
 | **Call of Duty: Modern Warfare 2** (required) | The folder with the `zone` folder inside |
 | **Counter-Strike: Source** (recommended) | Weapon models, sounds and HUD |
-| **Counter-Strike 1.6** (optional) | Your `Half-Life` folder. Only used when CS:S is missing, and never searched for |
+| **Counter-Strike 1.6** (optional) | Your `Half-Life` folder. Never searched for |
 
-Press **Browse...** to select a folder yourself, then **Play**. The folders are saved in
+Press **Browse...** to select a folder yourself, then **Play**. Each Counter-Strike game has a
+**Use** box: untick Counter-Strike: Source to play with CS 1.6 even when CS:S is installed
+(with both ticked, CS:S is used). **Clear** forgets a folder you picked. The folders are saved in
 `iw4l-artifacts\settings.cfg`. The game also shows this window whenever it can't find MW2.
 To open it again, use **Options > Game Folders**, the `game_paths` console command, or run
-`iw4l.exe paths`. `map ...` launches skip the window and use the saved folders.
+`iw4strike.exe paths`. `map ...` launches skip the window and use the saved folders.
 
 iw4Strike only reads from these folders. It never changes or copies their files.
 
-**Developers:** a `.env` file (copy `.env.example`) still works and overrides the window:
+**Developers:** a `.env` file (copy `.env.example`) still works and overrides the window's
+folders (a game unticked in the window stays off):
 `IW4L_GAMES` (the folder that holds your MW2 folder), `IW4L_CSS` (the CS:S `cstrike` folder)
 and `IW4L_CSTRIKE` (the CS 1.6 `cstrike` folder). Put quotes around paths: a path with spaces
 or brackets and no quotes stops `.env` from loading the lines after it.
@@ -151,7 +154,7 @@ a while. With GNU Make installed, `make map mp_boneyard CMDS='...'` does the sam
 
 ### Automatic Windows builds
 
-GitHub builds `iw4l.exe` for you with the
+GitHub builds `iw4strike.exe` for you with the
 [Windows build](.github/workflows/windows-build.yml) workflow:
 
 - **Publish a release** (Releases → *Draft a new release* → new tag such as `v0.2.0` →

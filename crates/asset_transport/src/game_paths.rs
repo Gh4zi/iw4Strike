@@ -1,8 +1,8 @@
 //! The game folders the player selects in the game folders window, saved in `settings.cfg`
-//! (`game_path_mw2`, `game_path_css`, `game_path_cs16`). An environment / `.env` override
-//! (`IW4L_CSS`, `IW4L_CSTRIKE`) still wins over a saved folder; Steam is searched only when
-//! neither names one. A Counter-Strike folder saved as `none` (Clear in the window) is not used
-//! at all, not even when Steam has the game.
+//! (`game_path_mw2`, `game_path_css`, `game_path_cs16`), and whether each Counter-Strike game is
+//! used at all (`use_css`, `use_cs16`, the window's "Use" boxes). An environment / `.env`
+//! override (`IW4L_CSS`, `IW4L_CSTRIKE`) wins over a saved folder; Steam is searched only when
+//! neither names one. A game turned off is not used whatever names it; with both on, CS:S wins.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -33,6 +33,16 @@ impl GameFolder {
             Self::Mw2 => "game_path_mw2",
             Self::Css => "game_path_css",
             Self::Cs16 => "game_path_cs16",
+        }
+    }
+
+    /// Its `settings.cfg` on/off key (the game folders window's "Use" box); MW2 has none.
+    #[must_use]
+    pub const fn use_key(self) -> Option<&'static str> {
+        match self {
+            Self::Mw2 => None,
+            Self::Css => Some("use_css"),
+            Self::Cs16 => Some("use_cs16"),
         }
     }
 
@@ -136,16 +146,44 @@ pub fn confirmed() -> bool {
     saved_at_start().is_some()
 }
 
-/// What a cleared Counter-Strike folder is saved as: that game is not used.
+/// What older builds saved a turned-off Counter-Strike folder as (still read).
 pub const TURNED_OFF: &str = "none";
 
-/// Whether the player cleared `folder` in the game folders window: the game is not used, and
-/// not looked for in Steam either.
+/// Which games are on (`use_css` / `use_cs16`, the window's "Use" boxes); a game without the
+/// line is on, unless its folder was saved as `none` by an older build. MW2 is always on.
+#[must_use]
+pub fn read_used(file: &Path) -> [bool; 3] {
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let mut used = [true; 3];
+    for line in text.lines() {
+        let Some((key, value)) = line.trim().split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        for folder in GameFolder::ALL {
+            if folder.use_key() == Some(key.trim()) {
+                used[folder.index()] = value != "0";
+            } else if folder.key() == key.trim()
+                && folder != GameFolder::Mw2
+                && value.eq_ignore_ascii_case(TURNED_OFF)
+            {
+                used[folder.index()] = false;
+            }
+        }
+    }
+    used
+}
+
+fn used_at_start() -> &'static [bool; 3] {
+    static USED: OnceLock<[bool; 3]> = OnceLock::new();
+    USED.get_or_init(|| default_settings_file().map_or([true; 3], |file| read_used(&file)))
+}
+
+/// Whether the player turned `folder` off in the game folders window: the game is not used at
+/// all, whatever folder is saved, found in Steam or named in `.env`.
 #[must_use]
 pub fn turned_off(folder: GameFolder) -> bool {
-    saved_at_start()
-        .as_ref()
-        .is_some_and(|saved| saved[folder.index()].trim().eq_ignore_ascii_case(TURNED_OFF))
+    !used_at_start()[folder.index()]
 }
 
 /// The folder saved for `folder`, resolved, when it still holds the game's data.
@@ -170,14 +208,16 @@ pub fn saved(folder: GameFolder) -> Option<PathBuf> {
     found
 }
 
-/// Writes the three game-path lines into `file`, keeping every other line.
-pub fn write_saved(file: &Path, paths: &[String; 3]) -> Result<(), String> {
+/// Writes the game-path lines and the on/off lines into `file`, keeping every other line.
+pub fn write_saved(file: &Path, paths: &[String; 3], used: [bool; 3]) -> Result<(), String> {
     let old = std::fs::read_to_string(file).unwrap_or_default();
     let mut lines = old
         .lines()
         .filter(|line| {
             line.split_once('=').is_none_or(|(key, _)| {
-                !GameFolder::ALL.iter().any(|folder| folder.key() == key.trim())
+                !GameFolder::ALL.iter().any(|folder| {
+                    folder.key() == key.trim() || folder.use_key() == Some(key.trim())
+                })
             })
         })
         .map(str::to_owned)
@@ -189,9 +229,16 @@ pub fn write_saved(file: &Path, paths: &[String; 3]) -> Result<(), String> {
         .iter()
         .position(|line| line.starts_with("bind ") || line == "unbindall")
         .unwrap_or(lines.len());
-    for (offset, folder) in GameFolder::ALL.into_iter().enumerate() {
+    let mut written = Vec::new();
+    for folder in GameFolder::ALL {
         let value = paths[folder.index()].replace(['\n', '\r'], "");
-        lines.insert(at + offset, format!("{}={value}", folder.key()));
+        written.push(format!("{}={value}", folder.key()));
+        if let Some(key) = folder.use_key() {
+            written.push(format!("{key}={}", u8::from(used[folder.index()])));
+        }
+    }
+    for (offset, line) in written.into_iter().enumerate() {
+        lines.insert(at + offset, line);
     }
     lines.push(String::new());
     if let Some(dir) = file.parent()
@@ -277,17 +324,22 @@ mod tests {
         write_saved(
             &file,
             &["C:/MW2".into(), String::new(), "D:/Half-Life/cstrike".into()],
+            [true, false, true],
         )
         .unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
             text,
-            "fov=80\ngame_path_mw2=C:/MW2\ngame_path_css=\ngame_path_cs16=D:/Half-Life/cstrike\nbind G drop\n"
+            "fov=80\ngame_path_mw2=C:/MW2\ngame_path_css=\nuse_css=0\ngame_path_cs16=D:/Half-Life/cstrike\nuse_cs16=1\nbind G drop\n"
         );
         assert_eq!(
             read_saved(&file),
             Some(["C:/MW2".into(), String::new(), "D:/Half-Life/cstrike".into()])
         );
+        assert_eq!(read_used(&file), [true, false, true]);
+        // Older builds saved a turned-off game as `none`.
+        std::fs::write(&file, "game_path_css=none\n").unwrap();
+        assert_eq!(read_used(&file), [true, false, true]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
