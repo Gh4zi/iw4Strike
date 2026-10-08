@@ -52,7 +52,14 @@ pub(crate) struct OverheadNamesRaster;
 pub(crate) struct NameMemory {
     last_time: Option<i32>,
     seen: HashMap<u16, (i32, i32, bool)>,
+    /// Last eye-to-head trace per entity: (time, visible).
+    traced: HashMap<u16, (i32, bool)>,
 }
+
+/// How long one eye-to-head visibility trace answers for a name (ms of game time). A world trace
+/// per player per frame was a third of a millisecond with a dozen players on screen; a name fades
+/// over far longer than this, so the cached answer is never what keeps one up.
+const OVERHEAD_TRACE_REUSE_MS: i32 = 25;
 
 #[derive(Clone, Copy, Debug)]
 struct TargetBoxSettings {
@@ -327,14 +334,23 @@ fn update_overhead_names(
         {
             continue;
         }
-        let hit = world.trace_world(
-            eye.to_array(),
-            head.to_array(),
-            [0.0; 3],
-            [0.0; 3],
-            OVERHEAD_TRACE_MASK,
-        );
-        let visible = hit.fraction >= 1.0 && hit.startsolid == 0;
+        let cached = memory
+            .traced
+            .get(&identity.number())
+            .filter(|(at, _)| now >= *at && now - *at < OVERHEAD_TRACE_REUSE_MS)
+            .map(|cached| cached.1);
+        let visible = cached.unwrap_or_else(|| {
+            let hit = world.trace_world(
+                eye.to_array(),
+                head.to_array(),
+                [0.0; 3],
+                [0.0; 3],
+                OVERHEAD_TRACE_MASK,
+            );
+            let visible = hit.fraction >= 1.0 && hit.startsolid == 0;
+            memory.traced.insert(identity.number(), (now, visible));
+            visible
+        });
         let aim = aimed_distance(eye, forward, origin, head).filter(|_| visible);
         candidates.push((
             identity.number(),
@@ -355,6 +371,9 @@ fn update_overhead_names(
     memory
         .seen
         .retain(|ent, _| candidates.iter().any(|c| c.0 == *ent));
+    memory
+        .traced
+        .retain(|_, (at, _)| now >= *at && now - *at < OVERHEAD_TRACE_REUSE_MS);
     let mut list = Draw2dList::default();
     for (ent, team, name, anchor, pixel, visible, _, (rank, prestige, client)) in candidates {
         let friendly = local_meta.client_state_team != 0 && local_meta.client_state_team == team;

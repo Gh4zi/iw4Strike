@@ -24,6 +24,39 @@ const SURF_SKY: u32 = 0x4;
 /// Linear light-grid colour → ambient light on a CS world model (third-person guns).
 const WORLD_GRID_AMBIENT: f32 = 3.0;
 
+/// Sun visibility is cached per cell of this many units: the world the ray crosses does not move,
+/// and an 8192-unit trace per gun per frame was most of these systems' time with a dozen players.
+const SUN_CACHE_CELL: f32 = 4.0;
+const SUN_CACHE_MAX: usize = 1 << 16;
+
+/// Answers [`sees_sun`] once per cell for the map's sun.
+#[derive(Default)]
+struct SunCache {
+    dir: [f32; 3],
+    cells: bevy::platform::collections::HashMap<[i32; 3], bool>,
+}
+
+impl SunCache {
+    fn sees_sun(
+        &mut self,
+        clip: &Res<DynEntPhysClip>,
+        origin: [f32; 3],
+        dir: [f32; 3],
+    ) -> Option<bool> {
+        if clip.is_changed() || self.dir != dir || self.cells.len() > SUN_CACHE_MAX {
+            self.cells.clear();
+            self.dir = dir;
+        }
+        let key = origin.map(|v| (v / SUN_CACHE_CELL).floor() as i32);
+        if let Some(&seen) = self.cells.get(&key) {
+            return Some(seen);
+        }
+        let seen = sees_sun(clip, origin, dir)?;
+        self.cells.insert(key, seen);
+        Some(seen)
+    }
+}
+
 pub fn register_cs_viewmodel_light(app: &mut App) {
     app.add_systems(
         Update,
@@ -42,6 +75,7 @@ fn light_cs_world_models(
     sun: Option<Res<MapDirPrimaryLight>>,
     clip: Res<DynEntPhysClip>,
     mut frame: ResMut<render_gpu::CsWorldModelsFrame>,
+    mut sun_cache: Local<SunCache>,
 ) {
     let Some(grid) = scene.as_ref().and_then(|s| s.light_grid.as_ref()) else {
         return;
@@ -59,7 +93,7 @@ fn light_cs_world_models(
                 .map(|c| srgb_to_linear(f32::from(c) / 255.0) * WORLD_GRID_AMBIENT);
         }
         if let Some(sun) = sun.as_ref()
-            && sees_sun(&clip, origin, sun.direction) == Some(true)
+            && sun_cache.sees_sun(&clip, origin, sun.direction) == Some(true)
         {
             instance.sun_dir = sun.direction;
             instance.sun = sun.color.map(|c| c * sun.diffuse_color_scale * SUN_SCALE);
@@ -93,6 +127,7 @@ fn light_cs_viewmodel(
     time: Res<Time>,
     mut sun_visible: Local<f32>,
     mut frame: ResMut<CsViewmodelFrame>,
+    mut sun_cache: Local<SunCache>,
 ) {
     if frame.model.is_none() {
         return;
@@ -121,7 +156,7 @@ fn light_cs_viewmodel(
     let Some(sun) = sun.filter(|s| s.direction.iter().any(|v| *v != 0.0)) else {
         return;
     };
-    let target = match sees_sun(&clip, origin, sun.direction) {
+    let target = match sun_cache.sees_sun(&clip, origin, sun.direction) {
         Some(true) => 1.0,
         Some(false) => 0.0,
         None => return,
