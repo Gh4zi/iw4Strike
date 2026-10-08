@@ -191,30 +191,37 @@ fn send_buy(
     if money < price && !(name == "vesthelm" && money >= 350) {
         return format!("buy: {name} costs ${price}, you have ${money}");
     }
-    let request_id = seq.allocate();
-    let action = match name {
+    let action = match buy_action(name, weapons, seq.allocate()) {
+        Ok(action) => action,
+        Err(msg) => return format!("buy: {msg}"),
+    };
+    match inbox.push(local, action) {
+        Ok(()) => format!("buy: {name} (${price})"),
+        Err(error) => format!("buy: {error}"),
+    }
+}
+
+/// The purchase a CS buy name (already resolved by `buy_alias`) sends; the server checks money,
+/// zone, time and side.
+pub(crate) fn buy_action(
+    name: &str,
+    weapons: Option<&PreparedWeapons>,
+    request_id: sim::ActionRequestId,
+) -> Result<ClientAction, String> {
+    Ok(match name {
         "vest" | "vesthelm" => ClientAction::BuyArmor {
             request_id,
             helmet: name == "vesthelm",
         },
         "defuser" => ClientAction::BuyDefuser { request_id },
         _ => {
-            let Some(weapons) = weapons else {
-                return "buy: weapon catalog not loaded".into();
-            };
-            let Some((_, mw2_name, _)) = weapon_iw4::cs::cs_buyable(name) else {
-                return format!("buy: nothing sold as `{name}`");
-            };
-            match resolve_give_id(&weapons.0, mw2_name, &[]) {
-                Ok(weapon) => ClientAction::BuyWeapon { request_id, weapon },
-                Err(msg) => return format!("buy: {msg}"),
-            }
+            let weapons = weapons.ok_or("weapon catalog not loaded")?;
+            let (_, mw2_name, _) = weapon_iw4::cs::cs_buyable(name)
+                .ok_or_else(|| format!("nothing sold as `{name}`"))?;
+            let weapon = resolve_give_id(&weapons.0, mw2_name, &[])?;
+            ClientAction::BuyWeapon { request_id, weapon }
         }
-    };
-    match inbox.push(local, action) {
-        Ok(()) => format!("buy: {name} (${price})"),
-        Err(error) => format!("buy: {error}"),
-    }
+    })
 }
 
 /// The buy menu's picks, sent like the `buy` command; `menuselect <n>` picks an item as its

@@ -73,6 +73,7 @@ pub(crate) fn route_debug_feature_commands(
                     | BotVerb::Attack(..)
                     | BotVerb::Weapon(..)
                     | BotVerb::Use(..)
+                    | BotVerb::Buy(..)
                     | BotVerb::Give { .. },
                 )
                     if authority.as_ref().is_some_and(|a| !a.0.cheats_enabled()) =>
@@ -119,6 +120,25 @@ pub(crate) fn route_debug_feature_commands(
                         }
                     }
                     echo(format!("bot: attack {target:?} {}", if on { "on" } else { "off" }), console, line);
+                }
+                Ok(BotVerb::Buy(id, item)) => {
+                    let Some(name) = weapon_iw4::cs::buy_alias(&item) else {
+                        echo(format!("bot buy: nothing sold as `{item}`"), console, line);
+                        continue;
+                    };
+                    let message = match crate::weapon_dispatch::buy_action(
+                        name,
+                        weapons.as_deref(),
+                        give_seq.allocate(),
+                    ) {
+                        Ok(action) => match inbox.as_mut().map(|inbox| inbox.push(id, action)) {
+                            Some(Ok(())) => format!("bot buy: {} buys {name}", id.0),
+                            Some(Err(error)) => format!("bot buy: {error}"),
+                            None => "bot buy: no action inbox".to_owned(),
+                        },
+                        Err(msg) => format!("bot buy: {msg}"),
+                    };
+                    echo(message, console, line);
                 }
                 Ok(BotVerb::Use(id, on)) => {
                     if on {
@@ -364,7 +384,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
     }
 }
 
-pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | attack all|<id> [on|off] | use <id> [on|off] | weapon <id> <weapon> | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
+pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | attack all|<id> [on|off] | use <id> [on|off] | buy <id> <item> | weapon <id> <weapon> | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum BotVerb {
@@ -383,6 +403,8 @@ pub(crate) enum BotVerb {
     Weapon(ClientId, String),
     /// Test control: keep use (E) held, or let go.
     Use(ClientId, bool),
+    /// Test control: buy a CS item (`defuser`, `vest`, a gun) for the bot.
+    Buy(ClientId, String),
     Tp(BotTpRequest),
 }
 
@@ -452,6 +474,15 @@ pub(crate) fn parse_bot_args(args: &[String]) -> Result<BotVerb, String> {
                 Some(_) => return Err(usage()),
             };
             Ok(BotVerb::Attack(target, on))
+        }
+        "buy" => {
+            let usage = || "usage: bot buy <id> <item>".to_owned();
+            let id = args
+                .get(1)
+                .ok_or_else(usage)?
+                .parse::<u32>()
+                .map_err(|_| usage())?;
+            Ok(BotVerb::Buy(ClientId(id), args.get(2).cloned().ok_or_else(usage)?))
         }
         "use" => {
             let usage = || "usage: bot use <id> [on|off]".to_owned();
