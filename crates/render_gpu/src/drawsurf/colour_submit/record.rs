@@ -1,4 +1,5 @@
 use super::*;
+use bevy::render::render_resource::CommandEncoderDescriptor;
 
 pub(super) fn draw_exact_colour(
     view: ViewQuery<(
@@ -395,44 +396,84 @@ pub(super) fn draw_exact_colour(
 
         let diagnostics = context.diagnostic_recorder();
         let diagnostics = diagnostics.as_deref();
-        let encoder = context.command_encoder();
         let record_started = colour_census_clock(census_on);
         let mut pass_end_ms = 0.0f32;
         let mut pass_end_n = 0u32;
         let mut encode_not_ready = 0u32;
-        let gpu_span = diagnostics.time_span(encoder, GPU_SPAN_COLOUR);
-        let (indexed, drop_ms, drawn, draw_refused, focused_drawn, binds) = submit_exact_draws(
-            encoder,
-            &device,
+        let colour_draws: Vec<&PreparedExactDraw> = prepared
+            .iter()
+            .filter(|draw| !draw.after_scene_resolve)
+            .collect();
+        let chunk_n = colour_record_chunk_count(colour_draws.len());
+        let gpu_span = diagnostics.time_span(context.command_encoder(), GPU_SPAN_COLOUR);
+        let inputs = ColourChunkInputs {
+            device: &device,
             target,
             depth,
             extracted_view,
-            &geometry,
-            &smodel_cache_gpu,
+            geometry: &geometry,
+            smodel_cache_gpu: &smodel_cache_gpu,
             smodel_skinned_vertex,
             smodel_skinned_index,
-            pretess.as_ref(),
-            &indirect,
-            &registry,
-            &constant_arena,
-            [table_binds[0], table_binds[1]],
-            prepared.iter().filter(|draw| !draw.after_scene_resolve),
-            "iw4_exact_colour_pass",
-            &mut refused_draws,
-            &mut last_refusal,
-            &mut encode_not_ready,
+            pretess: pretess.as_ref(),
+            indirect: &indirect,
+            registry: &registry,
+            constant_arena: &constant_arena,
+            textures_bind: [table_binds[0], table_binds[1]],
             focused_object_id,
-        );
-        gpu_indexed = gpu_indexed.saturating_add(indexed);
-        focused_drawn_passes = focused_drawn_passes.saturating_add(focused_drawn);
-        record_n.add(binds);
-        for lane in 0..3 {
-            bsp_drawn_surfaces[lane] = bsp_drawn_surfaces[lane].saturating_add(drawn[lane]);
-            bsp_draw_refused_surfaces[lane] =
-                bsp_draw_refused_surfaces[lane].saturating_add(draw_refused[lane]);
+        };
+        let chunk_records = if chunk_n > 1 {
+            // wgpu encodes a pass when its encoder is finished, on the thread that finishes it:
+            // contiguous chunks are recorded and finished on the compute pool and added in draw
+            // order. The colour and depth first-use clears are taken here, so every chunk loads.
+            clear_view_target_once(context.command_encoder(), target, depth);
+            let share = colour_draws.len().div_ceil(chunk_n).max(1);
+            let inputs = &inputs;
+            let chunks = bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default)
+                .scope(|scope| {
+                    for part in colour_draws.chunks(share) {
+                        scope.spawn(async move {
+                            let mut encoder =
+                                inputs.device.create_command_encoder(&CommandEncoderDescriptor {
+                                    label: Some("iw4_exact_colour_chunk"),
+                                });
+                            let record = record_colour_chunk(inputs, &mut encoder, part);
+                            (encoder.finish(), record)
+                        });
+                    }
+                });
+            let mut records = Vec::with_capacity(chunks.len());
+            for (buffer, record) in chunks {
+                context.add_command_buffer(buffer);
+                records.push(record);
+            }
+            records
+        } else {
+            vec![record_colour_chunk(
+                &inputs,
+                context.command_encoder(),
+                &colour_draws,
+            )]
+        };
+        for record in chunk_records {
+            gpu_indexed = gpu_indexed.saturating_add(record.indexed);
+            focused_drawn_passes = focused_drawn_passes.saturating_add(record.focused_drawn);
+            record_n.add(record.binds);
+            for lane in 0..3 {
+                bsp_drawn_surfaces[lane] =
+                    bsp_drawn_surfaces[lane].saturating_add(record.drawn[lane]);
+                bsp_draw_refused_surfaces[lane] =
+                    bsp_draw_refused_surfaces[lane].saturating_add(record.draw_refused[lane]);
+            }
+            refused_draws = refused_draws.saturating_add(record.refused_draws);
+            encode_not_ready = encode_not_ready.saturating_add(record.encode_not_ready);
+            if record.last_refusal.is_some() {
+                last_refusal = record.last_refusal;
+            }
+            pass_end_ms += record.drop_ms;
+            pass_end_n = pass_end_n.saturating_add(1);
         }
-        pass_end_ms += drop_ms;
-        pass_end_n = pass_end_n.saturating_add(1);
+        let encoder = context.command_encoder();
         gpu_span.end(encoder);
 
         if needs_floatz {
@@ -868,4 +909,126 @@ pub(super) fn copy_submit_prepare_ms(
         guard.pnr_port_n = census.frame.pnr_port_n;
         guard.gpu_smodel_bind_mat = census.frame.gpu_smodel_bind_mat.clone();
     }
+}
+
+/// A frame with fewer colour draws than this records them on one encoder; above it, one chunk
+/// per this many draws, up to `COLOUR_RECORD_CHUNKS_MAX`. Each extra chunk is one more pass and
+/// one more command buffer to submit.
+const COLOUR_RECORD_CHUNK_DRAWS: usize = 700;
+const COLOUR_RECORD_CHUNKS_MAX: usize = 3;
+
+/// `IW4L_COLOUR_CHUNKS=<n>` overrides the chunk count (1 records on one encoder, as before).
+fn colour_record_chunk_count(draws: usize) -> usize {
+    static FORCED: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    let forced = *FORCED.get_or_init(|| {
+        std::env::var("IW4L_COLOUR_CHUNKS")
+            .ok()
+            .and_then(|value| value.trim().parse().ok())
+            .filter(|&chunks: &usize| chunks > 0)
+    });
+    forced
+        .unwrap_or_else(|| (draws / COLOUR_RECORD_CHUNK_DRAWS).clamp(1, COLOUR_RECORD_CHUNKS_MAX))
+        .min(draws.max(1))
+}
+
+/// Takes the view target's and the scene depth's first-use clears in a pass of their own, so the
+/// passes recorded after it on other threads all load.
+fn clear_view_target_once(
+    encoder: &mut CommandEncoder,
+    target: &ViewTarget,
+    depth: &SceneDepthTexture,
+) {
+    let ops = target.get_color_attachment().ops;
+    let depth_attachment = depth.get_attachment(StoreOp::Store);
+    let colour_clears = matches!(ops.load, LoadOp::Clear(_));
+    let depth_clears = depth_attachment
+        .depth_ops
+        .as_ref()
+        .is_some_and(|ops| matches!(ops.load, LoadOp::Clear(_)));
+    if !colour_clears && !depth_clears {
+        return;
+    }
+    let views = ExactColourTargetViews::new(target);
+    let (view, resolve_target) = views.attachment_views(false);
+    let attachments = [Some(RenderPassColorAttachment {
+        view,
+        resolve_target: resolve_target.map(|view| &**view),
+        ops,
+        depth_slice: None,
+    })];
+    drop(encoder.begin_render_pass(&RenderPassDescriptor {
+        label: Some("iw4_exact_colour_clear"),
+        color_attachments: &attachments,
+        depth_stencil_attachment: Some(depth_attachment),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    }));
+}
+
+struct ColourChunkInputs<'a> {
+    device: &'a RenderDevice,
+    target: &'a ViewTarget,
+    depth: &'a SceneDepthTexture,
+    extracted_view: &'a ExtractedView,
+    geometry: &'a ExactColourGeometry,
+    smodel_cache_gpu: &'a SmodelCacheGpu,
+    smodel_skinned_vertex: Option<&'a Buffer>,
+    smodel_skinned_index: Option<&'a Buffer>,
+    pretess: &'a CameraWorldPretess,
+    indirect: &'a super::indirect::ExactIndirectDraws,
+    registry: &'a ExactPipelineRegistry,
+    constant_arena: &'a ExactConstantArena,
+    textures_bind: [&'a BindGroup; 2],
+    focused_object_id: Option<u16>,
+}
+
+#[derive(Default)]
+struct ColourChunkRecord {
+    indexed: u32,
+    drop_ms: f32,
+    drawn: [u32; 4],
+    draw_refused: [u32; 4],
+    focused_drawn: u32,
+    binds: RecordCensus,
+    refused_draws: u32,
+    last_refusal: Option<GpuSubmitRefusal>,
+    encode_not_ready: u32,
+}
+
+fn record_colour_chunk(
+    inputs: &ColourChunkInputs<'_>,
+    encoder: &mut CommandEncoder,
+    draws: &[&PreparedExactDraw],
+) -> ColourChunkRecord {
+    let mut record = ColourChunkRecord::default();
+    let (indexed, drop_ms, drawn, draw_refused, focused_drawn, binds) = submit_exact_draws(
+        encoder,
+        inputs.device,
+        inputs.target,
+        inputs.depth,
+        inputs.extracted_view,
+        inputs.geometry,
+        inputs.smodel_cache_gpu,
+        inputs.smodel_skinned_vertex,
+        inputs.smodel_skinned_index,
+        inputs.pretess,
+        inputs.indirect,
+        inputs.registry,
+        inputs.constant_arena,
+        inputs.textures_bind,
+        draws.iter().copied(),
+        "iw4_exact_colour_pass",
+        &mut record.refused_draws,
+        &mut record.last_refusal,
+        &mut record.encode_not_ready,
+        inputs.focused_object_id,
+    );
+    record.indexed = indexed;
+    record.drop_ms = drop_ms;
+    record.drawn = drawn;
+    record.draw_refused = draw_refused;
+    record.focused_drawn = focused_drawn;
+    record.binds = binds;
+    record
 }
