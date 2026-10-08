@@ -51,6 +51,10 @@ pub struct GameSettings {
     pub shadows: bool,
     pub depth_of_field: bool,
     pub bloom: bool,
+    /// `max_frames_ahead`: frames the CPU may queue ahead of the GPU (1 or 2). 2 lets the render
+    /// thread record while the GPU finishes the last frame (more fps); 1 adds no queue when the GPU
+    /// is the bottleneck. Read when the window is made, so a change applies after a restart.
+    pub max_frames_ahead: u8,
     pub sensitivity: f32,
     pub invert_mouse: bool,
     pub player_name: String,
@@ -96,6 +100,7 @@ impl Default for GameSettings {
             shadows: true,
             depth_of_field: true,
             bloom: true,
+            max_frames_ahead: Self::MAX_FRAMES_AHEAD_DEFAULT,
             sensitivity: 5.0,
             invert_mouse: false,
             player_name: "Player".to_owned(),
@@ -120,6 +125,7 @@ impl Default for GameSettings {
 
 impl GameSettings {
     pub const FOV_DEFAULT: f32 = 65.0;
+    pub const MAX_FRAMES_AHEAD_DEFAULT: u8 = 2;
     pub const FOV_MIN: f32 = 65.0;
     pub const FOV_MAX: f32 = 120.0;
     pub const VIEWMODEL_FOV_DEFAULT: f32 = 68.0;
@@ -164,6 +170,7 @@ impl GameSettings {
         };
         self.master_volume = self.master_volume.clamp(0.0, 1.0);
         self.sensitivity = self.sensitivity.clamp(0.1, 30.0);
+        self.max_frames_ahead = self.max_frames_ahead.clamp(1, 2);
         if self.pad_layout != Self::PAD_LAYOUT_CUSTOM {
             self.pad_layout = self.pad_layout.min(4);
         }

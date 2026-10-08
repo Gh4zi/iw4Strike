@@ -148,21 +148,27 @@ const FRAME_LATENCY_ENV: &str = "IW4L_FRAME_LATENCY";
 ///
 /// wgpu calls this a hint and the backend is free to clamp it: on Vulkan it is
 /// bound to the number of swapchain images, so a run that asked for two did
-/// not necessarily get two, and only a measurement says which. One is the
-/// default because it is what the runtime shipped; the variable exists so the
-/// other arm needs no rebuild, and the manifest records the number that was
-/// asked for — never the number the driver granted, which this process cannot
-/// read back.
+/// not necessarily get two, and only a measurement says which. The player picks
+/// it (`max_frames_ahead` in settings.cfg, Advanced Video in the menu); the
+/// variable overrides that so a paired run needs no settings file, and the
+/// manifest records the number that was asked for — never the number the driver
+/// granted, which this process cannot read back.
+///
+/// Two is the default: with one, the render thread waits on the GPU for the
+/// previous frame at every swap-chain acquire (~1.2 ms a frame on a CPU-bound
+/// run), and a second frame only queues when the GPU is the slower side.
 ///
 /// The value is a count, not a switch: anything unparseable or zero is the
 /// default, and says so rather than silently picking an arm. Read once, so the
 /// window and the manifest cannot disagree and the complaint is made once.
 pub(crate) fn frame_latency() -> u32 {
-    const DEFAULT: u32 = 1;
+    const DEFAULT: u32 = frame::GameSettings::MAX_FRAMES_AHEAD_DEFAULT as u32;
     static FRAMES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *FRAMES.get_or_init(|| {
         let Some(asked) = std::env::var_os(FRAME_LATENCY_ENV) else {
-            return DEFAULT;
+            return asset_transport::game_paths::saved_setting("max_frames_ahead")
+                .and_then(|value| value.parse::<u32>().ok())
+                .map_or(DEFAULT, |frames| frames.clamp(1, 2));
         };
         match asked.to_str().map(str::trim).and_then(|v| v.parse().ok()) {
             Some(frames) if frames > 0 => frames,

@@ -135,6 +135,17 @@ pub fn read_saved(file: &Path) -> Option<[String; 3]> {
         .then(|| saved.map(Option::unwrap_or_default))
 }
 
+/// One `key=value` line of the saved `settings.cfg`, for the few settings that must be known before
+/// the window exists (the console loads the rest once the app is running).
+#[must_use]
+pub fn saved_setting(key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(default_settings_file()?).ok()?;
+    text.lines().find_map(|line| {
+        let (name, value) = line.trim().split_once('=')?;
+        (name.trim() == key).then(|| value.trim().to_owned())
+    })
+}
+
 fn saved_at_start() -> &'static Option<[String; 3]> {
     static SAVED: OnceLock<Option<[String; 3]>> = OnceLock::new();
     SAVED.get_or_init(|| default_settings_file().and_then(|file| read_saved(&file)))

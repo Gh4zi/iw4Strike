@@ -346,6 +346,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("shadows={}", settings.shadows),
         format!("depth_of_field={}", settings.depth_of_field),
         format!("bloom={}", settings.bloom),
+        format!("max_frames_ahead={}", settings.max_frames_ahead),
         format!("sensitivity={:.3}", settings.sensitivity),
         format!("invert_mouse={}", settings.invert_mouse),
         format!("player_name={safe_name}"),
@@ -469,6 +470,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "bloom" => {
                 if let Ok(v) = value.parse() {
                     settings.bloom = v;
+                }
+            }
+            "max_frames_ahead" => {
+                if let Ok(v @ 1..=2) = value.trim().parse::<u8>() {
+                    settings.max_frames_ahead = v;
                 }
             }
             "master_volume" => {
@@ -618,6 +624,7 @@ pub(crate) fn native_menu_settings(
             "ui_shadows" => settings.shadows = value == "1",
             "ui_dof" => settings.depth_of_field = value == "1",
             "ui_bloom" => settings.bloom = value == "1",
+            "ui_max_frames_ahead" => parse_into(value, &mut settings.max_frames_ahead),
             "ui_pad_layout" => parse_into(value, &mut settings.pad_layout),
             "ui_pad_stick_layout" => parse_into(value, &mut settings.pad_stick_layout),
             "ui_pad_sensitivity_preset" => parse_into(value, &mut settings.pad_sensitivity_preset),
@@ -665,6 +672,7 @@ pub(crate) fn native_menu_settings(
     dvars.set("ui_shadows", if settings.shadows { "1" } else { "0" });
     dvars.set("ui_dof", if settings.depth_of_field { "1" } else { "0" });
     dvars.set("ui_bloom", if settings.bloom { "1" } else { "0" });
+    dvars.set("ui_max_frames_ahead", settings.max_frames_ahead.to_string());
     dvars.set("ui_r_mode", settings.resolution.to_string());
     dvars.set(
         "ui_r_displayMode",
