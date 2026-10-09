@@ -439,6 +439,10 @@ fn xmodel_merge_stamp(
     for draw in items.draws() {
         scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
     }
+    // The concat patch cannot add or drop a source, so a source starting or
+    // stopping to draw changes the topology.
+    (!fx_models.draws().is_empty()).hash(&mut occupancy);
+    (!dynents.draws().is_empty()).hash(&mut occupancy);
     let sky_eye = sky.map(|(_, eye)| [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits()]);
     let keys = producer_keys(
         fpv,
