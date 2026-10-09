@@ -112,8 +112,9 @@ enum Install {
         pack: mdl_source::Vpk,
         dir: PathBuf,
     },
-    /// Counter-Strike 1.6: the `cstrike` folder.
-    GoldSrc { dir: PathBuf },
+    /// Condition Zero or Counter-Strike 1.6: the GoldSrc folders, each file from the first
+    /// holding it.
+    GoldSrc { dirs: asset_transport::GoldSrcDirs },
 }
 
 impl Install {
@@ -123,7 +124,7 @@ impl Install {
             let pack = mdl_source::Vpk::open(&pak).ok()?;
             return Some(Self::Source { pack, dir });
         }
-        asset_transport::find_cstrike().map(|dir| Self::GoldSrc { dir })
+        asset_transport::find_goldsrc().map(|dirs| Self::GoldSrc { dirs })
     }
 
     fn look(&self) -> Look {
@@ -139,7 +140,7 @@ impl Install {
             Self::Source { pack, dir } => pack
                 .read(&path)
                 .or_else(|| std::fs::read(dir.join(&path)).ok()),
-            Self::GoldSrc { dir } => std::fs::read(dir.join(&path)).ok(),
+            Self::GoldSrc { dirs } => dirs.read(&path),
         }
     }
 
@@ -147,7 +148,7 @@ impl Install {
         let path = path.replace('\\', "/").to_ascii_lowercase();
         match self {
             Self::Source { pack, dir } => pack.contains(&path) || dir.join(&path).is_file(),
-            Self::GoldSrc { dir } => dir.join(&path).is_file(),
+            Self::GoldSrc { dirs } => dirs.file(&path).is_some(),
         }
     }
 
@@ -190,7 +191,7 @@ impl Data {
             "cs buy menu: VGUI from {}, {} strings, classic menus {}",
             match install.as_ref().map(Install::look) {
                 Some(Look::Source) => "CS:S",
-                Some(Look::GoldSrc) => "CS 1.6",
+                Some(Look::GoldSrc) => "GoldSrc (Condition Zero / CS 1.6)",
                 None => "nowhere (classic only)",
             },
             strings.len(),

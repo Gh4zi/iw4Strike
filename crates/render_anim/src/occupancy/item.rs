@@ -17,6 +17,8 @@ use render_scene::{
 };
 
 pub const ITEM_LIGHTING_Z_OFS: f32 = 4.0;
+/// An item entity flagged not to draw.
+pub(crate) const EF_NODRAW: u32 = 0x20;
 
 struct ItemComposition {
     name: String,
@@ -260,11 +262,7 @@ fn occupy_item_scene_ents(
         return;
     };
     let hide_scavenger = !local_has_scavenger_perk(Some(presented_inner), local_client.as_deref());
-    let at_time = cg_clock
-        .as_ref()
-        .filter(|clock| clock.started())
-        .map(|clock| clock.time())
-        .unwrap_or_else(|| sim::level_time_ms(snapshot.tick));
+    let at_time = item_time(cg_clock.as_deref(), snapshot);
     let live = match (weapons.as_deref(), world_weapons.as_deref()) {
         (Some(weapons), Some(world)) => compositions.owned_by(weapons, world),
         _ => false,
@@ -290,7 +288,13 @@ fn occupy_item_scene_ents(
         let Some(weapon) = item_weapon_index(es.index) else {
             continue;
         };
-        if es.e_flags & 0x20 != 0 {
+        if es.e_flags & EF_NODRAW != 0 {
+            continue;
+        }
+        // A CS weapon lies as the CS game's own model instead (`cs_world_model`).
+        if weapons.as_deref().is_some_and(|weapons| {
+            super::cs_world_model::shows_cs_dropped_model(&weapons.0, weapon)
+        }) {
             continue;
         }
         if hide_scavenger && item_is_scavenger(snapshot, es.number) {
@@ -566,6 +570,29 @@ fn append_item_draws(
         plan.revision = stamp_plan_geometry(&mut plan.revisions, rev, topology);
     }
     plan.publish_frame_rows(&mut draws, &mut owners);
+}
+
+/// The time items are placed at this frame.
+pub(crate) fn item_time(cg_clock: Option<&net::FrameClock>, snapshot: &sim::Snapshot) -> i32 {
+    cg_clock
+        .filter(|clock| clock.started())
+        .map(|clock| clock.time())
+        .unwrap_or_else(|| sim::level_time_ms(snapshot.tick))
+}
+
+/// An item's origin and angles at `at_time`.
+pub(crate) fn item_place(es: &entity_iw4::EntityState, at_time: i32) -> ([f32; 3], [f32; 3]) {
+    let apos = Trajectory {
+        tr_time: es.apos_tr_time,
+        tr_type: es.apos_tr_type,
+        tr_duration: es.apos_tr_duration,
+        tr_delta: es.apos_tr_delta,
+        tr_base: es.apos_tr_base,
+    };
+    (
+        evaluate_origin(es, at_time),
+        evaluate_trajectory(&apos, at_time),
+    )
 }
 
 fn evaluate_origin(es: &entity_iw4::EntityState, at_time: i32) -> [f32; 3] {

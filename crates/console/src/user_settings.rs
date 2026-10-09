@@ -340,6 +340,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("brightness={:.3}", settings.brightness),
         format!("fov={:.0}", settings.fov),
         format!("viewmodel_fov={:.0}", settings.viewmodel_fov),
+        format!("cl_righthand={}", u8::from(settings.right_hand)),
         format!("mv_mode={}", settings.mv_mode),
         format!("sv_destructibles={}", u8::from(settings.destructibles)),
         format!("third_person={}", settings.third_person),
@@ -377,6 +378,14 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
             lines.push(format!("{}={}", folder.key(), paths[folder.index()]));
         }
     }
+    // The game folders window's "Use" boxes, written back as read.
+    if let Some(used) = &settings.game_used {
+        for folder in asset_transport::GameFolder::ALL {
+            if let Some(key) = folder.use_key() {
+                lines.push(format!("{key}={}", u8::from(used[folder.index()])));
+            }
+        }
+    }
     lines.push("unbindall".to_owned());
     lines.extend(binds.list_lines());
     lines.push(String::new());
@@ -406,6 +415,13 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             settings.game_paths.get_or_insert_default()[folder.index()] = value.trim().to_owned();
             continue;
         }
+        if let Some(folder) = asset_transport::GameFolder::ALL
+            .into_iter()
+            .find(|folder| folder.use_key() == Some(key))
+        {
+            settings.game_used.get_or_insert([true; 4])[folder.index()] = value.trim() != "0";
+            continue;
+        }
         match key {
             "resolution" => {
                 if let Some((w, h)) = value.split_once('x')
@@ -431,6 +447,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                 }
             }
             "viewmodel_fov" => parse_into(value, &mut settings.viewmodel_fov),
+            "cl_righthand" => settings.right_hand = value.trim() != "0",
             "snd_timer_warning_volume" => {
                 if let Ok(volume) = value.trim().parse::<f32>()
                     && volume.is_finite()
@@ -568,6 +585,9 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
         }
     }
 }
+
+// `frame::GameSettings::game_paths` / `game_used` hold one entry per game folder.
+const _: () = assert!(asset_transport::GameFolder::COUNT == 4);
 
 /// The options menu's crosshair rows and the `cl_crosshair*` variable each sets.
 const MENU_CROSSHAIR: [(&str, &str); 8] = [

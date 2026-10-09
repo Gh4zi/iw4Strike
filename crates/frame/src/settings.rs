@@ -31,6 +31,8 @@ pub struct GameSettings {
     pub fov: f32,
     /// Counter-Strike viewmodel field of view (horizontal degrees at 4:3, widened Hor+).
     pub viewmodel_fov: f32,
+    /// `cl_righthand`: the CS gun is held in the right hand (false: the left).
+    pub right_hand: bool,
     /// Movement preset (`mv_mode`): csgo, surf, mmod or cs16.
     pub mv_mode: String,
     /// Map destructibles (cars, barrels) take damage (`sv_destructibles`); off for CS play.
@@ -76,9 +78,13 @@ pub struct GameSettings {
     pub pad_deadzone_left: f32,
     pub pad_deadzone_right: f32,
 
-    /// Game folders from the game folders window (`game_path_mw2/css/cs16`), kept as read so a
+    /// Game folders from the game folders window (`game_path_mw2/css/cs16/cz`, in
+    /// `asset_transport::GameFolder::index` order), kept as read so a
     /// save writes them back; `None` until that window first saved them.
-    pub game_paths: Option<[String; 3]>,
+    pub game_paths: Option<[String; 4]>,
+    /// Whether each game is used (`use_css` / `use_cz` / `use_cs16`, the window's "Use" boxes),
+    /// same order, kept as read for the same reason; `None` when the file has no such line.
+    pub game_used: Option<[bool; 4]>,
 
     pub revision: u64,
 }
@@ -91,6 +97,7 @@ impl Default for GameSettings {
             vsync: true,
             fov: Self::FOV_DEFAULT,
             viewmodel_fov: Self::VIEWMODEL_FOV_DEFAULT,
+            right_hand: true,
             mv_mode: "csgo".to_owned(),
             destructibles: false,
             third_person: false,
@@ -122,6 +129,7 @@ impl Default for GameSettings {
             pad_deadzone_left: 0.12,
             pad_deadzone_right: 0.12,
             game_paths: None,
+            game_used: None,
             revision: 0,
         }
     }

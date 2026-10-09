@@ -308,7 +308,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         ),
         (
             "game_paths",
-            "game_paths — quit and open the game folders window (MW2, CS:S, CS 1.6)",
+            "game_paths — quit and open the game folders window (MW2, CS:S, Condition Zero, CS 1.6)",
         ),
         ("ui", "ui [0|1] — hide/show game UI; console Overlay stays"),
         (

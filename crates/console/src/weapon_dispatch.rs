@@ -93,6 +93,12 @@ pub(crate) fn register_weapon_commands(
             "autobuy — buy the best rifle and armor you can afford (in a buy zone, during the buy time)",
         ));
     }
+    if registry.resolve("drop").is_none() {
+        registry.register(
+            crate::CommandSpec::new("drop")
+                .usage("drop — throw the gun in your hands down, as the drop key (G) does"),
+        );
+    }
     if registry.resolve("rebuy").is_none() {
         registry.register(crate::CommandSpec::new("rebuy").usage(
             "rebuy — buy again what you bought last time (in a buy zone, during the buy time)",
@@ -294,16 +300,32 @@ pub(crate) fn route_weapon_commands(
             continue;
         }
         match cmd.name.as_str() {
+            "drop" => {
+                let request_id = seq.allocate();
+                let message = match inbox.push(local.0, ClientAction::DropWeapon { request_id }) {
+                    Ok(()) => "drop: sent".to_owned(),
+                    Err(error) => format!("drop: {error}"),
+                };
+                echo(message, &mut console, &mut line);
+            }
             "menuresponse" => {
                 let [menu, response] = cmd.args.as_slice() else {
-                    echo("usage: menuresponse <menu> <response>".into(), &mut console, &mut line);
+                    echo(
+                        "usage: menuresponse <menu> <response>".into(),
+                        &mut console,
+                        &mut line,
+                    );
                     continue;
                 };
                 let (Some(menu_field), Some(response_field)) = (
                     sim::menu_response_field(menu),
                     sim::menu_response_field(response),
                 ) else {
-                    echo("menuresponse: too long for the wire".into(), &mut console, &mut line);
+                    echo(
+                        "menuresponse: too long for the wire".into(),
+                        &mut console,
+                        &mut line,
+                    );
                     continue;
                 };
                 let request_id = seq.allocate();

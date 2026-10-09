@@ -97,7 +97,7 @@ pub(crate) fn spawn_cs_scoreboard(
         return;
     };
     state.style = if asset_transport::find_css_pak().is_none()
-        && asset_transport::find_cstrike().is_some()
+        && asset_transport::find_goldsrc().is_some()
     {
         Style::GoldSrc
     } else {

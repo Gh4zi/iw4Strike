@@ -343,8 +343,8 @@ pub(crate) fn spawn_cs_hud(
         return;
     };
     *assets = load_assets(&mut fonts, &mut images);
-    // Playing with CS 1.6: its own sprite HUD instead of the CS:S panels.
-    if let Some(found) = asset_transport::find_cstrike()
+    // Playing with CS 1.6 or Condition Zero: CS 1.6's sprite HUD instead of the CS:S panels.
+    if let Some(found) = asset_transport::find_goldsrc()
         .and_then(|dir| crate::cs16_hud::load(&dir, &mut fonts, &mut images))
     {
         *goldsrc = found;

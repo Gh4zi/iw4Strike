@@ -1,8 +1,10 @@
 //! The game folders the player selects in the game folders window, saved in `settings.cfg`
-//! (`game_path_mw2`, `game_path_css`, `game_path_cs16`), and whether each Counter-Strike game is
-//! used at all (`use_css`, `use_cs16`, the window's "Use" boxes). An environment / `.env`
-//! override (`IW4L_CSS`, `IW4L_CSTRIKE`) wins over a saved folder; Steam is searched only when
-//! neither names one. A game turned off is not used whatever names it; with both on, CS:S wins.
+//! (`game_path_mw2`, `game_path_css`, `game_path_cz`, `game_path_cs16`), and whether each
+//! Counter-Strike game is used at all (`use_css`, `use_cz`, `use_cs16`, the window's "Use"
+//! boxes). An environment / `.env` override (`IW4L_CSS`, `IW4L_CZERO`, `IW4L_CSTRIKE`) wins over
+//! a saved folder; Steam is searched only for CS:S. A game turned off is not used whatever names
+//! it. CS:S wins over both GoldSrc games; without it Condition Zero is read first and
+//! Counter-Strike 1.6 fills in what CZ lacks, as CZ itself does.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -12,10 +14,14 @@ pub enum GameFolder {
     Mw2,
     Css,
     Cs16,
+    Cz,
 }
 
 impl GameFolder {
-    pub const ALL: [Self; 3] = [Self::Mw2, Self::Css, Self::Cs16];
+    /// How many there are: the length of the arrays indexed by [`index`](Self::index).
+    pub const COUNT: usize = 4;
+    /// In the order the game folders window lists them, which is the order they are used in.
+    pub const ALL: [Self; Self::COUNT] = [Self::Mw2, Self::Css, Self::Cz, Self::Cs16];
 
     #[must_use]
     pub const fn index(self) -> usize {
@@ -23,6 +29,7 @@ impl GameFolder {
             Self::Mw2 => 0,
             Self::Css => 1,
             Self::Cs16 => 2,
+            Self::Cz => 3,
         }
     }
 
@@ -33,6 +40,7 @@ impl GameFolder {
             Self::Mw2 => "game_path_mw2",
             Self::Css => "game_path_css",
             Self::Cs16 => "game_path_cs16",
+            Self::Cz => "game_path_cz",
         }
     }
 
@@ -43,6 +51,7 @@ impl GameFolder {
             Self::Mw2 => None,
             Self::Css => Some("use_css"),
             Self::Cs16 => Some("use_cs16"),
+            Self::Cz => Some("use_cz"),
         }
     }
 
@@ -52,12 +61,13 @@ impl GameFolder {
             Self::Mw2 => "Call of Duty: Modern Warfare 2",
             Self::Css => "Counter-Strike: Source",
             Self::Cs16 => "Counter-Strike 1.6",
+            Self::Cz => "Counter-Strike: Condition Zero",
         }
     }
 
     /// The folder the game reads, from a folder the player picked: MW2's install folder (the one
-    /// with `zone`), or a Counter-Strike `cstrike` folder — the game's own folder is accepted
-    /// too, as is a folder picked one level too deep.
+    /// with `zone`), or a Counter-Strike `cstrike` (CZ: `czero`) folder — the game's own folder
+    /// is accepted too, as is a folder picked one level too deep.
     #[must_use]
     pub fn resolve(self, picked: &Path) -> Option<PathBuf> {
         #[cfg(windows)]
@@ -70,15 +80,25 @@ impl GameFolder {
                 Some(picked.to_path_buf()),
                 parent,
             ],
+            Self::Cz => vec![
+                Some(picked.join("czero")),
+                Some(picked.to_path_buf()),
+                parent,
+            ],
         };
-        candidates.into_iter().flatten().find(|dir| self.holds_data(dir))
+        candidates
+            .into_iter()
+            .flatten()
+            .find(|dir| self.holds_data(dir))
     }
 
     fn holds_data(self, dir: &Path) -> bool {
+        let goldsrc = || dir.join("models").join("v_ak47.mdl").is_file();
         match self {
             Self::Mw2 => crate::discover::holds_mw2(dir),
             Self::Css => dir.join(CSS_PAK).is_file(),
-            Self::Cs16 => dir.join("models").join("v_ak47.mdl").is_file(),
+            Self::Cs16 => goldsrc() && !is_condition_zero(dir),
+            Self::Cz => goldsrc() && is_condition_zero(dir),
         }
     }
 
@@ -89,8 +109,23 @@ impl GameFolder {
             Self::Mw2 => "zone\\english\\common_mp.ff",
             Self::Css => "cstrike\\cstrike_pak_dir.vpk",
             Self::Cs16 => "cstrike\\models\\v_ak47.mdl",
+            Self::Cz => "czero\\models\\v_ak47.mdl",
         }
     }
+}
+
+/// Whether `dir` is Condition Zero's game folder: its `liblist.gam` names the game so.
+#[must_use]
+pub fn is_condition_zero(dir: &Path) -> bool {
+    std::fs::read_to_string(dir.join("liblist.gam")).is_ok_and(|list| {
+        list.lines().any(|line| {
+            let mut words = line.split_whitespace();
+            words
+                .next()
+                .is_some_and(|key| key.eq_ignore_ascii_case("game"))
+                && words.collect::<Vec<_>>().join(" ").trim_matches('"') == "Condition Zero"
+        })
+    })
 }
 
 /// Counter-Strike: Source's main pack inside its `cstrike` folder.
@@ -118,9 +153,9 @@ fn default_settings_file() -> Option<PathBuf> {
 
 /// The game-path lines of `settings.cfg`, `None` when the file has no such line at all.
 #[must_use]
-pub fn read_saved(file: &Path) -> Option<[String; 3]> {
+pub fn read_saved(file: &Path) -> Option<[String; GameFolder::COUNT]> {
     let text = std::fs::read_to_string(file).ok()?;
-    let mut saved: [Option<String>; 3] = Default::default();
+    let mut saved: [Option<String>; GameFolder::COUNT] = Default::default();
     for line in text.lines() {
         let Some((key, value)) = line.trim().split_once('=') else {
             continue;
@@ -146,8 +181,8 @@ pub fn saved_setting(key: &str) -> Option<String> {
     })
 }
 
-fn saved_at_start() -> &'static Option<[String; 3]> {
-    static SAVED: OnceLock<Option<[String; 3]>> = OnceLock::new();
+fn saved_at_start() -> &'static Option<[String; GameFolder::COUNT]> {
+    static SAVED: OnceLock<Option<[String; GameFolder::COUNT]>> = OnceLock::new();
     SAVED.get_or_init(|| default_settings_file().and_then(|file| read_saved(&file)))
 }
 
@@ -160,12 +195,13 @@ pub fn confirmed() -> bool {
 /// What older builds saved a turned-off Counter-Strike folder as (still read).
 pub const TURNED_OFF: &str = "none";
 
-/// Which games are on (`use_css` / `use_cs16`, the window's "Use" boxes); a game without the
-/// line is on, unless its folder was saved as `none` by an older build. MW2 is always on.
+/// Which games are on (`use_css` / `use_cz` / `use_cs16`, the window's "Use" boxes); a game
+/// without the line is on, unless its folder was saved as `none` by an older build. MW2 is
+/// always on.
 #[must_use]
-pub fn read_used(file: &Path) -> [bool; 3] {
+pub fn read_used(file: &Path) -> [bool; GameFolder::COUNT] {
     let text = std::fs::read_to_string(file).unwrap_or_default();
-    let mut used = [true; 3];
+    let mut used = [true; GameFolder::COUNT];
     for line in text.lines() {
         let Some((key, value)) = line.trim().split_once('=') else {
             continue;
@@ -185,9 +221,11 @@ pub fn read_used(file: &Path) -> [bool; 3] {
     used
 }
 
-fn used_at_start() -> &'static [bool; 3] {
-    static USED: OnceLock<[bool; 3]> = OnceLock::new();
-    USED.get_or_init(|| default_settings_file().map_or([true; 3], |file| read_used(&file)))
+fn used_at_start() -> &'static [bool; GameFolder::COUNT] {
+    static USED: OnceLock<[bool; GameFolder::COUNT]> = OnceLock::new();
+    USED.get_or_init(|| {
+        default_settings_file().map_or([true; GameFolder::COUNT], |file| read_used(&file))
+    })
 }
 
 /// Whether the player turned `folder` off in the game folders window: the game is not used at
@@ -220,7 +258,11 @@ pub fn saved(folder: GameFolder) -> Option<PathBuf> {
 }
 
 /// Writes the game-path lines and the on/off lines into `file`, keeping every other line.
-pub fn write_saved(file: &Path, paths: &[String; 3], used: [bool; 3]) -> Result<(), String> {
+pub fn write_saved(
+    file: &Path,
+    paths: &[String; GameFolder::COUNT],
+    used: [bool; GameFolder::COUNT],
+) -> Result<(), String> {
     let old = std::fs::read_to_string(file).unwrap_or_default();
     let mut lines = old
         .lines()
@@ -365,27 +407,47 @@ mod tests {
         std::fs::write(&file, "fov=80\ngame_path_css=old\nbind G drop\n").unwrap();
         assert_eq!(
             read_saved(&file),
-            Some([String::new(), "old".into(), String::new()])
+            Some([String::new(), "old".into(), String::new(), String::new()])
         );
-        write_saved(
-            &file,
-            &["C:/MW2".into(), String::new(), "D:/Half-Life/cstrike".into()],
-            [true, false, true],
-        )
-        .unwrap();
+        let paths = [
+            "C:/MW2".into(),
+            String::new(),
+            "D:/Half-Life/cstrike".into(),
+            "D:/Half-Life/czero".into(),
+        ];
+        write_saved(&file, &paths, [true, false, true, false]).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
             text,
-            "fov=80\ngame_path_mw2=C:/MW2\ngame_path_css=\nuse_css=0\ngame_path_cs16=D:/Half-Life/cstrike\nuse_cs16=1\nbind G drop\n"
+            "fov=80\ngame_path_mw2=C:/MW2\ngame_path_css=\nuse_css=0\ngame_path_cz=D:/Half-Life/czero\nuse_cz=0\ngame_path_cs16=D:/Half-Life/cstrike\nuse_cs16=1\nbind G drop\n"
         );
-        assert_eq!(
-            read_saved(&file),
-            Some(["C:/MW2".into(), String::new(), "D:/Half-Life/cstrike".into()])
-        );
-        assert_eq!(read_used(&file), [true, false, true]);
+        assert_eq!(read_saved(&file), Some(paths));
+        assert_eq!(read_used(&file), [true, false, true, false]);
         // Older builds saved a turned-off game as `none`.
         std::fs::write(&file, "game_path_css=none\n").unwrap();
-        assert_eq!(read_used(&file), [true, false, true]);
+        assert_eq!(read_used(&file), [true, false, true, true]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn condition_zero_resolves_to_czero_and_not_as_cs16() {
+        let dir = std::env::temp_dir().join(format!("iw4l-cz-folder-{}", std::process::id()));
+        let top = dir.join("Half-Life");
+        for game in ["cstrike", "czero"] {
+            std::fs::create_dir_all(top.join(game).join("models")).unwrap();
+            std::fs::write(top.join(game).join("models").join("v_ak47.mdl"), b"IDST").unwrap();
+        }
+        let czero = top.join("czero");
+        std::fs::write(
+            czero.join("liblist.gam"),
+            "game \"Condition Zero\"\nfallback_dir \"cstrike\"\n",
+        )
+        .unwrap();
+        assert_eq!(GameFolder::Cz.resolve(&top), Some(czero.clone()));
+        assert_eq!(GameFolder::Cz.resolve(&czero), Some(czero.clone()));
+        assert_eq!(GameFolder::Cz.resolve(&top.join("cstrike")), None);
+        assert_eq!(GameFolder::Cs16.resolve(&czero), None);
+        assert_eq!(GameFolder::Cs16.resolve(&top), Some(top.join("cstrike")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

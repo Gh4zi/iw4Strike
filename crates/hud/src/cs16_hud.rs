@@ -140,7 +140,8 @@ impl Cell {
     }
 }
 
-/// CS 1.6's HUD sprites, read once from the `cstrike` folder.
+/// CS 1.6's HUD sprites, read once from the GoldSrc folders (Condition Zero has none of its own
+/// and uses these too).
 #[derive(Resource, Default)]
 pub(crate) struct Cs16HudAssets {
     /// Playing with CS 1.6 and its HUD sprites were read: this HUD draws, the CS:S one doesn't.
@@ -224,20 +225,22 @@ fn sheet_image(path: &Path, images: &mut Assets<Image>) -> Option<Handle<Image>>
     )))
 }
 
-/// Reads the HUD sprites from CS 1.6's `cstrike` folder; `None` when its `hud.txt` or digits
-/// are missing.
+/// Reads the HUD sprites from the GoldSrc folders (each file from the first holding it); `None`
+/// when `hud.txt` or the digits are missing.
 pub(crate) fn load(
-    cstrike: &Path,
+    dirs: &asset_transport::GoldSrcDirs,
     fonts: &mut Assets<Font>,
     images: &mut Assets<Image>,
 ) -> Option<Cs16HudAssets> {
-    let sprites = cstrike.join("sprites");
-    let list = std::fs::read_to_string(sprites.join("hud.txt")).ok()?;
+    let list = std::fs::read_to_string(dirs.file("sprites/hud.txt")?).ok()?;
     let mut sheets: HashMap<String, Option<Handle<Image>>> = HashMap::new();
     let mut sheet = |name: &str, images: &mut Assets<Image>| {
         sheets
             .entry(name.to_ascii_lowercase())
-            .or_insert_with(|| sheet_image(&sprites.join(format!("{name}.spr")), images))
+            .or_insert_with(|| {
+                let path = dirs.file(&format!("sprites/{name}.spr"))?;
+                sheet_image(&path, images)
+            })
             .clone()
     };
     let mut cell = |entry: &mdl_goldsrc::spr::HudSprite, images: &mut Assets<Image>| {
@@ -258,7 +261,7 @@ pub(crate) fn load(
         }
     }
     if (0..10).any(|digit| !cells.contains_key(&format!("number_{digit}"))) {
-        diag::warn!(World, "cs 1.6 hud: no digits in {}", sprites.display());
+        diag::warn!(World, "cs 1.6 hud: no digits in {:?}", dirs.0);
         return None;
     }
     let mut ammo = HashMap::new();
@@ -268,7 +271,10 @@ pub(crate) fn load(
         .chain(weapon_iw4::cs::CS_GRENADES.iter().map(|g| g.name))
         .chain([weapon_iw4::cs::CS_C4.name]);
     for name in names {
-        let Ok(text) = std::fs::read_to_string(sprites.join(format!("weapon_{name}.txt"))) else {
+        let Some(text) = dirs
+            .read(&format!("sprites/weapon_{name}.txt"))
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+        else {
             continue;
         };
         if let Some(found) = parse_hud_list(&text)
@@ -281,10 +287,10 @@ pub(crate) fn load(
     }
     diag::info!(
         World,
-        "cs 1.6 hud: {} cells, {} ammo icons from {}",
+        "cs 1.6 hud: {} cells, {} ammo icons from {:?}",
         cells.len(),
         ammo.len(),
-        sprites.display()
+        dirs.0
     );
     Some(Cs16HudAssets {
         active: true,

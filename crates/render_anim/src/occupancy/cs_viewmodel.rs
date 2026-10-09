@@ -8,7 +8,6 @@
 //! behind; `set_viewmodel_sway(false)` keeps it still.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -35,8 +34,8 @@ const GOLDSRC_TAN_HALF_FOV_Y: f32 = 0.75;
 const AMBIENT: f32 = 0.65;
 const SHADE: f32 = 0.45;
 /// Mirror across the view's forward/up plane. CS viewmodels are modelled left-handed (CS:S's
-/// weapon scripts say `BuiltRightHanded 0`) and flipped for `cl_righthand 1`; CS:S's knife is
-/// the exception, modelled right-handed.
+/// weapon scripts say `BuiltRightHanded 0`) and flipped for `cl_righthand 1`; the knives of CS:S
+/// and CS 1.6 are the exceptions, modelled right-handed ([`modelled_right_handed`]).
 const RIGHT_HAND_MIRROR: Mat3x4 = [
     [1.0, 0.0, 0.0, 0.0],
     [0.0, -1.0, 0.0, 0.0],
@@ -270,6 +269,8 @@ struct LoadedModel {
     /// Muzzle and shell-port attachments (bone, frame in its skinning space), CS:S models only.
     muzzle: Option<(usize, Mat3x4)>,
     eject: Option<(usize, Mat3x4)>,
+    /// A GoldSrc model holding its weapon in the right hand already (not mirrored).
+    goldsrc_right_handed: bool,
 }
 
 struct Playing {
@@ -296,9 +297,10 @@ struct Playing {
 
 #[derive(Resource, Default)]
 pub struct CsViewmodels {
-    /// Looked up once, by the startup read: the CS:S pack (opened) and the CS 1.6 folder.
+    /// Looked up once, by the startup read: the CS:S pack (opened) and the GoldSrc folders
+    /// (Condition Zero, then CS 1.6).
     css: Option<Option<Arc<mdl_source::Vpk>>>,
-    cstrike: Option<Option<PathBuf>>,
+    goldsrc: Option<Option<asset_transport::GoldSrcDirs>>,
     /// The startup read (`warm_up`) while it runs off the main thread.
     warmup: Option<Task<Warmup>>,
     warmed_up: bool,
@@ -348,6 +350,33 @@ fn image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
 fn pack_weights(weights: [f32; 3]) -> [u8; 4] {
     let w = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
     [w(weights[0]), w(weights[1]), w(weights[2]), 0]
+}
+
+/// Whether a GoldSrc viewmodel holds its weapon in the right hand already: its weapon's meshes
+/// (not the hands') sit right of the view at its first frame. CS 1.6's guns sit left and are
+/// mirrored like CS:S's, but its knife sits right; Condition Zero's knife sits left.
+fn modelled_right_handed(studio: &mdl_goldsrc::StudioModel) -> bool {
+    const HANDS: [&str; 6] = ["view_", "hand", "glove", "finger", "arm", "sleeve"];
+    let mut pose = Vec::new();
+    studio.pose(0, 0.0, &mut pose);
+    let (mut sum, mut count) = (0.0, 0usize);
+    for mesh in &studio.meshes {
+        let hands = studio.textures.get(mesh.texture).is_none_or(|texture| {
+            let name = texture.name.to_ascii_lowercase();
+            HANDS.iter().any(|part| name.contains(part))
+        });
+        if hands {
+            continue;
+        }
+        for v in &studio.vertices[mesh.first_vertex..mesh.first_vertex + mesh.vertex_count] {
+            let bone = pose
+                .get(usize::from(v.bone))
+                .unwrap_or(&mdl_goldsrc::IDENTITY);
+            sum += mdl_goldsrc::transform_point(bone, v.position)[1];
+            count += 1;
+        }
+    }
+    count > 0 && sum < 0.0
 }
 
 fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -> LoadedModel {
@@ -485,6 +514,7 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
             vertices,
             draws,
         }),
+        goldsrc_right_handed: modelled_right_handed(&studio),
         studio: Studio::GoldSrc(studio),
         sequences,
         roles,
@@ -622,6 +652,7 @@ fn source_model(loaded: mdl_source::LoadedModel, images: &mut Assets<Image>) -> 
         roles,
         muzzle,
         eject,
+        goldsrc_right_handed: false,
     }
 }
 
@@ -631,10 +662,11 @@ enum DecodedModel {
     GoldSrc(mdl_goldsrc::StudioModel),
 }
 
-/// Reads and decodes a viewmodel: from the CS:S pack when there is one, else the CS 1.6 folder.
+/// Reads and decodes a viewmodel: from the CS:S pack when there is one, else the GoldSrc folders
+/// (Condition Zero's model when it has one, else CS 1.6's).
 fn decode_model(
     css: Option<&mdl_source::Vpk>,
-    cstrike: Option<&Path>,
+    goldsrc: Option<&asset_transport::GoldSrcDirs>,
     view_model: &str,
     css_view_model: &str,
 ) -> Result<DecodedModel, String> {
@@ -643,15 +675,17 @@ fn decode_model(
             .map(DecodedModel::Source)
             .map_err(|e| format!("{css_view_model}: {e}"));
     }
-    let Some(dir) = cstrike else {
+    let Some(dirs) = goldsrc else {
         return Err(format!(
-            "no Counter-Strike: Source install found ({}) and no Counter-Strike 1.6 \
-             folder selected: set {} in .env to its `cstrike` folder",
+            "no Counter-Strike: Source install found ({}) and no Condition Zero or \
+             Counter-Strike 1.6 folder selected (Options > Game Folders)",
             asset_transport::CSS_ENV,
-            asset_transport::CSTRIKE_ENV
         ));
     };
-    let path = dir.join("models").join(format!("{view_model}.mdl"));
+    let relative = format!("models/{view_model}.mdl");
+    let path = dirs
+        .file(&relative)
+        .ok_or_else(|| format!("{relative}: in none of {:?}", dirs.0))?;
     std::fs::read(&path)
         .map_err(|e| e.to_string())
         .and_then(|bytes| mdl_goldsrc::StudioModel::parse(&bytes).map_err(|e| e.to_string()))
@@ -687,12 +721,12 @@ fn finish_model(
 /// What the startup read brings back from off the main thread.
 struct Warmup {
     css: Option<Arc<mdl_source::Vpk>>,
-    cstrike: Option<PathBuf>,
+    goldsrc: Option<asset_transport::GoldSrcDirs>,
     models: Vec<(&'static str, Result<DecodedModel, String>)>,
     flashes: Option<[mdl_source::vtf::Image; 2]>,
 }
 
-/// Opens the CS:S pack (or finds the CS 1.6 folder), and decodes the viewmodels every player
+/// Opens the CS:S pack (or finds the Condition Zero / CS 1.6 folders), and decodes the viewmodels every player
 /// holds at spawn (knife, starting pistols, C4, grenades) and the muzzle flash sprites. Read on
 /// first use instead, each stopped the main thread for 30 ms, and the pack's first read from a
 /// cold disk for most of a second.
@@ -712,13 +746,16 @@ fn warm_up() -> Warmup {
             None
         }
     });
-    let cstrike = if css.is_some() {
+    let goldsrc = if css.is_some() {
         None
     } else {
-        asset_transport::find_cstrike()
+        asset_transport::find_goldsrc()
     };
+    if let Some(dirs) = &goldsrc {
+        diag::info!(World, "cs viewmodels: GoldSrc from {:?}", dirs.0);
+    }
     let mut models = Vec::new();
-    if css.is_some() || cstrike.is_some() {
+    if css.is_some() || goldsrc.is_some() {
         let pistols = cs::CS_WEAPONS
             .iter()
             .filter(|w| matches!(w.name, "glock" | "usp"))
@@ -737,7 +774,7 @@ fn warm_up() -> Warmup {
         for (name, view_model, css_view_model) in spawn_set {
             let decoded = decode_model(
                 css.as_deref(),
-                cstrike.as_deref(),
+                goldsrc.as_ref(),
                 view_model,
                 css_view_model,
             );
@@ -753,7 +790,7 @@ fn warm_up() -> Warmup {
     });
     Warmup {
         css,
-        cstrike,
+        goldsrc,
         models,
         flashes,
     }
@@ -780,7 +817,7 @@ impl CsViewmodels {
             let warm = block_on(task);
             self.warmed_up = true;
             self.css = Some(warm.css);
-            self.cstrike = Some(warm.cstrike);
+            self.goldsrc = Some(warm.goldsrc);
             self.flash_images = Some(warm.flashes.map(|sprites| {
                 sprites.map(|sprite| images.add(image(sprite.width, sprite.height, sprite.rgba)))
             }));
@@ -817,15 +854,10 @@ impl CsViewmodels {
         }
         if self.warmed_up && !self.decoding.contains_key(weapon.name) {
             let css = self.css.clone().flatten();
-            let cstrike = self.cstrike.clone().flatten();
+            let goldsrc = self.goldsrc.clone().flatten();
             let (view_model, css_view_model) = (weapon.view_model, weapon.css_view_model);
             let task = AsyncComputeTaskPool::get().spawn(async move {
-                decode_model(
-                    css.as_deref(),
-                    cstrike.as_deref(),
-                    view_model,
-                    css_view_model,
-                )
+                decode_model(css.as_deref(), goldsrc.as_ref(), view_model, css_view_model)
             });
             self.decoding.insert(weapon.name, task);
         }
@@ -1323,7 +1355,12 @@ pub fn update_cs_viewmodel(
     let CsViewmodels { bones, .. } = &mut *state;
     model.studio.pose(sequence, seconds, bones);
     let mut place = mdl_goldsrc::concat(&sway, &unpunch(ps.cs_punch));
-    if !(model.format == Format::Source && weapon.css_right_handed) {
+    let right_handed = match model.format {
+        Format::Source => weapon.css_right_handed,
+        Format::GoldSrc => model.goldsrc_right_handed,
+    };
+    // `cl_righthand`: mirrored when the model is built for the other hand.
+    if right_handed != settings.right_hand {
         place = mdl_goldsrc::concat(&place, &RIGHT_HAND_MIRROR);
     }
     frame.bones.clear();

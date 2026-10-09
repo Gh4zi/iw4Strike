@@ -181,6 +181,75 @@ pub fn find_cstrike() -> Option<PathBuf> {
     saved(GameFolder::Cs16)
 }
 
+/// Environment override naming a Counter-Strike: Condition Zero `czero` folder.
+pub const CZERO_ENV: &str = "IW4L_CZERO";
+
+/// `IW4L_CZERO` from the environment or `.env`, when set.
+#[must_use]
+pub fn czero_env_override() -> Option<String> {
+    env_or_dotenv(CZERO_ENV).filter(|dir| !dir.trim().is_empty())
+}
+
+/// Condition Zero's `czero` folder, chosen like Counter-Strike 1.6's (the game folders window,
+/// or `IW4L_CZERO`, which wins) and likewise ignored whenever CS:S is found.
+#[must_use]
+pub fn find_czero() -> Option<PathBuf> {
+    if find_css_pak().is_some() || crate::game_paths::turned_off(GameFolder::Cz) {
+        return None;
+    }
+    if let Some(dir) = czero_env_override() {
+        let dir = PathBuf::from(dir);
+        return dir.join("models").is_dir().then_some(dir);
+    }
+    saved(GameFolder::Cz)
+}
+
+/// The GoldSrc Counter-Strike folders IW4L reads when there is no CS:S, best first: Condition
+/// Zero's `czero`, then Counter-Strike 1.6's `cstrike`. CZ falls back to `cstrike` for what it
+/// lacks (its HUD sprites, a few models), so with CZ on and 1.6 off or unset, the `cstrike` beside
+/// `czero` still fills in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GoldSrcDirs(pub Vec<PathBuf>);
+
+impl GoldSrcDirs {
+    /// The first of the folders holding `relative` (`sprites/hud.txt`).
+    #[must_use]
+    pub fn file(&self, relative: &str) -> Option<PathBuf> {
+        self.0
+            .iter()
+            .map(|dir| dir.join(relative))
+            .find(|path| path.is_file())
+    }
+
+    /// `relative`'s bytes from the first folder holding it.
+    #[must_use]
+    pub fn read(&self, relative: &str) -> Option<Vec<u8>> {
+        self.file(relative)
+            .and_then(|path| std::fs::read(path).ok())
+    }
+
+    /// Whether Condition Zero is among them.
+    #[must_use]
+    pub fn has_czero(&self) -> bool {
+        self.0
+            .first()
+            .is_some_and(|dir| crate::game_paths::is_condition_zero(dir))
+    }
+}
+
+/// The GoldSrc folders to read (see [`GoldSrcDirs`]); `None` with CS:S found or neither GoldSrc
+/// game on.
+#[must_use]
+pub fn find_goldsrc() -> Option<GoldSrcDirs> {
+    let czero = find_czero();
+    let cstrike = find_cstrike().or_else(|| {
+        let beside = czero.as_ref()?.parent()?.join("cstrike");
+        beside.join("models").is_dir().then_some(beside)
+    });
+    let dirs: Vec<PathBuf> = czero.into_iter().chain(cstrike).collect();
+    (!dirs.is_empty()).then_some(GoldSrcDirs(dirs))
+}
+
 fn has_game(roots: &[PathBuf], game: ZoneGame) -> bool {
     roots.iter().any(|root| {
         std::iter::once(root.clone())

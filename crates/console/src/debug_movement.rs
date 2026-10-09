@@ -51,6 +51,13 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "viewmodel_fov [54-90] — how wide the CS gun is drawn (bigger = gun further away)",
         ));
     }
+    if registry.resolve("cl_righthand").is_none() {
+        registry.register(
+            crate::CommandSpec::new("cl_righthand").usage(
+                "cl_righthand [0|1] — CS gun in the right hand (1, default) or the left (0)",
+            ),
+        );
+    }
     if registry.resolve("cl_wpn_sway").is_none() {
         registry.register(
             crate::CommandSpec::new("cl_wpn_sway")
@@ -192,6 +199,15 @@ pub(crate) fn route_movement_commands(
                     _ => "usage: viewmodel_fov [54-90]".to_owned(),
                 },
                 _ => "usage: viewmodel_fov [54-90]".to_owned(),
+            },
+            "cl_righthand" => match cmd.args.as_slice() {
+                [] => format!("cl_righthand = {}", u8::from(game.right_hand)),
+                [arg] if arg == "0" || arg == "1" => {
+                    game.right_hand = arg == "1";
+                    game.touch();
+                    format!("cl_righthand = {arg}")
+                }
+                _ => "usage: cl_righthand [0|1]".to_owned(),
             },
             "cl_wpn_sway" => {
                 use render_anim::occupancy::cs_viewmodel::{set_viewmodel_sway, viewmodel_sway};

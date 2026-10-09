@@ -90,7 +90,7 @@ fn relaunch(cheats: sim::HostCheats) {
 }
 
 const WIDTH: u32 = 860;
-const HEIGHT: u32 = 600;
+const HEIGHT: u32 = 715;
 
 // Valve's VGUI "Steam" scheme.
 const BACKGROUND: Color = Color::srgb_u8(62, 70, 55);
@@ -122,16 +122,17 @@ struct Folders {
     settings: Option<PathBuf>,
     opened: Opened,
     /// Selected in this window or saved before (resolved to the folder the game reads).
-    chosen: [Option<PathBuf>; 3],
+    chosen: [Option<PathBuf>; GameFolder::COUNT],
     /// A pick (or saved folder) without the game's data, for the status line.
-    rejected: [Option<PathBuf>; 3],
+    rejected: [Option<PathBuf>; GameFolder::COUNT],
     /// Whether each game is used (the "Use" boxes; MW2 always). A Counter-Strike game turned
-    /// off is not used at all, whatever names it; with both on, CS:S wins.
-    used: [bool; 3],
+    /// off is not used at all, whatever names it; CS:S wins, then Condition Zero, then 1.6.
+    used: [bool; GameFolder::COUNT],
     auto_mw2: Option<PathBuf>,
     steam_css: Option<PathBuf>,
     css_env: Option<String>,
     cs16_env: Option<String>,
+    cz_env: Option<String>,
     error: Option<String>,
 }
 
@@ -160,11 +161,11 @@ impl Folders {
             .as_deref()
             .and_then(game_paths::read_saved)
             .unwrap_or_default();
-        let mut chosen: [Option<PathBuf>; 3] = Default::default();
-        let mut rejected: [Option<PathBuf>; 3] = Default::default();
+        let mut chosen: [Option<PathBuf>; GameFolder::COUNT] = Default::default();
+        let mut rejected: [Option<PathBuf>; GameFolder::COUNT] = Default::default();
         let used = settings
             .as_deref()
-            .map_or([true; 3], game_paths::read_used);
+            .map_or([true; GameFolder::COUNT], game_paths::read_used);
         for folder in GameFolder::ALL {
             let raw = saved[folder.index()].trim();
             if raw.is_empty() || raw.eq_ignore_ascii_case(game_paths::TURNED_OFF) {
@@ -186,6 +187,7 @@ impl Folders {
                 .and_then(|pak| pak.parent().map(Path::to_path_buf)),
             css_env: asset_transport::css_env_override(),
             cs16_env: asset_transport::cstrike_env_override(),
+            cz_env: asset_transport::czero_env_override(),
             error: None,
         }
     }
@@ -228,15 +230,19 @@ impl Folders {
                     return (
                         path,
                         Tone::Dim,
-                        "Turned off: not used. Tick Use to use it; Counter-Strike 1.6 below is \
-                         used instead when it is on."
+                        "Turned off: not used. Tick Use to use it; Condition Zero and \
+                         Counter-Strike 1.6 below are used instead when they are on."
                             .into(),
                     );
                 }
                 if let Some(env) = &self.css_env {
                     let dir = PathBuf::from(env);
                     return if dir.join(game_paths::CSS_PAK).is_file() {
-                        (Some(dir), Tone::Good, "Set by IW4L_CSS in .env (it overrides this window).".into())
+                        (
+                            Some(dir),
+                            Tone::Good,
+                            "Set by IW4L_CSS in .env (it overrides this window).".into(),
+                        )
                     } else {
                         (
                             None,
@@ -262,9 +268,66 @@ impl Folders {
                         Tone::Warn,
                         format!(
                             "{rejected}Not found. Recommended: its models, sounds and HUD. \
-                             Without it Counter-Strike 1.6 (below) is used, else the MW2 guns."
+                             Without it Condition Zero or Counter-Strike 1.6 (below) is used, \
+                             else the MW2 guns."
                         ),
                     )
+                }
+            }
+            GameFolder::Cz => {
+                if !self.used[index] {
+                    return (
+                        self.chosen[index].clone(),
+                        Tone::Dim,
+                        "Turned off: not used. Tick Use to use it.".into(),
+                    );
+                }
+                let found = if let Some(env) = &self.cz_env {
+                    let dir = PathBuf::from(env);
+                    if !dir.join("models").is_dir() {
+                        return (
+                            None,
+                            Tone::Bad,
+                            format!(
+                                "IW4L_CZERO in .env names {env}, which has no models folder. \
+                                 Fix or remove that line."
+                            ),
+                        );
+                    }
+                    Some((dir, "Set by IW4L_CZERO in .env (it overrides this window)."))
+                } else {
+                    self.chosen[index].clone().map(|dir| (dir, "Selected."))
+                };
+                let css = self.css_on();
+                match found {
+                    Some((dir, _)) if css => (
+                        Some(dir),
+                        Tone::Dim,
+                        "Not used while Counter-Strike: Source is on (CS:S wins). Untick its Use \
+                         box to play with Condition Zero."
+                            .into(),
+                    ),
+                    Some((dir, how)) => (
+                        Some(dir),
+                        Tone::Good,
+                        format!(
+                            "{rejected}{how} Its guns and sounds; Counter-Strike 1.6 fills in the \
+                             rest (the HUD)."
+                        ),
+                    ),
+                    None if css => (
+                        None,
+                        Tone::Dim,
+                        format!("{rejected}Optional. Only used without Counter-Strike: Source."),
+                    ),
+                    None => (
+                        None,
+                        Tone::Dim,
+                        format!(
+                            "{rejected}Optional. Select your Half-Life folder (or its czero \
+                             folder) to use the Condition Zero guns and sounds."
+                        ),
+                    ),
                 }
             }
             GameFolder::Cs16 => {
@@ -291,8 +354,9 @@ impl Folders {
                 } else {
                     self.chosen[index].clone().map(|dir| (dir, "Selected."))
                 };
-                let css = self.used[GameFolder::Css.index()]
-                    && self.status(GameFolder::Css).0.is_some();
+                let css = self.css_on();
+                let cz =
+                    self.used[GameFolder::Cz.index()] && self.status(GameFolder::Cz).0.is_some();
                 match found {
                     Some((dir, _)) if css => (
                         Some(dir),
@@ -300,6 +364,14 @@ impl Folders {
                         "Not used while Counter-Strike: Source is on (both on: CS:S wins). Untick \
                          its Use box to play with Counter-Strike 1.6."
                             .into(),
+                    ),
+                    Some((dir, how)) if cz => (
+                        Some(dir),
+                        Tone::Good,
+                        format!(
+                            "{rejected}{how} Condition Zero is used first; this fills in what \
+                             it lacks."
+                        ),
                     ),
                     Some((dir, how)) => (Some(dir), Tone::Good, format!("{rejected}{how}")),
                     None if css => (
@@ -318,6 +390,11 @@ impl Folders {
                 }
             }
         }
+    }
+
+    /// Whether Counter-Strike: Source is on and found, so it wins over the GoldSrc games.
+    fn css_on(&self) -> bool {
+        self.used[GameFolder::Css.index()] && self.status(GameFolder::Css).0.is_some()
     }
 
     /// The Counter-Strike: Source folder that would be used if it were on.
@@ -544,7 +621,7 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
                     let tag = match folder {
                         GameFolder::Mw2 => "required",
                         GameFolder::Css => "recommended",
-                        GameFolder::Cs16 => "optional",
+                        GameFolder::Cz | GameFolder::Cs16 => "optional",
                     };
                     panel
                         .spawn(Node {
@@ -673,11 +750,13 @@ fn press_buttons(
                     GameFolder::Mw2 => "Select the Call of Duty Modern Warfare 2 folder",
                     GameFolder::Css => "Select the Counter-Strike Source folder",
                     GameFolder::Cs16 => "Select the Half-Life folder (Counter-Strike 1.6)",
+                    GameFolder::Cz => "Select the Half-Life folder (Condition Zero)",
                 };
                 std::thread::spawn(move || {
                     let picked = asset_transport::pick_folder(title, start.as_deref());
-                    *slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        Some(picked);
+                    *slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(picked);
                 });
                 picker.0 = Some((folder, answer));
             }

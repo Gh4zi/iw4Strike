@@ -251,10 +251,11 @@ fn template(catalog: &SoundCatalog, preferred: &[&str], suffix: &str) -> Option<
         .or_else(|| catalog.first_alias_ending_with(crate::AssetNamespace::Iw4, suffix))
 }
 
-/// Add every `.wav` in the CS install's `sound/weapons` folder to `catalog`. Returns how many
-/// sounds were added; 0 when there is no install.
+/// Add every `.wav` in the GoldSrc install's `sound/weapons` folder to `catalog`: Condition
+/// Zero's wave where it has one, else CS 1.6's. Returns how many sounds were added; 0 when there
+/// is no install.
 pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
-    let Some(cstrike) = asset_transport::find_cstrike() else {
+    let Some(goldsrc) = asset_transport::find_goldsrc() else {
         return 0;
     };
     let (Some(player), Some(world)) = (
@@ -264,20 +265,29 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         diag::warn!(Audio, "cs sounds: no MW2 gunshot alias to model them on");
         return 0;
     };
-    let dir = cstrike.join("sound").join("weapons");
     // Every gun and grenade wave, the fall pain sounds of the player folder, the radio voice,
-    // and Half-Life's own explosions that CS 1.6's HE grenade uses (`valve/sound/weapons`).
-    let half_life = cstrike.parent().map(|dir| dir.join("valve")).unwrap_or_default();
-    let folders = [
-        (dir.clone(), CS_SOUND_PREFIX, ""),
-        (
-            cstrike.join("sound").join("player"),
-            CS_PLAYER_SOUND_PREFIX,
-            "pl_fallpain",
-        ),
-        (cstrike.join("sound").join("radio"), CS_RADIO_SOUND_PREFIX, ""),
-        (half_life.join("sound").join("weapons"), CS_SOUND_PREFIX, "explode"),
-    ];
+    // and Half-Life's own explosions that CS 1.6's HE grenade uses (`valve/sound/weapons`); a
+    // wave the better game has hides the others' of the same name.
+    let half_life = goldsrc
+        .0
+        .last()
+        .and_then(|dir| dir.parent())
+        .map(|dir| dir.join("valve"));
+    let mut folders = Vec::new();
+    for game in &goldsrc.0 {
+        let sound = game.join("sound");
+        folders.push((sound.join("weapons"), CS_SOUND_PREFIX, ""));
+        folders.push((sound.join("player"), CS_PLAYER_SOUND_PREFIX, "pl_fallpain"));
+        folders.push((sound.join("radio"), CS_RADIO_SOUND_PREFIX, ""));
+    }
+    if let Some(valve) = &half_life {
+        folders.push((
+            valve.join("sound").join("weapons"),
+            CS_SOUND_PREFIX,
+            "explode",
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
     let mut added = 0;
     for (folder, prefix, wanted) in folders {
         let Ok(entries) = std::fs::read_dir(&folder) else {
@@ -295,7 +305,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 continue;
             };
             let stem = stem.to_ascii_lowercase();
-            if !stem.starts_with(wanted) {
+            if !stem.starts_with(wanted) || !seen.insert(format!("{prefix}{stem}")) {
                 continue;
             }
             let Some((rate, channels, pcm)) =
@@ -342,17 +352,25 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     }
     // The bomb's sounds.
     for (event, wave) in CS16_C4 {
-        let path = dir.join(format!("{wave}.wav"));
-        if let Some(decoded) = std::fs::read(&path).ok().and_then(|b| decode_wav(&b)) {
+        let decoded = goldsrc
+            .read(&format!("sound/weapons/{wave}.wav"))
+            .and_then(|b| decode_wav(&b));
+        if let Some(decoded) = decoded {
             add_c4_sound(catalog, event, &[decoded], false);
         }
     }
-    // Ladder steps: CS 1.6's own, else Half-Life's (the same waves).
+    // Ladder steps: the GoldSrc game's own, else Half-Life's (the same waves).
     let ladder: Vec<_> = (1..=4)
         .filter_map(|i| {
-            [&cstrike, &half_life]
-                .into_iter()
-                .map(|game| game.join("sound").join("player").join(format!("pl_ladder{i}.wav")))
+            goldsrc
+                .0
+                .iter()
+                .chain(&half_life)
+                .map(|game| {
+                    game.join("sound")
+                        .join("player")
+                        .join(format!("pl_ladder{i}.wav"))
+                })
                 .find_map(|path| std::fs::read(path).ok())
                 .and_then(|bytes| decode_wav(&bytes))
         })
@@ -360,8 +378,8 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     add_ladder_steps(catalog, &ladder);
     diag::info!(
         Audio,
-        "cs sounds: {added} weapon sounds from {} (modelled on `{player}` / `{world}`)",
-        dir.display()
+        "cs sounds: {added} weapon sounds from {:?} (modelled on `{player}` / `{world}`)",
+        goldsrc.0
     );
     added
 }

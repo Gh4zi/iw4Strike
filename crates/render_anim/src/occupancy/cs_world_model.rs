@@ -1,16 +1,21 @@
-//! Counter-Strike weapons in players' hands, seen in third person: Counter-Strike: Source world
-//! models (`w_rif_ak47.mdl`) instead of the MW2 twin the CS weapon rides on.
+//! Counter-Strike weapons in players' hands, seen in third person, and lying dropped: the CS
+//! game's own models instead of the MW2 twin the CS weapon rides on. Counter-Strike: Source's
+//! world model (`w_rif_ak47.mdl`) either way; without CS:S, Condition Zero's or CS 1.6's
+//! (`p_ak47.mdl` in a hand, `w_ak47.mdl` dropped, CZ's when it has one).
 //!
 //! The remote body kit hides the MW2 gun's parts (its tags stay, so muzzle flashes still have a
 //! place), and posing publishes each body's weapon hand (`tag_weapon_right`) as a
 //! [`CsHeldWeaponTag`]. A CS:S gun hangs off `ValveBiped.weapon_bone` (x left, y up, z toward the
 //! muzzle); MW2's tag has the gun's x forward, y left, z up, so the model's rest pose is baked
 //! into the tag's frame once when it loads. The knife and grenades hang off the right hand; a
-//! CS:S player model's in-hand weapon bone (`weapon_bone_RHand`) carries them over.
+//! CS:S player model's in-hand weapon bone (`weapon_bone_RHand`) carries them over. A GoldSrc
+//! `p_` model is the gun in a player model's idle pose, held level: see
+//! [`build_goldsrc_world_model`]. A dropped weapon (`item` skips its MW2 twin) lies on its widest
+//! side where the item is.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use assets::PreparedWeapons;
 use bevy::math::{Affine3A, Vec3A};
@@ -34,20 +39,88 @@ pub struct CsHeldWeaponTag {
 #[derive(Resource, Default)]
 pub struct CsHeldWeaponTags(pub Vec<CsHeldWeaponTag>);
 
-/// The CS:S world model `weapon` (an MW2 weapon index) shows as: its viewmodel's `w_` twin.
-fn world_model_name(weapons: &asset_game::WeaponRegistry, weapon: u32) -> Option<String> {
+/// The CS weapon `weapon` (an MW2 weapon index) is: its viewmodel's GoldSrc and CS:S names.
+fn view_models(
+    weapons: &asset_game::WeaponRegistry,
+    weapon: u32,
+) -> Option<(&'static str, &'static str)> {
     use weapon_iw4::cs;
     let index = cs::cs_weapon_index_for(&weapons.script_name_of(weapon))?;
-    let view = if let Some(grenade) = cs::cs_grenade(index) {
-        grenade.css_view_model
+    Some(if let Some(grenade) = cs::cs_grenade(index) {
+        (grenade.view_model, grenade.css_view_model)
     } else if cs::is_knife(index) {
-        cs::CS_KNIFE.css_view_model
+        (cs::CS_KNIFE.view_model, cs::CS_KNIFE.css_view_model)
     } else if cs::is_c4(index) {
-        cs::CS_C4.css_view_model
+        (cs::CS_C4.view_model, cs::CS_C4.css_view_model)
     } else {
-        cs::cs_weapon(index)?.css_view_model
+        let gun = cs::cs_weapon(index)?;
+        (gun.view_model, gun.css_view_model)
+    })
+}
+
+/// Where a CS model is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Placement {
+    /// In a hand: baked into MW2's weapon tag frame.
+    Hand,
+    /// Standing on the floor in its own frame (the bomb).
+    Floor,
+    /// Dropped: lying on its widest side, centred on the origin.
+    Flat,
+}
+
+/// The model `weapon` shows as: CS:S's `w_` twin of its viewmodel, in a hand or dropped;
+/// GoldSrc's `p_` in a hand and `w_` dropped.
+fn model_name(
+    weapons: &asset_game::WeaponRegistry,
+    weapon: u32,
+    placement: Placement,
+) -> Option<String> {
+    let (goldsrc, css) = view_models(weapons, weapon)?;
+    if css_pack().is_some() {
+        return Some(format!("w_{}", css.strip_prefix("v_")?));
+    }
+    let stem = goldsrc.strip_prefix("v_")?;
+    Some(if placement == Placement::Hand {
+        format!("p_{stem}")
+    } else {
+        format!("w_{stem}")
+    })
+}
+
+/// The GoldSrc folders (Condition Zero, then CS 1.6), looked up once; `None` with CS:S found.
+fn goldsrc_dirs() -> Option<&'static asset_transport::GoldSrcDirs> {
+    static DIRS: OnceLock<Option<asset_transport::GoldSrcDirs>> = OnceLock::new();
+    DIRS.get_or_init(asset_transport::find_goldsrc).as_ref()
+}
+
+/// Where the model `name` is read from: CS:S's pack, or the GoldSrc folders.
+fn model_path(name: &str) -> String {
+    if css_pack().is_some() {
+        format!("models/weapons/{name}.mdl")
+    } else {
+        format!("models/{name}.mdl")
+    }
+}
+
+/// Whether the CS game in use has the model `name` (each name looked up once).
+fn has_model(name: &str) -> bool {
+    static FOUND: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    let mut found = FOUND
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(&known) = found.get(name) {
+        return known;
+    }
+    let path = model_path(name);
+    let known = match (css_pack(), goldsrc_dirs()) {
+        (Some(pack), _) => pack.contains(&path),
+        (None, Some(dirs)) => dirs.file(&path).is_some(),
+        (None, None) => false,
     };
-    Some(format!("w_{}", view.strip_prefix("v_")?))
+    found.insert(name.to_owned(), known);
+    known
 }
 
 /// The CS:S pack, opened once (`None` without CS:S).
@@ -68,20 +141,33 @@ pub(crate) fn css_installed() -> bool {
 /// MW2's bomb lying in the world (the bomb mode's carried-then-dropped or planted bomb).
 const MW2_BOMB_MODEL: &str = "prop_suitcase_bomb";
 
-/// Whether a script model of `model` is the bomb, drawn as CS:S's C4 instead (`w_c4` lying
-/// dropped, `w_c4_planted` once planted).
+/// The bomb's model, dropped or `planted`: CS:S's `w_c4` and `w_c4_planted`; GoldSrc's backpack
+/// and `w_c4`.
+fn bomb_model(planted: bool) -> &'static str {
+    match (css_pack().is_some(), planted) {
+        (true, false) => "w_c4",
+        (true, true) => "w_c4_planted",
+        (false, false) => "w_backpack",
+        (false, true) => "w_c4",
+    }
+}
+
+/// Whether a script model of `model` is the bomb, drawn as the CS game's own instead.
 pub(crate) fn replaces_bomb_model(model: &str) -> bool {
     movement_iw4::rules::CS_RULES
         && model.eq_ignore_ascii_case(MW2_BOMB_MODEL)
-        && css_pack().is_some_and(|pack| pack.contains("models/weapons/w_c4_planted.mdl"))
+        && has_model(bomb_model(false))
+        && has_model(bomb_model(true))
 }
 
-/// Whether `weapon` is drawn as a CS:S world model in third person (so its MW2 twin hides).
+/// Whether `weapon` is drawn as a CS model in third person (so its MW2 twin hides).
 pub fn shows_cs_world_model(weapons: &asset_game::WeaponRegistry, weapon: u32) -> bool {
-    weapon != 0
-        && world_model_name(weapons, weapon)
-            .zip(css_pack())
-            .is_some_and(|(name, pack)| pack.contains(&format!("models/weapons/{name}.mdl")))
+    weapon != 0 && model_name(weapons, weapon, Placement::Hand).is_some_and(|name| has_model(&name))
+}
+
+/// Whether `weapon` lying dropped is drawn as a CS model (so `item` skips its MW2 twin).
+pub(crate) fn shows_cs_dropped_model(weapons: &asset_game::WeaponRegistry, weapon: u32) -> bool {
+    weapon != 0 && model_name(weapons, weapon, Placement::Flat).is_some_and(|name| has_model(&name))
 }
 
 fn affine(m: &mdl_goldsrc::Mat3x4) -> Affine3A {
@@ -140,13 +226,55 @@ fn image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     image
 }
 
-/// Builds a world model read from `models/weapons/<name>.mdl`, its rest pose baked into MW2's
-/// weapon tag frame, and where its muzzle ends up; or, `on_floor`, in its own frame standing on
-/// the floor (the bomb).
+/// Puts a model built in its own frame where `placement` wants it: the bomb standing on the
+/// floor; a dropped weapon on its widest side (its thinnest extent upright), centred on the
+/// origin with its underside on the floor. A model for a hand stays in the tag frame.
+fn settle(vertices: &mut [CsViewmodelVertex], placement: Placement) {
+    let bounds =
+        |vertices: &[CsViewmodelVertex]| bounds_of(vertices.iter().map(|v| Vec3::from(v.position)));
+    if placement == Placement::Hand {
+        return;
+    }
+    if placement == Placement::Flat
+        && let Some((lo, hi)) = bounds(vertices)
+    {
+        let size = hi - lo;
+        // A cyclic swap of the axes (a rotation) brings the thinnest one up.
+        let turn = |v: [f32; 3]| {
+            if size.x <= size.y.min(size.z) {
+                [v[1], v[2], v[0]]
+            } else if size.y <= size.z {
+                [v[2], v[0], v[1]]
+            } else {
+                v
+            }
+        };
+        for v in vertices.iter_mut() {
+            v.position = turn(v.position);
+            v.normal = turn(v.normal);
+        }
+    }
+    let Some((lo, hi)) = bounds(vertices) else {
+        return;
+    };
+    let centre = (lo + hi) * 0.5;
+    let shift = if placement == Placement::Flat {
+        Vec3::new(centre.x, centre.y, lo.z)
+    } else {
+        Vec3::new(0.0, 0.0, lo.z)
+    };
+    for v in vertices.iter_mut() {
+        v.position = (Vec3::from(v.position) - shift).to_array();
+    }
+}
+
+/// Builds a CS:S world model read from `models/weapons/<name>.mdl`, its rest pose baked into
+/// MW2's weapon tag frame, and where its muzzle ends up; or, on the floor or dropped, in its own
+/// frame settled there.
 fn build_world_model(
     pack: &mdl_source::Vpk,
     loaded: mdl_source::LoadedModel,
-    on_floor: bool,
+    placement: Placement,
     images: &mut Assets<Image>,
 ) -> Result<(CsViewmodelModel, Option<Vec3>), String> {
     let studio = &loaded.model;
@@ -160,7 +288,7 @@ fn build_world_model(
             .position(|b| b.name.eq_ignore_ascii_case(bone))
     };
     // Guns hang off their weapon bone; the knife and grenades off the right hand.
-    let to_tag = if on_floor {
+    let to_tag = if placement != Placement::Hand {
         Affine3A::IDENTITY
     } else {
         let (anchor, carry) = match find("ValveBiped.weapon_bone") {
@@ -207,15 +335,7 @@ fn build_world_model(
             }
         })
         .collect();
-    if on_floor {
-        let floor = vertices
-            .iter()
-            .map(|v| v.position[2])
-            .fold(f32::INFINITY, f32::min);
-        for v in &mut vertices {
-            v.position[2] -= floor;
-        }
-    }
+    settle(&mut vertices, placement);
     let textures: Vec<Option<Handle<Image>>> = loaded
         .materials
         .iter()
@@ -262,6 +382,175 @@ fn build_world_model(
     ))
 }
 
+/// A held weapon's barrel and up directions, from its shape alone (a `p_` model's idle pose holds
+/// it at any angle): the barrel is its long axis, pointing away from the hand (a gun's muzzle
+/// reaches further from the hand than its stock); up is the longer of the other two (a gun is
+/// taller than it is wide), toward the side reaching less far from the muzzle (the grip and
+/// magazine hang below the bore).
+fn held_axes(points: &[Vec3], hand: Vec3) -> Option<(Vec3, Vec3)> {
+    let (lo, hi) = bounds_of(points.iter().copied())?;
+    let mean = points.iter().sum::<Vec3>() / points.len() as f32;
+    let outer = |v: Vec3| Mat3::from_cols(v * v.x, v * v.y, v * v.z);
+    let spread = points
+        .iter()
+        .fold(Mat3::ZERO, |sum, p| sum + outer(*p - mean));
+    // The covariance's main directions, by power iteration from the bounds' longest sides.
+    let principal = |m: Mat3, seed: Vec3| (0..64).fold(seed, |v, _| (m * v).normalize_or(v));
+    let size = hi - lo;
+    let longest = if size.x >= size.y.max(size.z) {
+        Vec3::X
+    } else if size.y >= size.z {
+        Vec3::Y
+    } else {
+        Vec3::Z
+    };
+    let along = principal(spread, longest);
+    let rest = spread - outer(along) * along.dot(spread * along);
+    let seed = [Vec3::X, Vec3::Y, Vec3::Z]
+        .map(|axis| axis - along * axis.dot(along))
+        .into_iter()
+        .max_by(|a, b| a.length().total_cmp(&b.length()))?;
+    let across = principal(rest, seed.normalize());
+    let across = (across - along * across.dot(along)).normalize_or(along.any_orthonormal_vector());
+    let extent = |axis: Vec3| {
+        points
+            .iter()
+            .map(|p| p.dot(axis))
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), x| {
+                (lo.min(x), hi.max(x))
+            })
+    };
+    let (back, front) = extent(along);
+    let at = hand.dot(along);
+    let forward = if front - at >= at - back {
+        along
+    } else {
+        -along
+    };
+    let (_, tip) = extent(forward);
+    let muzzle: Vec<f32> = points
+        .iter()
+        .filter(|p| p.dot(forward) > tip - 1.5)
+        .map(|p| p.dot(across))
+        .collect();
+    let bore = muzzle.iter().sum::<f32>() / muzzle.len().max(1) as f32;
+    let (below, above) = extent(across);
+    let up = if above - bore > bore - below {
+        -across
+    } else {
+        across
+    };
+    Some((forward, up))
+}
+
+/// Model names of CS weapons without a muzzle (the knife, grenades, the bomb).
+const NO_MUZZLE: [&str; 4] = ["knife", "grenade", "flashbang", "c4"];
+
+/// Builds a GoldSrc model (Condition Zero's or CS 1.6's `p_` or `w_`) at its first frame. A `p_`
+/// model is the weapon in a player model's idle pose, held level at the right hand (`Bip01 R
+/// Hand`), the rig and the facing differing from model to model: its long horizontal axis is
+/// the barrel, pointing away from the hand (a gun's muzzle reaches further from the hand than
+/// its stock), and up is up. The hand goes on the tag, and a gun's muzzle is the middle of its
+/// far end. A `w_` model already lies on the floor.
+fn build_goldsrc_world_model(
+    name: &str,
+    studio: &mdl_goldsrc::StudioModel,
+    placement: Placement,
+    images: &mut Assets<Image>,
+) -> Result<(CsViewmodelModel, Option<Vec3>), String> {
+    let mut pose = Vec::new();
+    studio.pose(0, 0.0, &mut pose);
+    let bone = |index: u8| {
+        pose.get(usize::from(index))
+            .unwrap_or(&mdl_goldsrc::IDENTITY)
+    };
+    let mut vertices: Vec<CsViewmodelVertex> = studio
+        .vertices
+        .iter()
+        .map(|v| {
+            let normal = affine(bone(v.normal_bone)).transform_vector3(Vec3::from(v.normal));
+            CsViewmodelVertex {
+                position: mdl_goldsrc::transform_point(bone(v.bone), v.position),
+                normal: normal.normalize_or_zero().to_array(),
+                uv: v.uv,
+                bones: [0; 4],
+                weights: [255, 0, 0, 0],
+            }
+        })
+        .collect();
+    let positions = |vertices: &[CsViewmodelVertex]| {
+        vertices
+            .iter()
+            .map(|v| Vec3::from(v.position))
+            .collect::<Vec<_>>()
+    };
+    let mut muzzle = None;
+    if placement == Placement::Hand {
+        let hand = studio
+            .bones
+            .iter()
+            .position(|b| b.name.eq_ignore_ascii_case("Bip01 R Hand"))
+            .and_then(|index| pose.get(index))
+            .ok_or("no right hand bone")?;
+        let hand = Vec3::new(hand[0][3], hand[1][3], hand[2][3]);
+        let (forward, up) = held_axes(&positions(&vertices), hand).ok_or("no vertices")?;
+        // Columns are the tag's axes (forward, left, up) in the model; transposed, model to tag.
+        let turn = Mat3::from_cols(forward, up.cross(forward), up).transpose();
+        for v in &mut vertices {
+            v.position = (turn * (Vec3::from(v.position) - hand)).to_array();
+            v.normal = (turn * Vec3::from(v.normal)).to_array();
+        }
+        let gun = !NO_MUZZLE.iter().any(|kind| name.contains(kind));
+        let tag_points = positions(&vertices);
+        if gun && let Some((_, hi)) = bounds_of(tag_points.iter().copied()) {
+            let tip: Vec<Vec3> = tag_points
+                .into_iter()
+                .filter(|p| p.x > hi.x - 1.5)
+                .collect();
+            let middle = tip.iter().sum::<Vec3>() / tip.len().max(1) as f32;
+            muzzle = Some(Vec3::new(hi.x, middle.y, middle.z));
+        }
+    }
+    settle(&mut vertices, placement);
+    let images: Vec<Handle<Image>> = studio
+        .textures
+        .iter()
+        .map(|t| images.add(image(t.width, t.height, t.rgba.clone())))
+        .collect();
+    let draws = studio
+        .meshes
+        .iter()
+        .filter_map(|mesh| {
+            let flags = studio.textures.get(mesh.texture)?.flags;
+            (flags & mdl_goldsrc::TEXTURE_ADDITIVE == 0).then_some(())?;
+            Some(CsViewmodelDraw {
+                image: images.get(mesh.texture)?.clone(),
+                first_vertex: mesh.first_vertex as u32,
+                vertex_count: mesh.vertex_count as u32,
+                shading: if flags & mdl_goldsrc::TEXTURE_FULLBRIGHT != 0 {
+                    CsViewmodelShading::Fullbright
+                } else {
+                    CsViewmodelShading::Lit
+                },
+            })
+        })
+        .collect();
+    Ok((
+        CsViewmodelModel {
+            id: super::cs_viewmodel::next_model_id().fetch_add(1, Ordering::Relaxed),
+            vertices,
+            draws,
+        },
+        muzzle,
+    ))
+}
+
+/// A world model read off the main thread, before its textures go into `Assets`.
+enum Decoded {
+    Source(mdl_source::LoadedModel),
+    GoldSrc(mdl_goldsrc::StudioModel),
+}
+
 /// A loaded world model and its bounds in the tag frame.
 #[derive(Clone)]
 struct WorldModel {
@@ -277,7 +566,7 @@ struct WorldModel {
 pub struct CsWorldModels {
     models: HashMap<String, Option<WorldModel>>,
     /// Models being read off the main thread, by the same key.
-    decoding: HashMap<String, Task<Result<mdl_source::LoadedModel, String>>>,
+    decoding: HashMap<String, Task<Result<Decoded, String>>>,
     offsets: HashMap<u32, Mat4>,
 }
 
@@ -322,18 +611,17 @@ impl CsWorldModels {
     fn get(
         &mut self,
         name: &str,
-        on_floor: bool,
+        placement: Placement,
         images: &mut Assets<Image>,
     ) -> Option<WorldModel> {
-        let key = if on_floor {
-            format!("{name} (floor)")
-        } else {
-            name.to_owned()
+        let key = match placement {
+            Placement::Hand => name.to_owned(),
+            Placement::Floor => format!("{name} (floor)"),
+            Placement::Flat => format!("{name} (dropped)"),
         };
         if let Some(model) = self.models.get(&key) {
             return model.clone();
         }
-        let pack = css_pack()?;
         let task = match self.decoding.remove(&key) {
             Some(task) if task.is_finished() => task,
             Some(task) => {
@@ -341,23 +629,38 @@ impl CsWorldModels {
                 return None;
             }
             None => {
-                let path = format!("models/weapons/{name}.mdl");
-                let task = AsyncComputeTaskPool::get().spawn(async move {
-                    // The knife's and grenades' hand frame reads a CS:S player model once.
-                    let _ = hand_to_weapon_bone(pack);
-                    mdl_source::load_model(pack, &path)
-                });
+                let path = model_path(name);
+                let task = if let Some(pack) = css_pack() {
+                    AsyncComputeTaskPool::get().spawn(async move {
+                        // The knife's and grenades' hand frame reads a CS:S player model once.
+                        let _ = hand_to_weapon_bone(pack);
+                        mdl_source::load_model(pack, &path).map(Decoded::Source)
+                    })
+                } else {
+                    let dirs = goldsrc_dirs()?;
+                    AsyncComputeTaskPool::get().spawn(async move {
+                        let bytes = dirs.read(&path).ok_or_else(|| format!("no {path}"))?;
+                        mdl_goldsrc::StudioModel::parse(&bytes)
+                            .map(Decoded::GoldSrc)
+                            .map_err(|e| e.to_string())
+                    })
+                };
                 self.decoding.insert(key, task);
                 return None;
             }
         };
-        let built =
-            block_on(task).and_then(|loaded| build_world_model(pack, loaded, on_floor, images));
+        let built = block_on(task).and_then(|decoded| match decoded {
+            Decoded::Source(loaded) => {
+                let pack = css_pack().ok_or_else(|| "no CS:S pack".to_owned())?;
+                build_world_model(pack, loaded, placement, images)
+            }
+            Decoded::GoldSrc(studio) => build_goldsrc_world_model(name, &studio, placement, images),
+        });
         let model = match built {
             Ok((model, muzzle)) => {
                 diag::info!(
                     World,
-                    "cs world model {name}: {} triangles",
+                    "cs world model {key}: {} triangles",
                     model.vertices.len() / 3
                 );
                 let bounds = bounds_of(model.vertices.iter().map(|v| Vec3::from(v.position)))
@@ -369,7 +672,7 @@ impl CsWorldModels {
                 })
             }
             Err(error) => {
-                diag::warn!(World, "cs world model {name}: {error}");
+                diag::warn!(World, "cs world model {key}: {error}");
                 None
             }
         };
@@ -378,13 +681,15 @@ impl CsWorldModels {
     }
 }
 
-/// Places a CS:S world model in every posed hand holding a CS weapon, and the CS:S C4 where the
-/// bomb lies. The light comes later (`render_frontend`'s CS lighting reads the map's light grid
+/// Places a CS model in every posed hand holding a CS weapon, on every dropped CS weapon, and
+/// where the bomb lies. The light comes later (`render_frontend`'s CS lighting reads the map's light grid
 /// at each one).
+#[allow(clippy::too_many_arguments)]
 pub fn update_cs_world_models(
     tags: Res<CsHeldWeaponTags>,
     weapons: Option<Res<PreparedWeapons>>,
     presented: Res<net::PresentedSnapshot>,
+    cg_clock: Option<Res<net::FrameClock>>,
     bombs: Query<(
         &render_scene::WorldScriptModelInstance,
         &Transform,
@@ -403,8 +708,7 @@ pub fn update_cs_world_models(
         if *visibility == Visibility::Hidden || !replaces_bomb_model(&owner.current_model.0) {
             continue;
         }
-        let name = if planted { "w_c4_planted" } else { "w_c4" };
-        let Some(model) = models.get(name, true, &mut images) else {
+        let Some(model) = models.get(bomb_model(planted), Placement::Floor, &mut images) else {
             continue;
         };
         frame.instances.push(CsWorldModelInstance {
@@ -419,10 +723,10 @@ pub fn update_cs_world_models(
         return;
     };
     for tag in &tags.0 {
-        let Some(name) = world_model_name(&weapons.0, tag.weapon) else {
+        let Some(name) = model_name(&weapons.0, tag.weapon, Placement::Hand) else {
             continue;
         };
-        let Some(model) = models.get(&name, false, &mut images) else {
+        let Some(model) = models.get(&name, Placement::Hand, &mut images) else {
             continue;
         };
         let tag_from_model = *models
@@ -432,6 +736,38 @@ pub fn update_cs_world_models(
         frame.instances.push(CsWorldModelInstance {
             model: model.gpu,
             world_from_model: (tag.world_from_tag * tag_from_model).to_cols_array_2d(),
+            ambient: [0.6; 3],
+            sun_dir: [0.0; 3],
+            sun: [0.0; 3],
+        });
+    }
+    // Dropped CS weapons, lying where the item is, turned to its yaw.
+    let Some(snapshot) = presented.snapshot() else {
+        return;
+    };
+    let at_time = super::item::item_time(cg_clock.as_deref(), snapshot);
+    for es in &snapshot.meta.entities {
+        if es.e_type != entity_iw4::ET_ITEM || es.e_flags & super::item::EF_NODRAW != 0 {
+            continue;
+        }
+        let Some(name) = u32::try_from(es.index)
+            .ok()
+            .filter(|weapon| shows_cs_dropped_model(&weapons.0, *weapon))
+            .and_then(|weapon| model_name(&weapons.0, weapon, Placement::Flat))
+        else {
+            continue;
+        };
+        let Some(model) = models.get(&name, Placement::Flat, &mut images) else {
+            continue;
+        };
+        let (origin, angles) = super::item::item_place(es, at_time);
+        let world_from_model = Mat4::from_rotation_translation(
+            Quat::from_rotation_z(angles[1].to_radians()),
+            Vec3::from(origin),
+        );
+        frame.instances.push(CsWorldModelInstance {
+            model: model.gpu,
+            world_from_model: world_from_model.to_cols_array_2d(),
             ambient: [0.6; 3],
             sun_dir: [0.0; 3],
             sun: [0.0; 3],
