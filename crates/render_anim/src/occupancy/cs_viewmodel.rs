@@ -8,7 +8,7 @@
 //! behind; `set_viewmodel_sway(false)` keeps it still.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -17,6 +17,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 use frame::ViewSubject;
 use mdl_goldsrc::Mat3x4;
 use net::{LocalPresentClient, PresentedSnapshot};
@@ -295,10 +296,15 @@ struct Playing {
 
 #[derive(Resource, Default)]
 pub struct CsViewmodels {
-    /// Looked up once: the CS:S pack (opened) and the CS 1.6 folder.
+    /// Looked up once, by the startup read: the CS:S pack (opened) and the CS 1.6 folder.
     css: Option<Option<Arc<mdl_source::Vpk>>>,
     cstrike: Option<Option<PathBuf>>,
+    /// The startup read (`warm_up`) while it runs off the main thread.
+    warmup: Option<Task<Warmup>>,
+    warmed_up: bool,
     models: HashMap<&'static str, Option<Arc<LoadedModel>>>,
+    /// Viewmodels being read and decoded off the main thread, by weapon name.
+    decoding: HashMap<&'static str, Task<Result<DecodedModel, String>>>,
     playing: Option<Playing>,
     bones: Vec<Mat3x4>,
     bob_time: f64,
@@ -344,12 +350,7 @@ fn pack_weights(weights: [f32; 3]) -> [u8; 4] {
     [w(weights[0]), w(weights[1]), w(weights[2]), 0]
 }
 
-fn goldsrc_model(
-    path: &std::path::Path,
-    images: &mut Assets<Image>,
-) -> Result<LoadedModel, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let studio = mdl_goldsrc::StudioModel::parse(&bytes).map_err(|e| e.to_string())?;
+fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -> LoadedModel {
     let handles: Vec<Handle<Image>> = studio
         .textures
         .iter()
@@ -477,7 +478,7 @@ fn goldsrc_model(
             .map(|(i, _)| i)
             .collect(),
     };
-    Ok(LoadedModel {
+    LoadedModel {
         format: Format::GoldSrc,
         gpu: Arc::new(CsViewmodelModel {
             id: NEXT_MODEL_ID.fetch_add(1, Ordering::Relaxed),
@@ -489,15 +490,10 @@ fn goldsrc_model(
         roles,
         muzzle: None,
         eject: None,
-    })
+    }
 }
 
-fn source_model(
-    vpk: &mdl_source::Vpk,
-    name: &str,
-    images: &mut Assets<Image>,
-) -> Result<LoadedModel, String> {
-    let loaded = mdl_source::load_model(vpk, &format!("models/weapons/{name}.mdl"))?;
+fn source_model(loaded: mdl_source::LoadedModel, images: &mut Assets<Image>) -> LoadedModel {
     let studio = loaded.model;
     let handles: Vec<Option<Handle<Image>>> = loaded
         .materials
@@ -614,7 +610,7 @@ fn source_model(
         .iter()
         .find(|a| a.name.eq_ignore_ascii_case("2"))
         .map(attachment);
-    Ok(LoadedModel {
+    LoadedModel {
         format: Format::Source,
         gpu: Arc::new(CsViewmodelModel {
             id: NEXT_MODEL_ID.fetch_add(1, Ordering::Relaxed),
@@ -626,99 +622,214 @@ fn source_model(
         roles,
         muzzle,
         eject,
-    })
+    }
+}
+
+/// A viewmodel read and decoded off the main thread; its textures still go into `Assets`.
+enum DecodedModel {
+    Source(mdl_source::LoadedModel),
+    GoldSrc(mdl_goldsrc::StudioModel),
+}
+
+/// Reads and decodes a viewmodel: from the CS:S pack when there is one, else the CS 1.6 folder.
+fn decode_model(
+    css: Option<&mdl_source::Vpk>,
+    cstrike: Option<&Path>,
+    view_model: &str,
+    css_view_model: &str,
+) -> Result<DecodedModel, String> {
+    if let Some(vpk) = css {
+        return mdl_source::load_model(vpk, &format!("models/weapons/{css_view_model}.mdl"))
+            .map(DecodedModel::Source)
+            .map_err(|e| format!("{css_view_model}: {e}"));
+    }
+    let Some(dir) = cstrike else {
+        return Err(format!(
+            "no Counter-Strike: Source install found ({}) and no Counter-Strike 1.6 \
+             folder selected: set {} in .env to its `cstrike` folder",
+            asset_transport::CSS_ENV,
+            asset_transport::CSTRIKE_ENV
+        ));
+    };
+    let path = dir.join("models").join(format!("{view_model}.mdl"));
+    std::fs::read(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| mdl_goldsrc::StudioModel::parse(&bytes).map_err(|e| e.to_string()))
+        .map(DecodedModel::GoldSrc)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Adds a decoded viewmodel's textures and builds what the viewmodel pass draws; `None` (the
+/// MW2 model stays) when it could not be read.
+fn finish_model(
+    name: &str,
+    decoded: Result<DecodedModel, String>,
+    images: &mut Assets<Image>,
+) -> Option<Arc<LoadedModel>> {
+    let model = match decoded {
+        Ok(DecodedModel::Source(loaded)) => source_model(loaded, images),
+        Ok(DecodedModel::GoldSrc(studio)) => goldsrc_model(studio, images),
+        Err(error) => {
+            diag::warn!(World, "cs viewmodel: {error}; MW2 model stays");
+            return None;
+        }
+    };
+    diag::info!(
+        World,
+        "cs viewmodel {name} ({:?}): {} triangles, {} sequences",
+        model.format,
+        model.gpu.vertices.len() / 3,
+        model.sequences.len()
+    );
+    Some(Arc::new(model))
+}
+
+/// What the startup read brings back from off the main thread.
+struct Warmup {
+    css: Option<Arc<mdl_source::Vpk>>,
+    cstrike: Option<PathBuf>,
+    models: Vec<(&'static str, Result<DecodedModel, String>)>,
+    flashes: Option<[mdl_source::vtf::Image; 2]>,
+}
+
+/// Opens the CS:S pack (or finds the CS 1.6 folder), and decodes the viewmodels every player
+/// holds at spawn (knife, starting pistols, C4, grenades) and the muzzle flash sprites. Read on
+/// first use instead, each stopped the main thread for 30 ms, and the pack's first read from a
+/// cold disk for most of a second.
+fn warm_up() -> Warmup {
+    use weapon_iw4::cs;
+    let css = asset_transport::find_css_pak().and_then(|pak| match mdl_source::Vpk::open(&pak) {
+        Ok(vpk) => {
+            diag::info!(
+                World,
+                "cs viewmodels: Counter-Strike: Source from {}",
+                pak.display()
+            );
+            Some(Arc::new(vpk))
+        }
+        Err(error) => {
+            diag::warn!(World, "cs viewmodels: {error}");
+            None
+        }
+    });
+    let cstrike = if css.is_some() {
+        None
+    } else {
+        asset_transport::find_cstrike()
+    };
+    let mut models = Vec::new();
+    if css.is_some() || cstrike.is_some() {
+        let pistols = cs::CS_WEAPONS
+            .iter()
+            .filter(|w| matches!(w.name, "glock" | "usp"))
+            .map(|w| (w.name, w.view_model, w.css_view_model));
+        let grenades = cs::CS_GRENADES
+            .iter()
+            .map(|g| (g.name, g.view_model, g.css_view_model));
+        let (knife, c4) = (&cs::CS_KNIFE, &cs::CS_C4);
+        let spawn_set = [
+            (knife.name, knife.view_model, knife.css_view_model),
+            (c4.name, c4.view_model, c4.css_view_model),
+        ]
+        .into_iter()
+        .chain(pistols)
+        .chain(grenades);
+        for (name, view_model, css_view_model) in spawn_set {
+            let decoded = decode_model(
+                css.as_deref(),
+                cstrike.as_deref(),
+                view_model,
+                css_view_model,
+            );
+            models.push((name, decoded));
+        }
+    }
+    let flashes = css.as_deref().and_then(|pack| {
+        let load = |path: &str| mdl_source::vtf::decode(&pack.read(path)?).ok();
+        Some([
+            load("materials/sprites/muzzleflash4.vtf")?,
+            load("materials/effects/muzzleflashx.vtf")?,
+        ])
+    });
+    Warmup {
+        css,
+        cstrike,
+        models,
+        flashes,
+    }
+}
+
+/// Where a weapon's viewmodel stands.
+enum ModelLoad {
+    Ready(Arc<LoadedModel>),
+    /// Being read off the main thread; the CS model owns the view meanwhile and nothing draws.
+    Loading,
+    /// Not readable: the MW2 model stays.
+    Unavailable,
 }
 
 impl CsViewmodels {
-    /// The CS:S flash sprites as additive textures, read from the pack once.
-    fn flash_images(&mut self, images: &mut Assets<Image>) -> Option<[Handle<Image>; 2]> {
-        if self.flash_images.is_none() {
-            let pack = self.css_pack();
-            let load = |path: &str, images: &mut Assets<Image>| {
-                let bytes = pack.as_ref()?.read(path)?;
-                let decoded = mdl_source::vtf::decode(&bytes).ok()?;
-                Some(images.add(image(decoded.width, decoded.height, decoded.rgba)))
-            };
-            let round = load("materials/sprites/muzzleflash4.vtf", images);
-            let side = load("materials/effects/muzzleflashx.vtf", images);
-            self.flash_images = Some(round.zip(side).map(|(a, b)| [a, b]));
+    /// Starts the startup read on the first call, and lands it and every viewmodel decoded since.
+    fn pump(&mut self, images: &mut Assets<Image>) {
+        if !self.warmed_up && self.warmup.is_none() {
+            self.warmup = Some(AsyncComputeTaskPool::get().spawn(async { warm_up() }));
         }
+        if self.warmup.as_ref().is_some_and(Task::is_finished)
+            && let Some(task) = self.warmup.take()
+        {
+            let warm = block_on(task);
+            self.warmed_up = true;
+            self.css = Some(warm.css);
+            self.cstrike = Some(warm.cstrike);
+            self.flash_images = Some(warm.flashes.map(|sprites| {
+                sprites.map(|sprite| images.add(image(sprite.width, sprite.height, sprite.rgba)))
+            }));
+            for (name, decoded) in warm.models {
+                let model = finish_model(name, decoded, images);
+                self.models.insert(name, model);
+            }
+        }
+        let finished: Vec<&'static str> = self
+            .decoding
+            .iter()
+            .filter(|(_, task)| task.is_finished())
+            .map(|(name, _)| *name)
+            .collect();
+        for name in finished {
+            if let Some(task) = self.decoding.remove(name) {
+                let model = finish_model(name, block_on(task), images);
+                self.models.insert(name, model);
+            }
+        }
+    }
+
+    /// The CS:S flash sprites as additive textures, once the startup read has them.
+    fn flash_images(&self) -> Option<[Handle<Image>; 2]> {
         self.flash_images.clone().flatten()
     }
 
-    fn css_pack(&mut self) -> Option<Arc<mdl_source::Vpk>> {
-        self.css
-            .get_or_insert_with(|| {
-                let pak = asset_transport::find_css_pak()?;
-                match mdl_source::Vpk::open(&pak) {
-                    Ok(vpk) => {
-                        diag::info!(
-                            World,
-                            "cs viewmodels: Counter-Strike: Source from {}",
-                            pak.display()
-                        );
-                        Some(Arc::new(vpk))
-                    }
-                    Err(error) => {
-                        diag::warn!(World, "cs viewmodels: {error}");
-                        None
-                    }
-                }
-            })
-            .clone()
-    }
-
-    fn cstrike(&mut self) -> Option<PathBuf> {
-        self.cstrike
-            .get_or_insert_with(asset_transport::find_cstrike)
-            .clone()
-    }
-
-    fn model_for(
-        &mut self,
-        weapon: ViewWeapon,
-        images: &mut Assets<Image>,
-    ) -> Option<Arc<LoadedModel>> {
+    /// `weapon`'s viewmodel. One not read yet is decoded off the main thread, loading meanwhile.
+    fn model_for(&mut self, weapon: ViewWeapon) -> ModelLoad {
         if let Some(model) = self.models.get(weapon.name) {
-            return model.clone();
+            return model
+                .clone()
+                .map_or(ModelLoad::Unavailable, ModelLoad::Ready);
         }
-        let loaded = match self.css_pack() {
-            Some(vpk) => source_model(&vpk, weapon.css_view_model, images)
-                .map_err(|e| format!("{}: {e}", weapon.css_view_model)),
-            None => match self.cstrike() {
-                Some(dir) => {
-                    let path = dir
-                        .join("models")
-                        .join(format!("{}.mdl", weapon.view_model));
-                    goldsrc_model(&path, images).map_err(|e| format!("{}: {e}", path.display()))
-                }
-                None => Err(format!(
-                    "no Counter-Strike: Source install found ({}) and no Counter-Strike 1.6 \
-                     folder selected: set {} in .env to its `cstrike` folder",
-                    asset_transport::CSS_ENV,
-                    asset_transport::CSTRIKE_ENV
-                )),
-            },
-        };
-        let model = match loaded {
-            Ok(model) => {
-                diag::info!(
-                    World,
-                    "cs viewmodel {} ({:?}): {} triangles, {} sequences",
-                    weapon.name,
-                    model.format,
-                    model.gpu.vertices.len() / 3,
-                    model.sequences.len()
-                );
-                Some(Arc::new(model))
-            }
-            Err(error) => {
-                diag::warn!(World, "cs viewmodel: {error}; MW2 model stays");
-                None
-            }
-        };
-        self.models.insert(weapon.name, model.clone());
-        model
+        if self.warmed_up && !self.decoding.contains_key(weapon.name) {
+            let css = self.css.clone().flatten();
+            let cstrike = self.cstrike.clone().flatten();
+            let (view_model, css_view_model) = (weapon.view_model, weapon.css_view_model);
+            let task = AsyncComputeTaskPool::get().spawn(async move {
+                decode_model(
+                    css.as_deref(),
+                    cstrike.as_deref(),
+                    view_model,
+                    css_view_model,
+                )
+            });
+            self.decoding.insert(weapon.name, task);
+        }
+        ModelLoad::Loading
     }
 }
 
@@ -818,7 +929,11 @@ fn play_local_or(sounds: &mut MessageWriter<audio::AliasCommand>, alias: &str, f
     play_alias(sounds, alias, Some(fallback));
 }
 
-fn play_alias(sounds: &mut MessageWriter<audio::AliasCommand>, alias: &str, fallback: Option<&str>) {
+fn play_alias(
+    sounds: &mut MessageWriter<audio::AliasCommand>,
+    alias: &str,
+    fallback: Option<&str>,
+) {
     sounds.write(audio::AliasCommand::Play(audio::PlayAlias {
         event: None,
         namespace: asset_core::AssetNamespace::Iw4,
@@ -953,6 +1068,7 @@ pub fn update_cs_viewmodel(
     let (view, settings) = view_settings;
     frame.model = None;
     active.0 = false;
+    state.pump(&mut images);
     let Some(weapons) = weapons else {
         return;
     };
@@ -965,8 +1081,13 @@ pub fn update_cs_viewmodel(
         state.playing = None;
         return;
     };
-    let Some(model) = state.model_for(weapon, &mut images) else {
-        return;
+    let model = match state.model_for(weapon) {
+        ModelLoad::Ready(model) => model,
+        ModelLoad::Loading => {
+            active.0 = true;
+            return;
+        }
+        ModelLoad::Unavailable => return,
     };
     // From here the CS model owns the first-person view, even when it is hidden this frame.
     active.0 = true;
@@ -1071,7 +1192,11 @@ pub fn update_cs_viewmodel(
                     && weapon.mode_bit != 0
                     && ps.cs_burst_modes & weapon.mode_bit != 0
                     && !roles.shoot_alt.is_empty();
-                let set = if alt { roles.shoot_alt.as_slice() } else { shoot };
+                let set = if alt {
+                    roles.shoot_alt.as_slice()
+                } else {
+                    shoot
+                };
                 if !set.is_empty() {
                     let pick = (ps.cs_last_fire_ms.unsigned_abs() / 7) as usize % set.len();
                     start(playing, Some(set[pick]), 1.0);
@@ -1227,7 +1352,7 @@ pub fn update_cs_viewmodel(
     frame.flashes.clear();
     if let (Some((age, seed)), Some((muzzle_bone, muzzle))) = (flash, model.muzzle)
         && frame.bones.len() < render_gpu::CS_VIEWMODEL_MAX_BONES
-        && let Some(sprites) = state.flash_images(&mut images)
+        && let Some(sprites) = state.flash_images()
     {
         let at = |bone: usize, local: &Mat3x4| {
             frame
@@ -1298,7 +1423,9 @@ fn muzzle_flash_quads(
             out.push(vertex(corners[i], uv[i]));
         }
     };
-    let add = |a: [f32; 3], b: [f32; 3], s: f32| -> [f32; 3] { core::array::from_fn(|i| a[i] + b[i] * s) };
+    let add = |a: [f32; 3], b: [f32; 3], s: f32| -> [f32; 3] {
+        core::array::from_fn(|i| a[i] + b[i] * s)
+    };
 
     // Round flash in the view plane (y, z), spun by the shot.
     let spin = (seed.wrapping_mul(2_654_435_761) >> 8) as f32 / (1u32 << 24) as f32
@@ -1318,9 +1445,17 @@ fn muzzle_flash_quads(
     );
 
     // Two crossed cones along the barrel, starting at the tip.
-    let up = if barrel[2].abs() > 0.9 { [0.0, 1.0, 0.0] } else { [0.0, 0.0, 1.0] };
+    let up = if barrel[2].abs() > 0.9 {
+        [0.0, 1.0, 0.0]
+    } else {
+        [0.0, 0.0, 1.0]
+    };
     let cross = |a: [f32; 3], b: [f32; 3]| {
-        [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
     };
     let norm = |a: [f32; 3]| {
         let len = a.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-6);
