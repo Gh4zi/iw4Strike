@@ -631,16 +631,26 @@ fn drain_dpvs_ent_cmds(
             let Some(dobj) = scene.scene_dobjs.get_mut(cmd.scene_dobj as usize) else {
                 return;
             };
-            if !dpvs_iw4::scene_dobj_gate_begin(&mut dobj.cull_gate) {
+            if dpvs_iw4::scene_dobj_gate_begin(&mut dobj.cull_gate) {
+                if dobj.posed_bounds.is_none() {
+                    dobj.cull_gate = dpvs_iw4::SCENE_DOBJ_GATE_FAILED;
+                    return;
+                }
+                dobj.cull_gate = dpvs_iw4::SCENE_DOBJ_GATE_BOUNDED;
+            } else if dobj.cull_gate != dpvs_iw4::SCENE_DOBJ_GATE_BOUNDED {
+                // Skinned already, or its bounds failed.
                 return;
             }
+            // An entity seen through several cells gets a command per cell visit. One whose box
+            // does not reach the first command's cell must still be tried in the others' cells:
+            // Terminal's atrium pine is queued first for the eye's cell, which it does not reach,
+            // and vanished from the spots where that cell was walked first.
             let Some(bounds) = dobj.posed_bounds else {
-                dobj.cull_gate = dpvs_iw4::SCENE_DOBJ_GATE_FAILED;
                 return;
             };
-            dobj.cull_gate = dpvs_iw4::SCENE_DOBJ_GATE_BOUNDED;
             let entnum = scene_info_entnum(dobj.info);
-            if dpvs_iw4::scene_ent_frustum_hides(bounds, &planes) {
+            if scene.scene_ent_visible(entnum) || dpvs_iw4::scene_ent_frustum_hides(bounds, &planes)
+            {
                 return;
             }
 
