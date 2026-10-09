@@ -720,10 +720,12 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
             .detonate_at_ms
             .is_none_or(|deadline| deadline > projectile.cleanup_at_ms || !projectile.live)
     {
-        let _ = world.remove_projectile_by_number(entnum);
         if !projectile.live && is_cs_smoke(world, projectile.weapon) {
             // A spent CS smoke grenade gives its entity back the way a detonation does.
+            let _ = world.remove_projectile_by_number(entnum);
             world.note_dying_missile(tick, projectile);
+        } else {
+            let _ = world.despawn_projectile(entnum);
         }
         return;
     }
@@ -1007,7 +1009,7 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
     };
     match tick_outcome {
         TickOutcome::Cleanup => {
-            let _ = world.remove_projectile_by_number(entnum);
+            let _ = world.despawn_projectile(entnum);
             return;
         }
         TickOutcome::Fuse => {
