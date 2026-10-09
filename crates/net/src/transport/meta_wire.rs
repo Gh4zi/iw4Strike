@@ -810,12 +810,29 @@ fn decode_rows<T>(
     Ok(rows)
 }
 
+/// Against a baseline, a section that rarely changes is preceded by one byte: 1 when it equals
+/// the baseline's and is left out, 0 when it follows. Without a baseline it is always sent,
+/// unmarked. Returns whether the section is left out.
+fn put_unchanged(out: &mut WireWriter, unchanged: Option<bool>) -> bool {
+    let Some(unchanged) = unchanged else {
+        return false;
+    };
+    out.put_u8(u8::from(unchanged));
+    unchanged
+}
+
+/// Reads the marker `put_unchanged` wrote: whether the section was left out.
+fn get_unchanged(input: &mut WireReader<'_>, baseline: bool) -> Result<bool, WireError> {
+    Ok(baseline && input.get_u8()? != 0)
+}
+
 pub fn encode_snapshot_meta(out: &mut WireWriter, meta: &SnapshotMeta, world_objects_wire: &[u8]) {
     let _ = encode_snapshot_meta_sections(out, meta, world_objects_wire, None);
 }
 
 /// `baseline` is the receiver's copy of the meta it decodes this against; the client rows, entity
-/// DObjs, entities, script movers and entity kernel lists then carry only the rows that changed.
+/// DObjs, entities, script movers, entity kernel and area-entity lists then carry only the rows
+/// that changed, and the alias tables and objectives are left out while unchanged.
 pub fn encode_snapshot_meta_sections(
     out: &mut WireWriter,
     meta: &SnapshotMeta,
@@ -861,11 +878,20 @@ pub fn encode_snapshot_meta_sections(
     }
     sizes.events = section_span(out, mark);
     mark = out.len();
-    encode_sound_alias_cs(out, &meta.sound_aliases);
-    encode_sound_alias_cs(out, &meta.effect_names);
-    encode_sound_alias_cs(out, &meta.hud_materials);
-    encode_hud_strings(out, &meta.hud_strings);
-    encode_rng_debug(out, &meta.rng);
+    let aliases_unchanged = baseline.map(|b| {
+        b.sound_aliases == meta.sound_aliases
+            && b.effect_names == meta.effect_names
+            && b.hud_materials == meta.hud_materials
+            && b.hud_strings == meta.hud_strings
+            && b.rng == meta.rng
+    });
+    if !put_unchanged(out, aliases_unchanged) {
+        encode_sound_alias_cs(out, &meta.sound_aliases);
+        encode_sound_alias_cs(out, &meta.effect_names);
+        encode_sound_alias_cs(out, &meta.hud_materials);
+        encode_hud_strings(out, &meta.hud_strings);
+        encode_rng_debug(out, &meta.rng);
+    }
     sizes.aliases = section_span(out, mark);
     mark = out.len();
     encode_rows(
@@ -902,10 +928,16 @@ pub fn encode_snapshot_meta_sections(
     encode_item_pickups(out, &meta.item_pickups);
     sizes.item_tables = section_span(out, mark);
     mark = out.len();
-    encode_area_entities(out, meta.area_entities.as_ref());
+    encode_area_entities(
+        out,
+        meta.area_entities.as_ref(),
+        baseline.and_then(|b| b.area_entities.as_ref()),
+    );
     sizes.area_entities = section_span(out, mark);
     mark = out.len();
-    encode_objectives(out, &meta.objectives);
+    if !put_unchanged(out, baseline.map(|b| b.objectives == meta.objectives)) {
+        encode_objectives(out, &meta.objectives);
+    }
     sizes.objectives = section_span(out, mark);
     mark = out.len();
     debug_assert!(world_objects_wire.len() <= u16::MAX as usize);
@@ -957,11 +989,23 @@ pub fn decode_snapshot_meta(
     for _ in 0..pellet_fx_count {
         pellet_fx.push(decode_pellet_fx_record(input)?);
     }
-    let sound_aliases = decode_sound_alias_cs(input)?;
-    let effect_names = decode_sound_alias_cs(input)?;
-    let hud_materials = decode_sound_alias_cs(input)?;
-    let hud_strings = decode_hud_strings(input)?;
-    let rng = decode_rng_debug(input)?;
+    let aliases_unchanged = get_unchanged(input, baseline.is_some())?;
+    let (sound_aliases, effect_names, hud_materials, hud_strings, rng) = match baseline.as_mut() {
+        Some(b) if aliases_unchanged => (
+            std::mem::take(&mut b.sound_aliases),
+            std::mem::take(&mut b.effect_names),
+            std::mem::take(&mut b.hud_materials),
+            std::mem::take(&mut b.hud_strings),
+            b.rng,
+        ),
+        _ => (
+            decode_sound_alias_cs(input)?,
+            decode_sound_alias_cs(input)?,
+            decode_sound_alias_cs(input)?,
+            decode_hud_strings(input)?,
+            decode_rng_debug(input)?,
+        ),
+    };
     let entity_dobjs = decode_rows(
         input,
         baseline
@@ -982,11 +1026,23 @@ pub fn decode_snapshot_meta(
             .map(|b| std::mem::take(&mut b.script_movers)),
         decode_script_mover,
     )?;
-    let entity_kernel = decode_entity_kernel(input, baseline.map(|b| b.entity_kernel))?;
+    let entity_kernel = decode_entity_kernel(
+        input,
+        baseline
+            .as_mut()
+            .map(|b| std::mem::take(&mut b.entity_kernel)),
+    )?;
     let item_ammo = decode_item_ammo(input)?;
     let item_pickups = decode_item_pickups(input)?;
-    let area_entities = decode_area_entities(input)?;
-    let objectives = decode_objectives(input)?;
+    let area_entities = decode_area_entities(
+        input,
+        baseline.as_mut().and_then(|b| b.area_entities.take()),
+    )?;
+    let objectives_unchanged = get_unchanged(input, baseline.is_some())?;
+    let objectives = match baseline.as_mut() {
+        Some(b) if objectives_unchanged => std::mem::take(&mut b.objectives),
+        _ => decode_objectives(input)?,
+    };
     let wire_len = input.get_u16()? as usize;
     let mut wire = vec![0u8; wire_len];
     input.get_bytes(&mut wire)?;
@@ -1023,7 +1079,11 @@ pub fn decode_snapshot_meta(
     ))
 }
 
-fn encode_area_entities(out: &mut WireWriter, snapshot: Option<&AreaEntityWorldSnapshot>) {
+fn encode_area_entities(
+    out: &mut WireWriter,
+    snapshot: Option<&AreaEntityWorldSnapshot>,
+    baseline: Option<&AreaEntityWorldSnapshot>,
+) {
     let Some(snapshot) = snapshot else {
         out.put_u8(0);
         return;
@@ -1035,50 +1095,64 @@ fn encode_area_entities(out: &mut WireWriter, snapshot: Option<&AreaEntityWorldS
     for value in snapshot.world_half {
         out.put_f32(value);
     }
-    debug_assert!(snapshot.free_prefix.len() <= u16::MAX as usize);
-    out.put_u16(snapshot.free_prefix.len() as u16);
-    for &index in &snapshot.free_prefix {
-        out.put_u16(index);
-    }
+    encode_rows(
+        out,
+        &snapshot.free_prefix,
+        baseline.map(|b| b.free_prefix.as_slice()),
+        |out, index| out.put_u16(*index),
+    );
     out.put_u16(snapshot.contiguous_free_head);
-    debug_assert!(snapshot.sectors.len() <= u16::MAX as usize);
-    out.put_u16(snapshot.sectors.len() as u16);
-    for row in &snapshot.sectors {
-        out.put_u16(row.index);
-        out.put_u32(row.contents_entities);
-        out.put_u32(row.linkcontents_entities);
-        out.put_u16(row.entities);
-        out.put_f32(row.dist);
-        out.put_u16(row.axis);
-        out.put_u16(row.parent);
-        out.put_u16(row.child[0]);
-        out.put_u16(row.child[1]);
+    encode_rows(
+        out,
+        &snapshot.sectors,
+        baseline.map(|b| b.sectors.as_slice()),
+        encode_area_sector,
+    );
+    encode_rows(
+        out,
+        &snapshot.entities,
+        baseline.map(|b| b.entities.as_slice()),
+        encode_area_entity_link,
+    );
+}
+
+fn encode_area_sector(out: &mut WireWriter, row: &AreaSectorSnapshot) {
+    out.put_u16(row.index);
+    out.put_u32(row.contents_entities);
+    out.put_u32(row.linkcontents_entities);
+    out.put_u16(row.entities);
+    out.put_f32(row.dist);
+    out.put_u16(row.axis);
+    out.put_u16(row.parent);
+    out.put_u16(row.child[0]);
+    out.put_u16(row.child[1]);
+}
+
+fn encode_area_entity_link(out: &mut WireWriter, row: &AreaEntityLinkSnapshot) {
+    out.put_u16(row.entity_num);
+    out.put_u16(row.world_sector);
+    out.put_u16(row.next_entity);
+    out.put_u32(row.linkcontents);
+    for value in row.linkmin {
+        out.put_f32(value);
     }
-    debug_assert!(snapshot.entities.len() <= u16::MAX as usize);
-    out.put_u16(snapshot.entities.len() as u16);
-    for row in &snapshot.entities {
-        out.put_u16(row.entity_num);
-        out.put_u16(row.world_sector);
-        out.put_u16(row.next_entity);
-        out.put_u32(row.linkcontents);
-        for value in row.linkmin {
-            out.put_f32(value);
-        }
-        for value in row.linkmax {
-            out.put_f32(value);
-        }
-        out.put_u32(row.contents);
-        for value in row.bounds_mid {
-            out.put_f32(value);
-        }
-        for value in row.bounds_half {
-            out.put_f32(value);
-        }
+    for value in row.linkmax {
+        out.put_f32(value);
+    }
+    out.put_u32(row.contents);
+    for value in row.bounds_mid {
+        out.put_f32(value);
+    }
+    for value in row.bounds_half {
+        out.put_f32(value);
     }
 }
 
+/// `baseline` is the receiver's area-entity snapshot from the baseline meta, given up to the
+/// decode.
 fn decode_area_entities(
     input: &mut WireReader<'_>,
+    baseline: Option<AreaEntityWorldSnapshot>,
 ) -> Result<Option<AreaEntityWorldSnapshot>, WireError> {
     match input.get_u8()? {
         0 => return Ok(None),
@@ -1087,51 +1161,24 @@ fn decode_area_entities(
     }
     let world_mid = [input.get_f32()?, input.get_f32()?, input.get_f32()?];
     let world_half = [input.get_f32()?, input.get_f32()?, input.get_f32()?];
-    let free_count = input.get_u16()? as usize;
-    if free_count > 1022 {
+    let (base_free, base_sectors, base_entities) = match baseline {
+        Some(b) => (Some(b.free_prefix), Some(b.sectors), Some(b.entities)),
+        None => (None, None, None),
+    };
+    let free_prefix = decode_rows(input, base_free, |input| input.get_u16())?;
+    if free_prefix.len() > 1022 {
         return Err(WireError::Malformed(
             "CM area free prefix exceeds sector pool",
         ));
     }
-    let mut free_prefix = Vec::with_capacity(free_count);
-    for _ in 0..free_count {
-        free_prefix.push(input.get_u16()?);
-    }
     let contiguous_free_head = input.get_u16()?;
-    let sector_count = input.get_u16()? as usize;
-    if sector_count > 1023 {
+    let sectors = decode_rows(input, base_sectors, decode_area_sector)?;
+    if sectors.len() > 1023 {
         return Err(WireError::Malformed("CM area live rows exceed sector pool"));
     }
-    let mut sectors = Vec::with_capacity(sector_count);
-    for _ in 0..sector_count {
-        sectors.push(AreaSectorSnapshot {
-            index: input.get_u16()?,
-            contents_entities: input.get_u32()?,
-            linkcontents_entities: input.get_u32()?,
-            entities: input.get_u16()?,
-            dist: input.get_f32()?,
-            axis: input.get_u16()?,
-            parent: input.get_u16()?,
-            child: [input.get_u16()?, input.get_u16()?],
-        });
-    }
-    let entity_count = input.get_u16()? as usize;
-    if entity_count > 1024 {
+    let entities = decode_rows(input, base_entities, decode_area_entity_link)?;
+    if entities.len() > 1024 {
         return Err(WireError::Malformed("CM area links exceed entity pool"));
-    }
-    let mut entities = Vec::with_capacity(entity_count);
-    for _ in 0..entity_count {
-        entities.push(AreaEntityLinkSnapshot {
-            entity_num: input.get_u16()?,
-            world_sector: input.get_u16()?,
-            next_entity: input.get_u16()?,
-            linkcontents: input.get_u32()?,
-            linkmin: [input.get_f32()?, input.get_f32()?],
-            linkmax: [input.get_f32()?, input.get_f32()?],
-            contents: input.get_u32()?,
-            bounds_mid: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
-            bounds_half: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
-        });
     }
     let snapshot = AreaEntityWorldSnapshot {
         world_mid,
@@ -1145,6 +1192,35 @@ fn decode_area_entities(
         .validate()
         .map_err(|_| WireError::Malformed("invalid CM area-sector snapshot"))?;
     Ok(Some(snapshot))
+}
+
+fn decode_area_sector(input: &mut WireReader<'_>) -> Result<AreaSectorSnapshot, WireError> {
+    Ok(AreaSectorSnapshot {
+        index: input.get_u16()?,
+        contents_entities: input.get_u32()?,
+        linkcontents_entities: input.get_u32()?,
+        entities: input.get_u16()?,
+        dist: input.get_f32()?,
+        axis: input.get_u16()?,
+        parent: input.get_u16()?,
+        child: [input.get_u16()?, input.get_u16()?],
+    })
+}
+
+fn decode_area_entity_link(
+    input: &mut WireReader<'_>,
+) -> Result<AreaEntityLinkSnapshot, WireError> {
+    Ok(AreaEntityLinkSnapshot {
+        entity_num: input.get_u16()?,
+        world_sector: input.get_u16()?,
+        next_entity: input.get_u16()?,
+        linkcontents: input.get_u32()?,
+        linkmin: [input.get_f32()?, input.get_f32()?],
+        linkmax: [input.get_f32()?, input.get_f32()?],
+        contents: input.get_u32()?,
+        bounds_mid: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
+        bounds_half: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
+    })
 }
 
 fn encode_sound_alias_cs(out: &mut WireWriter, occupied: &[(u8, String)]) {
