@@ -802,6 +802,20 @@ fn flush_outputs(menus: &mut ScriptMenus, out: &mut MenuOutputs, local: sim::Cli
         diag::info!(Ui, "menu exec: {text}");
         out.exec.write(UiExecCommand { text });
     }
+    let private_host = out.dvars.get("ui_lobby_host") == Some("1")
+        && out.dvars.get("ui_lobby_public") != Some("1");
+    menus.responses.retain(|(menu, response)| {
+        let end_game = menu.eq_ignore_ascii_case("popup_endgame")
+            || menu.eq_ignore_ascii_case("popup_endgame_ranked");
+        if !end_game || !response.eq_ignore_ascii_case("endround") || private_host {
+            return true;
+        }
+        diag::info!(Ui, "menu exec: disconnect");
+        out.exec.write(UiExecCommand {
+            text: "disconnect".into(),
+        });
+        false
+    });
     let (Some(inbox), Some(ids)) = (out.inbox.as_mut(), out.ids.as_mut()) else {
         menus.responses.clear();
         return;

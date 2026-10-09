@@ -106,7 +106,7 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
             for item in &mut menu.items {
                 if item.name == "button_yes" {
                     item.handlers.action = vec![asset_game::MenuEvent::Script(
-                        "play mouse_click; close self; exec \"disconnect\";".into(),
+                        "play mouse_click; close self; scriptmenuresponse \"endround\";".into(),
                     )];
                 }
             }
