@@ -1475,7 +1475,7 @@ fn build_fx_verts_range(
             ctx.origin,
             size0,
             size1,
-            scale,
+            scale + ctx.cull_reach,
         ) {
             return None;
         }

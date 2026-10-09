@@ -3,9 +3,9 @@ use fx_iw4::{
     FX_SPARK_FOUNTAIN_INTEGRATE_BUDGET, FX_SPARK_FOUNTAIN_INTEGRATE_CELLS, msvcrt_rand,
     spark_fountain_accel_from_gravity, spark_fountain_cone_dir, spark_fountain_handle_for_slot,
     spark_fountain_integrate_cell, spark_fountain_integrate_cell_begin,
-    spark_fountain_isotropic_dir, spark_fountain_mark_ready, spark_fountain_slot_for_handle,
-    spark_fountain_spark_n_clamped, spark_fountain_speed, spark_fountain_spray_dir,
-    spark_fountain_update_keyframe_cursor,
+    spark_fountain_integrate_miss_cell, spark_fountain_isotropic_dir, spark_fountain_mark_ready,
+    spark_fountain_slot_for_handle, spark_fountain_spark_n_clamped, spark_fountain_speed,
+    spark_fountain_spray_dir, spark_fountain_update_keyframe_cursor,
 };
 
 use crate::system::FxSystemHost;
@@ -32,6 +32,8 @@ pub struct FxSparkFountainClusterSlot {
     pub loop_time: f32,
     pub boost_time: f32,
     pub boost_factor: f32,
+    pub origin: [f32; 3],
+    pub max_speed: f32,
     pub mesh_idx: [u16; FX_SPARK_FOUNTAIN_CLUSTER_MESH_MAX as usize],
 }
 
@@ -51,6 +53,8 @@ impl Default for FxSparkFountainClusterSlot {
             loop_time: 0.0,
             boost_time: 0.0,
             boost_factor: 0.0,
+            origin: [0.0; 3],
+            max_speed: 0.0,
             mesh_idx: [FX_SPARK_FOUNTAIN_HANDLE_NONE; FX_SPARK_FOUNTAIN_CLUSTER_MESH_MAX as usize],
         }
     }
@@ -215,15 +219,14 @@ pub(crate) fn spray_spark_fountain(
             let rx = msvcrt_rand(&mut hold);
             let dir = spark_fountain_spray_dir(cone_axis, [rx, ry, rz], vel_cone_frac);
             let speed = spark_fountain_speed(msvcrt_rand(&mut hold), vel_min, vel_max);
+            let (times, origins, vels) = spark_fountain_integrate_miss_cell(
+                origin,
+                [dir[0] * speed, dir[1] * speed, dir[2] * speed],
+            );
             host.spark_fountain_meshes[mesh].cells[cell as usize] = FxSparkFountainCell {
-                times: [0.0; 4],
-                origins: [origin, [0.0; 3], [0.0; 3], [0.0; 3]],
-                vels: [
-                    [dir[0] * speed, dir[1] * speed, dir[2] * speed],
-                    [0.0; 3],
-                    [0.0; 3],
-                    [0.0; 3],
-                ],
+                times,
+                origins,
+                vels,
             };
             cell = cell.saturating_add(1);
         }
@@ -243,7 +246,24 @@ pub(crate) fn spray_spark_fountain(
     host.spark_fountains[dense].loop_time = loop_time;
     host.spark_fountains[dense].boost_time = boost_time;
     host.spark_fountains[dense].boost_factor = boost_factor;
+    host.spark_fountains[dense].origin = origin;
+    host.spark_fountains[dense].max_speed = vel_min.abs().max(vel_max.abs());
     FountainSpray::Ready
+}
+
+pub(crate) fn spark_fountain_reach(
+    host: &FxSystemHost,
+    handle: u16,
+    age_msec: i32,
+) -> Option<([f32; 3], f32)> {
+    use fx_iw4::{spark_fountain_boost, spark_fountain_wrap_loop_time};
+    let dense = spark_fountain_slot_for_handle(handle)?;
+    let cluster = host.spark_fountains.get(dense).filter(|c| c.occupied)?;
+    let (warped, _) =
+        spark_fountain_boost(cluster.boost_time, cluster.boost_factor, age_msec as f32);
+    let t = spark_fountain_wrap_loop_time(warped, cluster.loop_time).max(0.0);
+    let path = cluster.max_speed * t + 0.5 * cluster.gravity.abs() * t * t;
+    Some((cluster.origin, path * cluster.bounce_frac.abs().max(1.0)))
 }
 
 pub(crate) fn emit_spark_fountain_custom_cells(

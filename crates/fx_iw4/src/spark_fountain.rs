@@ -1,4 +1,4 @@
-use crate::particle_cloud::{GfxPosTexVertex, particle_spark_cell_indices};
+use crate::particle_cloud::{GfxParticleCloud, GfxPosTexVertex, particle_spark_cell_indices};
 use crate::vec::vec3_normalize;
 
 pub const FX_SPARK_FOUNTAIN_CLUSTER_STRIDE: usize = 0x40;
@@ -576,6 +576,16 @@ pub fn spark_fountain_atlas_uv(col_bits: u8, row_bits: u8, cell: u32) -> [f32; 4
     let u0 = (cell % cols) as f32 * u_span;
     let v0 = ((cell / cols) % rows) as f32 * v_span;
     [u0, u_span, v0, v_span]
+}
+
+#[inline]
+pub fn spark_fountain_draw_cloud(cloud: GfxParticleCloud) -> GfxParticleCloud {
+    GfxParticleCloud {
+        quat: [0.0, 0.0, 0.0, 1.0],
+        pos: [0.0; 3],
+        placement_scale: 1.0,
+        ..cloud
+    }
 }
 
 pub const R_PARTICLE_CLOUD_CUSTOM_CAP: u32 = 0x40;

@@ -511,10 +511,11 @@ fn spawn_elem(
         match crate::spark_fountain::alloc_spark_fountain(host) {
             Some(fountain_handle) => {
                 host.elems[elem_slot].spark_cloud_handle = fountain_handle;
+                // Fountain cells are world space in every run mode.
                 match crate::spark_fountain::spray_spark_fountain(
                     host,
                     fountain_handle,
-                    origin,
+                    spawn_origin_world(elem_def, effect_origin, effect_axis, life_idx),
                     fx_iw4::get_elem_angles_axis(
                         elem_def.spawn_angles,
                         elem_def.angular_velocity,
