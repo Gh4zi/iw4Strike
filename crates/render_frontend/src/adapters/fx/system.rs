@@ -126,7 +126,7 @@ pub(crate) fn register_combat_fx_systems(app: &mut App) {
                 .in_set(frame::WorkerCmdSet::FxRemaining),
         )
         .add_systems(
-            crate::assemble::StaticSunAndFx,
+            crate::assemble::FxCommit,
             (
                 generate_fx_transaction.pipe(commit_fx_transaction),
                 super::super::motion_tracker::draw_motion_tracker,

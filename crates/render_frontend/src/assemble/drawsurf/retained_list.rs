@@ -323,6 +323,26 @@ pub(crate) fn retained_draw_order_tie(kind: &RetainedDrawKind) -> u32 {
     }
 }
 
+/// Sorts draw items by `(host_sort_key, retained_draw_order_tie)`. An item is large (a matrix and
+/// per-kind payload), so the keys are sorted beside each item's index and every item then moves
+/// once; sorting the items in place moved each one about log2(n) times. Equal keys keep their
+/// order.
+pub(crate) fn sort_retained_items(items: &mut Vec<RetainedDrawItem>) {
+    let mut order: Vec<((u32, u32, u32), u32, u32)> = items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            (
+                item.host_sort_key(),
+                retained_draw_order_tie(&item.kind),
+                u32::try_from(i).unwrap_or(u32::MAX),
+            )
+        })
+        .collect();
+    order.sort_unstable();
+    *items = order.iter().map(|&(_, _, i)| items[i as usize]).collect();
+}
+
 fn glass_depth_order(
     item: &RetainedDrawItem,
     eye: [f32; 3],
@@ -2424,8 +2444,7 @@ fn compose_static_lanes(list: &mut StaticDrawLane) {
     list.static_items.extend_from_slice(&list.world_items);
     list.static_items.extend_from_slice(&list.smodel_items);
     let sort_started = Instant::now();
-    list.static_items
-        .sort_unstable_by_key(|i| (i.host_sort_key(), retained_draw_order_tie(&i.kind)));
+    sort_retained_items(&mut list.static_items);
     list.census.world_run_n =
         materialize_world_runs(&mut list.static_items, &mut list.world_run_surfs);
     let mut colour = std::mem::take(&mut list.colour);
@@ -3115,8 +3134,7 @@ pub fn bake_sun_shadow_caster_plan(
             .into_iter()
             .map(|record| record.into_item(catalog)),
     );
-    plan.items
-        .sort_unstable_by_key(|item| (item.host_sort_key(), retained_draw_order_tie(&item.kind)));
+    sort_retained_items(&mut plan.items);
     plan
 }
 

@@ -5,11 +5,13 @@ mod match_reset;
 pub mod pack;
 
 #[derive(bevy::ecs::schedule::ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct StaticSunAndFx;
+pub(crate) struct FxCommit;
 
-fn prepare_static_sun_and_fx(world: &mut World) {
+fn commit_fx(world: &mut World) {
+    // The bench row keeps its `static_sun_fx` name; the static sun bake now runs in
+    // `DrawLaneRebuild`.
     let _prepare = perf::Span::HostStaticSunFxMs.enter();
-    world.run_schedule(StaticSunAndFx);
+    world.run_schedule(FxCommit);
 }
 
 #[derive(bevy::ecs::schedule::ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
@@ -25,13 +27,9 @@ impl Plugin for RenderAssemblePlugin {
     fn build(&self, app: &mut App) {
         match_reset::register_match_reset_systems(app);
         app.init_resource::<drawsurf::StaticSunCasters>()
-            .add_systems(StaticSunAndFx, drawsurf::bake_static_sun_shadow_casters)
-            .edit_schedule(StaticSunAndFx, |schedule| {
-                schedule.set_executor(bevy::ecs::schedule::MultiThreadedExecutor::new());
-            })
             .add_systems(
                 Update,
-                prepare_static_sun_and_fx
+                commit_fx
                     .in_set(frame::WorkerCmdSet::FxVerts)
                     .after(frame::WorkerCmdSet::FxRemaining)
                     .after(frame::WorkerCmdSet::SmodelCache)
@@ -75,9 +73,13 @@ impl Plugin for RenderAssemblePlugin {
                 .after(crate::prepare::scene::view_parms::stamp_prepared_scene_view)
                 .in_set(net::ClientSet::Present),
         );
+        // The static sun partitions bake beside the lanes: neither reads the other's output, and
+        // the bake's inputs (cull, static model cache and lighting, code sources) are all final
+        // by the time the lanes rebuild.
         app.add_systems(
             DrawLaneRebuild,
             (
+                crate::assemble::drawsurf::bake_static_sun_shadow_casters,
                 crate::assemble::drawsurf::rebuild_xmodel_draw_lane,
                 crate::assemble::drawsurf::rebuild_fx_draw_lane,
                 crate::assemble::drawsurf::rebuild_static_draw_lane,
@@ -112,7 +114,6 @@ impl Plugin for RenderAssemblePlugin {
                     .after(frame::WorkerCmdSet::FxVerts)
                     .after(crate::assemble::drawsurf::update_command_context_code_sources),
                 crate::assemble::drawsurf::bake_sun_shadow_casters
-                    .after(prepare_static_sun_and_fx)
                     .after(crate::assemble::drawsurf::open_frame_products)
                     .after(rebuild_draw_lanes)
                     .after(frame::WorkerCmdSet::SmodelCache)
