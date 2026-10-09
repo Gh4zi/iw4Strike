@@ -8,8 +8,9 @@ with Counter-Strike: CS movement, CS weapons and damage, the knife, grenades, ar
 Counter-Strike: Source HUD.
 
 Weapon models, sounds and HUD fonts are read at runtime from **your own Counter-Strike:
-Source install**. Gameplay numbers (damage, spread, recoil, speeds) follow CS 1.6. No game
-files are included in this repository.
+Source install** (or Condition Zero or CS 1.6). Shooting follows CS:GO by default (spray
+patterns, inaccuracy and recoil), damage and prices follow CS 1.6. No game files are included
+in this repository.
 
 > **Work in progress (alpha).** Windows and Linux builds; **the Linux build hasn't been tested
 > yet**. Bots don't carry, plant or defuse the bomb yet. See [Roadmap](#roadmap).
@@ -46,23 +47,36 @@ welcome, even small fixes.**
   measurements and technical reference of
   [CSMovementRust](https://github.com/EduardoCalvoUribe/CSMovementRust)
 - Other presets: CS:S-style, surf, Momentum Mod bhop and CS 1.6 movement (`mv_mode`)
-- CS ladders: strafe onto a ladder to climb it, and your gun stays up
+- CS:GO ladders: grab one by moving into it, climb at CS:GO's speed, crouch or walk to climb
+  slowly and silently, jump to push off, walk backwards off the top to catch it; your gun stays
+  up
 - No sprint, no prone
 
 **Weapons**
-- 24 guns with Counter-Strike: Source models and sounds, and CS 1.6 damage, spread and recoil
-  (one-tap AK headshots): pistols, shotguns, SMGs, rifles, snipers and the M249
+- 24 guns with Counter-Strike: Source models and sounds (or Condition Zero's or CS 1.6's) and
+  CS 1.6 damage (one-tap AK headshots): pistols, shotguns, SMGs, rifles, snipers and the M249
+- CS:GO shooting by default (`shooting_mode csgo`): each gun's CS:GO spray pattern, aim kick
+  and view shake, inaccuracy that builds when you fire, move or jump and recovers on the gun's
+  own timing, accurate first shots. Each gun uses its closest CS:GO counterpart (M4A1 as the
+  M4A1-S, USP as the USP-S, TMP as the MP9, P228 as the P250, M3 as the Nova, Scout as the
+  SSG 08, SG 550 as the SCAR-20). `shooting_mode cs16` switches back to CS 1.6's recoil; the
+  host's setting applies to its whole server
 - M4A1 and USP silencers (right click), Glock-18 and FAMAS burst fire (right click)
 - Scopes: instant zoom with the CS scope overlay on the AWP, Scout, G3/SG-1 and SG 550; the
   AUG and SG 552 zoom to 55 and keep the gun in view
 - Shotguns load one shell at a time
 - Knife: slash 15, stab 65, backstab 195
-- HE grenade, flashbang and smoke grenade with CS throw physics
-  - Flashbangs follow CS rules: if you look away, you don't get flashed
-  - Smoke lasts about 18 seconds, like CS:S
+- HE grenade, flashbang and smoke grenade, thrown and bouncing like CS:GO
+  - Left click throws, right click lobs, both buttons throw in between; jump-throws carry your
+    jump
+  - Flashbangs follow CS:GO: distance, where you look and partial flashes around corners, with
+    CS:GO's white-out
+  - Smoke pops once the grenade stops moving and lasts about 18 seconds
 - Kevlar and helmet
-- Drop your gun with **G**, walk over a gun to pick it up, or press **E** to swap
-- Other players (and you, in third person) hold the CS:S weapon models
+- Drop your gun with **G** (tossed ahead like CS:GO), walk over a gun to pick it up when that
+  slot is empty, or look at it and press **E** to swap
+- Other players (and you, in third person) hold the CS weapon models; guns on the ground are
+  the CS models too
 - Weapon switching takes CS 1.6's deploy time: fire 0.75 s after switching (AWP 1.45 s, Scout
   1.25 s), with no put-away delay
 
@@ -72,6 +86,14 @@ welcome, even small fixes.**
 - Counter-Strike scoreboard on **TAB**: Counter-Terrorists and Terrorists with score, deaths
   and latency, in the CS:S look (or the CS 1.6 look when you play with CS 1.6)
 - MW2 minimap kept as the radar
+- CS:GO crosshair settings (style, size, gap, thickness, colour, outline, dot, T style) under
+  **Options > Multiplayer Options**, and **Import CS:GO / CS2 Crosshair Code** there (or
+  `crosshair_code <code>`)
+- Sensitivity 1:1 with CS: the same number turns exactly as in CS, converted for other fields
+  of view, with `zoom_sensitivity_ratio` and a **Raw Input** option
+- 4:3 resolutions (1152x864, 1280x960, 1440x1080) and exclusive fullscreen for stretched 4:3
+- **Max Frames Ahead** (Advanced Video): 1 for the lowest input lag, a low-latency alternative
+  to NVIDIA Reflex on any GPU; 2 for more FPS
 - MW2 perks, killstreaks, XP, challenges, medals, hitmarkers, class menu and exploding cars
   and barrels are turned off
 - Create Game offers Free-for-all, Team Deathmatch and Search and Destroy (Defusal); MW2's
@@ -95,7 +117,7 @@ welcome, even small fixes.**
   still), **G** drops it for a teammate. It beeps like CS and blows up for 500 damage.
   Counter-Terrorists hold **E** on it to defuse: 10 s, or 5 s with a defuse kit ($200 in the
   equipment menu, `buy defuser`), with CS:S's progress bar
-- Guns are picked up by walking over them (E only defuses)
+- At the bomb, **E** defuses; anywhere else it picks up the gun you look at
 - The round timer ticks in its last 10 seconds; set how loud under **Options > Audio > Round
   Timer Warning** (`snd_timer_warning_volume`)
 - 3 s plant, 10 s defuse, 40 s bomb; the round ends 7 s after it is decided so you can still
@@ -122,8 +144,9 @@ welcome, even small fixes.**
 | **Build packages** (Linux) | `sudo apt install g++ pkg-config libx11-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev` |
 
 If Counter-Strike: Source isn't installed, the models and sounds fall back to a
-Counter-Strike 1.6 install, which you select yourself in the game folders window (see below).
-Playing with CS 1.6, the HUD is CS 1.6's, read from that install.
+Counter-Strike: Condition Zero or Counter-Strike 1.6 install, which you select yourself in the
+game folders window (see below). Playing with CZ or CS 1.6, the HUD is CS 1.6's, read from that
+install.
 
 ---
 
@@ -147,28 +170,28 @@ shows what was found:
 |---|---|
 | **Call of Duty: Modern Warfare 2** (required) | The folder with the `zone` folder inside |
 | **Counter-Strike: Source** (recommended) | Weapon models, sounds and HUD |
+| **Counter-Strike: Condition Zero** (optional) | Its own guns and sounds; CS 1.6 fills in the rest |
 | **Counter-Strike 1.6** (optional) | Your `Half-Life` folder. Never searched for |
 
 Press **Browse...** to select a folder yourself (on Linux this needs `zenity` or `kdialog`), then
 **Play**. Each Counter-Strike game has a
-**Use** box: untick Counter-Strike: Source to play with CS 1.6 even when CS:S is installed
-(with both ticked, CS:S is used). **Clear** forgets a folder you picked. The folders are saved in
-`iw4l-artifacts\settings.cfg`. The game also shows this window whenever it can't find MW2.
-To open it again, use **Options > Game Folders**, the `game_paths` console command, or run
-`iw4strike.exe paths`. `map ...` launches skip the window and use the saved folders.
+**Use** box: untick Counter-Strike: Source to play with Condition Zero or CS 1.6 even when CS:S is
+installed (CS:S comes first, then CZ, then CS 1.6). **Clear** forgets a folder you picked. The
+folders are saved in `iw4l-artifacts\settings.cfg`. The game also shows this window whenever it
+can't find MW2. To open it again, use **Manage Game Paths** on the main menu (under Options), the
+`game_paths` console command, or run `iw4strike.exe paths`. `map ...` launches skip the window and
+use the saved folders.
 
-**To change games** (for example to play with CS 1.6 instead of CS:S), use **Options > Game
-Folders**. **Warning: this quits the game** (leave your match first) and opens the game folders
-window; press **Play** there to start again with the new choice.
-
-![Options > Game Folders](docs/screenshots/options-game-folders.webp)
+**To change games** (for example to play with CS 1.6 instead of CS:S), use **Manage Game Paths**
+on the main menu. **It restarts the game**: it opens the game folders window; press **Play** there
+to start again with the new choice.
 
 iw4Strike only reads from these folders. It never changes or copies their files.
 
 **Developers:** a `.env` file (copy `.env.example`) still works and overrides the window's
 folders (a game unticked in the window stays off):
-`IW4L_GAMES` (the folder that holds your MW2 folder), `IW4L_CSS` (the CS:S `cstrike` folder)
-and `IW4L_CSTRIKE` (the CS 1.6 `cstrike` folder). Put quotes around paths: a path with spaces
+`IW4L_GAMES` (the folder that holds your MW2 folder), `IW4L_CSS` (the CS:S `cstrike` folder),
+`IW4L_CZERO` (the Condition Zero `czero` folder) and `IW4L_CSTRIKE` (the CS 1.6 `cstrike` folder). Put quotes around paths: a path with spaces
 or brackets and no quotes stops `.env` from loading the lines after it.
 
 ### 3. Build and play
@@ -203,11 +226,11 @@ GitHub builds the game for you with the
 | **Space** | Jump |
 | **Ctrl** | Crouch |
 | **Shift** | Walk |
-| **Mouse 1** | Fire / knife slash |
-| **Mouse 2** | AWP zoom / knife stab |
+| **Mouse 1** | Fire / knife slash / throw a grenade |
+| **Mouse 2** | Scope / silencer / burst / knife stab / lob a grenade (both buttons: in between) |
 | **R** | Reload |
-| **E** | Defuse the bomb (hold) |
-| **G** | Drop gun |
+| **E** | Defuse the bomb (hold) / pick up the gun you look at |
+| **G** | Drop gun (or the C4, for a teammate) |
 | **1 / 2 / 3 / 4 / 5** | Primary / pistol / knife / grenades (press 4 again to cycle grenades) / C4 |
 | **Mouse wheel** | Next / previous weapon |
 | **B** | Buy menu (number keys or the mouse pick; **0** or **Esc** closes) |
@@ -309,9 +332,18 @@ Your movement mode is saved, so you only set it once.
 
 | Command | What it does |
 |---|---|
+| `shooting_mode csgo` / `cs16` | CS:GO shooting (default) or CS 1.6's recoil; saved, and the host's setting applies to its server |
 | `viewmodel_fov <54-90>` | Gun position: bigger moves the gun further away (default `68`) |
+| `cl_righthand 1` / `0` | Gun in the right hand (default) or the left |
 | `cl_wpn_sway 0` / `1` | Turn gun bob and sway off or on |
 | `cl_dynamiccrosshair 0` / `1` | Static crosshair, or one that opens when you move and shoot |
+| `cl_crosshairsize`, `cl_crosshairgap`, `cl_crosshairthickness`, `cl_crosshaircolor`, ... | CS:GO's crosshair settings (also on **Options > Multiplayer Options**) |
+| `crosshair_code <code>` | Import a CS:GO or CS2 crosshair code |
+| `sensitivity <value>` | Mouse sensitivity, the same as in CS (default `2.5`) |
+| `zoom_sensitivity_ratio <value>` | Scoped sensitivity (`1` like CS:GO and CS2) |
+| `sensitivity_fov_match 1` / `0` | Keep aim feel when you change the field of view (default on) |
+| `m_rawinput 1` / `0` | Raw mouse input (default) or Windows' pointer speed and acceleration |
+| `drop` / `buymenu` | Drop your gun / open the buy menu (as **G** / **B**) |
 | `thirdperson 1` / `0` | Third-person view on or off |
 
 ### Maps and bots
@@ -401,50 +433,40 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [x] CS 1.6 HUD for players with CS 1.6: health, armor, timer, money, ammo, C4 and kit icons
   and the kill feed, drawn with CS 1.6's own sprites
 - [x] Linux build (not tested yet)
+- [x] CS:GO shooting (spray patterns, inaccuracy, recoil) by default, CS 1.6's with
+  `shooting_mode cs16`
+- [x] Grenades thrown, bounced and flashing like CS:GO; smoke that pops once it stops
+- [x] Dropping guns like CS:GO, picking them up with E, giving the bomb to a teammate
+- [x] CS:GO ladders, with silent climbing
+- [x] Counter-Strike: Condition Zero as a supported install, and CS models for guns on the
+  ground and in third person (CS:S, CZ or CS 1.6)
+- [x] 1:1 CS sensitivity, `zoom_sensitivity_ratio` and `m_rawinput`
+- [x] CS:GO crosshair settings and CS:GO / CS2 crosshair codes
+- [x] 4:3 resolutions with exclusive fullscreen for stretched 4:3
+- [x] Better FPS: the server's game logic on its own thread, smaller network snapshots
 
 **Planned**
 - [ ] Bots that play Defusal: carry, plant and defuse the bomb themselves
-- [ ] 1:1 CS sensitivity: your `sensitivity` and `zoom_sensitivity_ratio` from CS:GO, CS2 or
-  CS:S turn exactly the same here, scoped and unscoped
-- [ ] `m_rawinput 0/1`: the game already reads raw mouse input (no Windows acceleration); this
-  adds the switch
-- [ ] CS models for guns lying on the ground, and CS 1.6 models in third person for players
-  without CS:S
 - [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
   player moves the same way
 - [ ] Valve-style menus (CS:S look, read from your install), step by step: the panel system,
   main and pause menu, loading screen, scoreboard, a "Start Server" dialog with gamemode and
   map dropdowns (where the server-side settings like `mv_mode` and `sv_tickrate` live), then
   options and the multiplayer screens
-- [ ] Counter-Strike: Condition Zero as a supported install (GoldSrc models and sounds, read
-  from your own copy like CS 1.6)
 - [ ] A per-player mix-and-match in the game options for every installed game (CS:S, CS 1.6,
   CS:CZ): pick weapon models, HUD, player hands and sounds separately, for example CZ weapons
   with the CS 1.6 HUD and CS:S hands
 - [ ] Shooting through walls (CS penetration)
-- [ ] Better FPS: the server's game logic on its own thread
-- [ ] CS crosshair settings in the game options, like CS:GO's: style, size, gap, thickness,
-  colour, outline and dot
-- [ ] 4:3 resolutions (stretched or with black bars) with the HUD fitted to them
+- [ ] More FPS work
 - [ ] CoD4 maps (Crossfire, Citystreets)
 
 **Known issues**
-- Guns lying on the ground are still MW2 models. With only CS 1.6 installed, other players also
-  still hold the MW2 gun in third person.
 - `mv_mode` isn't synced to other players yet, so everyone should use the same mode.
-- Smoke grenades go off twice: the explosion is fired a second time about 6.5 seconds later so
-  the cloud lasts about 18 seconds, like CS:S. This will be reworked to match the CS:S smoke
-  timer properly.
-- Flashbangs and smoke grenades don't bounce like CS grenades yet. Their bouncing will be
-  reworked.
-- Terminal: broken glass can turn red when you look at it from certain angles. This may be
-  one of the reasons for low FPS.
-- Favela: rendering issues and low FPS (cause not found yet).
+- Mice set to 4000 Hz or higher can cause short freezes. Use 1000 Hz for now.
+- Favela runs at a lower FPS than the other maps.
 - The map ambient sound plays about 9 dB quieter than MW2's by default (MW2's looping emitters
   stack up to only a few dB under a rifle); tune it with `snd_ambient_volume`. Very loud
   gunfire can still clip.
-- Walking over a gun picks it up only when its slot is empty, as in CS. To take a gun in a
-  slot you already use, drop yours with **G** first.
 - The Linux build is new: GitHub builds it, but it hasn't been played on a Linux PC yet.
   Please report what doesn't work.
 
