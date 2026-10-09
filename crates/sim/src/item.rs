@@ -55,6 +55,7 @@ pub struct DroppedItem {
     pub clip_l: i32,
     pub stock: i32,
     pub scavenger: bool,
+    pub drop_seq: u32,
 }
 
 pub fn random_unit(seed: &mut u32) -> f32 {
@@ -260,16 +261,26 @@ fn push_dropped_item(
     falling: bool,
     scavenger: bool,
 ) -> i32 {
+    let live: Vec<(i32, u32)> = world
+        .dropped_item_numbers_sorted()
+        .into_iter()
+        .filter_map(|number| {
+            world
+                .dropped_item_by_number(number)
+                .map(|item| (number, item.drop_seq))
+        })
+        .collect();
+    let drop_seq = live
+        .iter()
+        .map(|&(_, seq)| seq)
+        .max()
+        .map_or(0, |seq| seq.wrapping_add(1));
     if world.dropped_item_count() >= G_MAX_DROPPED_WEAPONS {
-        let evicted_number = world
-            .dropped_item_numbers_sorted()
-            .into_iter()
-            .next()
-            .expect("cap eviction requires an occupied dropped item");
-        let evicted = world
-            .remove_dropped_item_by_number(evicted_number)
+        let evicted_number =
+            oldest_dropped_number(&live).expect("cap eviction requires an occupied dropped item");
+        world
+            .despawn_dropped_item(evicted_number)
             .expect("cap eviction number vanished");
-        world.free_dynamic_entity_number(evicted.state.number);
     }
     let entnum = match world.allocate_dynamic_entity(crate::gentity::EntityRunKind::Item) {
         Ok(entity) => entity.number(),
@@ -287,8 +298,15 @@ fn push_dropped_item(
         clip_l,
         stock,
         scavenger,
+        drop_seq,
     });
     entnum
+}
+
+fn oldest_dropped_number(live: &[(i32, u32)]) -> Option<i32> {
+    live.iter()
+        .min_by_key(|&&(number, seq)| (seq, number))
+        .map(|&(number, _)| number)
 }
 
 fn launch_dropped_from_ps(
