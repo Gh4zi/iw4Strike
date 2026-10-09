@@ -264,6 +264,19 @@ const PATCHES: &[Patch] = &[
         "\tif ( level.teamBased )\n\t{\n\t\tlivesCount",
         "defusal: a team wiped out in the first 15 s ends the round at once",
     ),
+    // Changing team kills a living player (`self suicide()`), then moves them (`addToTeam`). The
+    // engine settles a scripted death after the script that caused it, so `Callback_PlayerKilled`
+    // ran on the new team: the old team kept a living player that wasn't there (a team switched
+    // empty never lost the round) and the new one lost one (a 1v1 switch handed the round to the
+    // empty side). Waiting a script frame lets the death settle on the old team first, as MW2's
+    // `suicide` settles it at once (`waittillframeend` resumes before the engine settles it).
+    Patch {
+        module: "maps/mp/gametypes/_menus",
+        find: "self suicide();",
+        replace: "self suicide(); wait ( 0.05 );",
+        times: 4,
+        why: "team change: the switching player dies on the team they leave",
+    },
     // A decided round is MW2's "postgame", where nobody takes damage and a death skips the kill
     // feed and score. CS fights on until the next round (exit frags); only the match's end
     // stops it.

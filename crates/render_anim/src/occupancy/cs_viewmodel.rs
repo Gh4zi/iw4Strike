@@ -479,7 +479,7 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
         attach: label("add_silencer"),
         detach: label("detach_silencer"),
     });
-    let roles = Roles {
+    let mut roles = Roles {
         slashes,
         stab,
         stab_miss,
@@ -507,6 +507,14 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
             .map(|(i, _)| i)
             .collect(),
     };
+    // The Glock-18 fires `shoot3` a shot at a time and `shoot` in burst mode
+    // (`EV_FireGlock18`); `shoot2` is unused.
+    if studio.name.to_ascii_lowercase().contains("glock18")
+        && let (Some(single), Some(burst)) = (label("shoot3"), label("shoot"))
+    {
+        roles.shoot = vec![single];
+        roles.shoot_alt = vec![burst];
+    }
     LoadedModel {
         format: Format::GoldSrc,
         gpu: Arc::new(CsViewmodelModel {

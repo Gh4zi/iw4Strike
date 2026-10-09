@@ -41,6 +41,9 @@ pub const SURFACE_TYPE_NAMES: [&str; 31] = [
 ];
 
 pub const LADDER_SURFACE_TYPE: u32 = 13;
+/// The footstep surface a ladder step carries under CS rules: one no map uses (MW2's are 0-30),
+/// so it plays CS's ladder step while walking on metal (MW2 climbs on metal, 13) stays metal.
+pub const CS_LADDER_STEP_SURFACE: u32 = 31;
 pub const LADDER_SURFACE_FLAGS: u32 = LADDER_SURFACE_TYPE << 20;
 
 #[inline]
@@ -389,6 +392,11 @@ pub fn ladder_footsteps(ps: &mut PlayerState, msec: i32, server_time: i32) -> bo
     if ps.ground_entity_num != ENTITYNUM_NONE || (ps.pm_flags & pm_flags::LADDER) == 0 {
         return false;
     }
-    add_predictable_event(ps, EV_FOOTSTEP_RUN, LADDER_SURFACE_TYPE as i32);
+    let surface = if crate::rules::CS_RULES {
+        CS_LADDER_STEP_SURFACE
+    } else {
+        LADDER_SURFACE_TYPE
+    };
+    add_predictable_event(ps, EV_FOOTSTEP_RUN, surface as i32);
     true
 }

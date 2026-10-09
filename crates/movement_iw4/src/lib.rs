@@ -53,10 +53,10 @@ pub use dmgtimer::{
 pub use drop_timers::drop_timers;
 pub use events::{SequencedPlayerEvent, add_event, add_predictable_event, consume_player_events};
 pub use footstep::{
-    LADDER_SURFACE_FLAGS, LADDER_SURFACE_TYPE, SURFACE_TYPE_NAMES, bob_cycle_wrapped,
-    footstep_event, footstep_event_type, footsteps_anim_move_type, footsteps_bob_cycle,
-    get_bob_max_speed, ladder_footsteps, should_make_footsteps, surface_type_index,
-    surface_type_name, surface_type_to_name,
+    CS_LADDER_STEP_SURFACE, LADDER_SURFACE_FLAGS, LADDER_SURFACE_TYPE, SURFACE_TYPE_NAMES,
+    bob_cycle_wrapped, footstep_event, footstep_event_type, footsteps_anim_move_type,
+    footsteps_bob_cycle, get_bob_max_speed, ladder_footsteps, should_make_footsteps,
+    surface_type_index, surface_type_name, surface_type_to_name,
 };
 pub use friction::friction;
 pub use ground::complete_ground_trace;

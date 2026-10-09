@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-use movement_iw4::{LADDER_SURFACE_TYPE, SURFACE_TYPE_NAMES, surface_type_index};
+use movement_iw4::{CS_LADDER_STEP_SURFACE, SURFACE_TYPE_NAMES, surface_type_index};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepGait {
@@ -33,7 +33,8 @@ struct SurfacePick {
 const SURF_N: usize = SURFACE_TYPE_NAMES.len();
 
 struct SurfaceBank {
-    footstep: [[[[SurfacePick; SURF_N]; 2]; 2]; 4],
+    /// One per surface, and a last one for a CS ladder step ([`CS_LADDER_STEP_SURFACE`]).
+    footstep: [[[[SurfacePick; SURF_N + 1]; 2]; 2]; 4],
     land: [[[SurfacePick; SURF_N]; 2]; 2],
     by_alias: HashMap<&'static str, &'static [&'static str]>,
     quiet: HashMap<&'static str, &'static str>,
@@ -133,7 +134,7 @@ fn build_bank() -> SurfaceBank {
         &mut world,
         &mut by_alias,
     );
-    let mut footstep = [[[[dummy; SURF_N]; 2]; 2]; 4];
+    let mut footstep = [[[[dummy; SURF_N + 1]; 2]; 2]; 4];
     let mut land = [[[dummy; SURF_N]; 2]; 2];
     for (gi, gait) in StepGait::ALL.into_iter().enumerate() {
         for local in [false, true] {
@@ -148,16 +149,6 @@ fn build_bank() -> SurfaceBank {
                         alias = build_quiet_owned(&alias).unwrap_or(alias);
                         fallback = build_quiet_owned(&fallback).unwrap_or(fallback);
                     }
-                    // Counter-Strike's ladder steps, MW2's when no CS install has them.
-                    if movement_iw4::rules::CS_RULES && si == LADDER_SURFACE_TYPE as usize {
-                        fallback = alias;
-                        alias = if local {
-                            asset_audio::CS_LADDER_STEP_PLR
-                        } else {
-                            asset_audio::CS_LADDER_STEP
-                        }
-                        .to_owned();
-                    }
                     footstep[gi][li][qi][si] = intern_pick(
                         alias,
                         fallback,
@@ -167,6 +158,21 @@ fn build_bank() -> SurfaceBank {
                         &mut by_alias,
                     );
                 }
+                // A CS ladder step: Counter-Strike's, else MW2's (it climbs on metal).
+                let metal = footstep[gi][li][qi][movement_iw4::LADDER_SURFACE_TYPE as usize];
+                let ladder = if local {
+                    asset_audio::CS_LADDER_STEP_PLR
+                } else {
+                    asset_audio::CS_LADDER_STEP
+                };
+                footstep[gi][li][qi][SURF_N] = intern_pick(
+                    ladder.to_owned(),
+                    metal.alias.to_owned(),
+                    &mut names,
+                    &mut quiet,
+                    &mut world,
+                    &mut by_alias,
+                );
             }
         }
     }
@@ -236,8 +242,12 @@ fn footstep_pick(
     local_player: bool,
     quieter: bool,
 ) -> SurfacePick {
-    BANK.footstep[gait.index()][usize::from(local_player)][usize::from(quieter)]
-        [surf_slot(surface_flags)]
+    let slot = if surface_type_index(surface_flags) == CS_LADDER_STEP_SURFACE as usize {
+        SURF_N
+    } else {
+        surf_slot(surface_flags)
+    };
+    BANK.footstep[gait.index()][usize::from(local_player)][usize::from(quieter)][slot]
 }
 
 fn land_pick(surface_flags: u32, local_player: bool, quieter: bool) -> SurfacePick {
@@ -281,7 +291,7 @@ pub fn surface_alias_candidates(alias: &str, _fallback: &str) -> &'static [&'sta
 
 /// Counter-Strike climbs ladders without MW2's gear rattle under each step.
 pub(crate) fn cs_quiet_gear(surface_flags: u32) -> bool {
-    movement_iw4::rules::CS_RULES && surf_slot(surface_flags) == LADDER_SURFACE_TYPE as usize
+    surface_type_index(surface_flags) == CS_LADDER_STEP_SURFACE as usize
 }
 
 pub fn gear_rattle_alias(gait: StepGait, local_player: bool) -> &'static str {
@@ -359,4 +369,28 @@ pub(crate) fn namespace_alias(alias: &str) -> (asset_core::AssetNamespace, &str)
         .split_once(':')
         .and_then(|(ns, name)| asset_core::AssetNamespace::parse(ns).map(|ns| (ns, name)))
         .unwrap_or((asset_core::AssetNamespace::Iw4, alias))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cs_ladder_steps_leave_metal_alone() {
+        let metal = movement_iw4::LADDER_SURFACE_TYPE << 20;
+        let ladder = CS_LADDER_STEP_SURFACE << 20;
+        assert_eq!(
+            footstep_aliases(StepGait::Run, metal, false, false).0,
+            "step_run_metal"
+        );
+        assert_eq!(
+            footstep_aliases(StepGait::Run, ladder, false, false),
+            (asset_audio::CS_LADDER_STEP, "step_run_metal")
+        );
+        assert_eq!(
+            footstep_aliases(StepGait::Run, ladder, true, false),
+            (asset_audio::CS_LADDER_STEP_PLR, "step_run_plr_metal")
+        );
+        assert!(cs_quiet_gear(ladder) && !cs_quiet_gear(metal));
+    }
 }

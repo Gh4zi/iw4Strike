@@ -612,7 +612,8 @@ pub const CS_WEAPONS: [CsWeapon; 24] = [
         name: "glock",
         mw2_name: "glock_mp",
         view_model: "v_glock18",
-        fire_sounds: &["glock18-1", "glock18-2"],
+        // CS plays glock18-2 for a single shot and glock18-1 for a burst (`EV_FireGlock18`).
+        fire_sounds: &["glock18-2"],
         css_view_model: "v_pist_glock18",
         css_fire_sound: "Weapon_Glock.Single",
         price: 400,
@@ -663,7 +664,7 @@ pub const CS_WEAPONS: [CsWeapon; 24] = [
             },
             follow_spread: Some(0.05),
             follow_range_modifier: Some(0.9),
-            fire_sounds: &["glock18-1", "glock18-2"],
+            fire_sounds: &["glock18-1"],
             css_fire_sound: "Weapon_Glock.Single",
         }),
         ..BASE

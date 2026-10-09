@@ -236,6 +236,9 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         for number in frame.dropped_item_numbers_sorted() {
             frame.remove_dropped_item_by_number(number);
         }
+        // The round's bodies go with its dropped guns, as in CS (their animation trees follow
+        // at the next corpse step).
+        *frame.corpses_mut() = crate::PlayerCorpsePool::default();
         crate::t5_destructible::restart(&mut frame);
         frame.restart_level_phase();
         for id in frame.client_ids_sorted() {
