@@ -233,6 +233,8 @@ pub struct ReturnedToMenu {
     pub swap_id: u64,
 
     pub had_world: bool,
+
+    pub reason: Option<TeardownReason>,
 }
 
 #[derive(Message, Clone, Debug, PartialEq, Eq)]

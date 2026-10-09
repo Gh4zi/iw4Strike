@@ -8,6 +8,7 @@ use crate::{CommandSpec, ConsoleCommand, ConsoleRegistry};
 
 const PAGE_SIZE: usize = 10;
 const PACK_SLOTS: usize = 16;
+const LOBBY_REOPEN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Default)]
 pub(crate) struct FrontendState {
@@ -23,6 +24,7 @@ pub(crate) struct FrontendState {
     password_joining: bool,
     lobby_password: String,
     rules_seeded: bool,
+    reopen_lobby_until: Option<std::time::Instant>,
 }
 
 #[derive(SystemParam)]
@@ -114,15 +116,30 @@ pub(crate) fn route(
 ) {
     let mut returned_from_world = false;
     let mut returned_in_menu = false;
+    let mut match_ended = true;
     for fact in returned.read() {
         returned_from_world |= fact.had_world;
         returned_in_menu |= !fact.had_world;
+        if fact.had_world {
+            match_ended &= fact.reason == Some(frame::TeardownReason::MatchEnded);
+        }
     }
     if returned_from_world {
         commands.remove_resource::<frame::HostMatchRules>();
         commands.remove_resource::<sim::HostGameModeSelection>();
-        *party = UiPartyState::default();
-        state.public = false;
+        if match_ended
+            && party.in_lobby
+            && party.is_host
+            && !state.public
+            && services.menus.is_some()
+        {
+            state.reopen_lobby_until = Some(std::time::Instant::now() + LOBBY_REOPEN_WAIT);
+            dvars.set("ui_frontend_status", "");
+        } else {
+            state.reopen_lobby_until = None;
+            *party = UiPartyState::default();
+            state.public = false;
+        }
     } else if returned_in_menu && state.public {
         let reason = match services.bridge.as_ref().map(|bridge| bridge.state()) {
             Some(net::MasterBridgeState::Failed { error, .. }) => format!("{error:?}"),
@@ -137,6 +154,30 @@ pub(crate) fn route(
             menus.write(UiMenuRequest::Close("game_lobby".into()));
         }
         dvars.set("ui_frontend_status", reason);
+    }
+    // The return resets the menu stack: the lobby opened before the main menu would be dropped.
+    if let Some(deadline) = state.reopen_lobby_until {
+        let open = services
+            .menus
+            .as_ref()
+            .map(|script_menus| script_menus.open_names());
+        let is_open = |name: &str| {
+            open.iter()
+                .flatten()
+                .any(|menu| menu.eq_ignore_ascii_case(name))
+        };
+        if !party.in_lobby {
+            state.reopen_lobby_until = None;
+        } else if is_open("iw4l_main") {
+            if !is_open("game_lobby") {
+                menus.write(UiMenuRequest::Open("game_lobby".into()));
+                diag::info!(Ui, "frontend: private lobby reopened");
+            }
+            state.reopen_lobby_until = None;
+        } else if std::time::Instant::now() >= deadline {
+            state.reopen_lobby_until = None;
+            *party = UiPartyState::default();
+        }
     }
     if dvars.get("ui_mapname").is_none()
         && let Some(map) = maps.maps().find(|map| map.starts_with("iw4:"))
@@ -180,6 +221,7 @@ pub(crate) fn route(
                 }
                 "ui_create_lobby" => {
                     selected_game(&dvars, &maps)?;
+                    state.reopen_lobby_until = None;
                     state.lobby_password.clear();
                     party.active = true;
                     party.in_lobby = true;
@@ -223,6 +265,7 @@ pub(crate) fn route(
                     if !party.in_lobby || !party.is_host {
                         return Err("Only the lobby host can start a match".into());
                     }
+                    state.reopen_lobby_until = None;
                     let (map, mode) = selected_game(&dvars, &maps)?;
                     commands.insert_resource(host_rules(&dvars));
                     if state.public {
