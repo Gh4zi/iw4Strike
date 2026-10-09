@@ -117,12 +117,14 @@ pub(crate) fn route(
     let mut returned_from_world = false;
     let mut returned_in_menu = false;
     let mut match_ended = true;
+    let mut left_session = false;
     for fact in returned.read() {
         returned_from_world |= fact.had_world;
         returned_in_menu |= !fact.had_world;
         if fact.had_world {
             match_ended &= fact.reason == Some(frame::TeardownReason::MatchEnded);
         }
+        left_session |= fact.reason == Some(frame::TeardownReason::Disconnect);
     }
     if returned_from_world {
         commands.remove_resource::<frame::HostMatchRules>();
@@ -154,6 +156,12 @@ pub(crate) fn route(
             menus.write(UiMenuRequest::Close("game_lobby".into()));
         }
         dvars.set("ui_frontend_status", reason);
+    } else if returned_in_menu && party.in_lobby && party.is_host {
+        if !left_session && services.menus.is_some() {
+            state.reopen_lobby_until = Some(std::time::Instant::now() + LOBBY_REOPEN_WAIT);
+        } else {
+            *party = UiPartyState::default();
+        }
     }
     // The return resets the menu stack: the lobby opened before the main menu would be dropped.
     if let Some(deadline) = state.reopen_lobby_until {
