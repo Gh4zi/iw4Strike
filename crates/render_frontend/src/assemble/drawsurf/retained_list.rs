@@ -2641,14 +2641,6 @@ pub struct SunShadowCasterPlan {
     pub smodel_excluded: u32,
     pub smodel_missing_key: u32,
 
-    pub cutout_plus23: u32,
-
-    pub cutout_missing_key: u32,
-
-    pub cutout_empty_ib: u32,
-
-    pub cutout_custom0: u32,
-
     pub bsp_ids: Vec<u16>,
     pub smodel_ids: Vec<u16>,
     pub bsp_ids_far: Vec<u16>,
@@ -2751,31 +2743,8 @@ fn emit_world_sun_shadow_surf(
     world_from_local: Mat4,
 ) {
     plan.world_eligible = plan.world_eligible.saturating_add(1);
-    let material = cull
-        .surface_materials
-        .get(surf)
-        .copied()
-        .flatten()
-        .and_then(|id| catalog.derived(id));
-    let cutout = material
-        .map(|material| super::sun_shadow_cutout_name(&material.name))
-        .unwrap_or(false);
-    if cutout {
-        plan.cutout_plus23 = plan.cutout_plus23.saturating_add(1);
-    }
-    let empty_ib = world_plan
-        .surface_ranges()
-        .get(surf)
-        .map(|&(_, count)| count == 0)
-        .unwrap_or(true);
-    if cutout && empty_ib {
-        plan.cutout_empty_ib = plan.cutout_empty_ib.saturating_add(1);
-    }
     let Some(surf_u16) = u16::try_from(surf).ok() else {
         plan.world_missing_key = plan.world_missing_key.saturating_add(1);
-        if cutout {
-            plan.cutout_missing_key = plan.cutout_missing_key.saturating_add(1);
-        }
         return;
     };
     let packed = if let Some(word) = cull
@@ -2789,9 +2758,6 @@ fn emit_world_sun_shadow_surf(
     } else {
         let Some(material_id) = cull.surface_materials.get(surf).copied().flatten() else {
             plan.world_missing_key = plan.world_missing_key.saturating_add(1);
-            if cutout {
-                plan.cutout_missing_key = plan.cutout_missing_key.saturating_add(1);
-            }
             return;
         };
         let Some(packed) = catalog
@@ -2799,17 +2765,11 @@ fn emit_world_sun_shadow_surf(
             .and_then(|material| material.baked_draw_surf)
         else {
             plan.world_missing_key = plan.world_missing_key.saturating_add(1);
-            if cutout {
-                plan.cutout_missing_key = plan.cutout_missing_key.saturating_add(1);
-            }
             return;
         };
         let scene_light = cull.surface_primary_lights.get(surf).copied().unwrap_or(0);
         super::with_scene_light_index(packed, scene_light)
     };
-    if cutout && GfxDrawSurf::from_packed(packed).custom_index() == 0 {
-        plan.cutout_custom0 = plan.cutout_custom0.saturating_add(1);
-    }
     let samplers = world_plan
         .surface_sampler_inputs
         .get(surf)

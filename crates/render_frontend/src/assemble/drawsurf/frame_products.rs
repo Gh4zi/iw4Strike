@@ -310,6 +310,10 @@ pub(crate) fn admit_material_generation(
 struct ProductBindPersist {
     generation: MaterialGenerationId,
     compact_seen: HashMap<LogicalInputKey, u32>,
+    /// (material id, sorted rank, technique) already folded into `code_sampler_mask` this fill:
+    /// the mask is an OR and depends on nothing else, so each pair is resolved once.
+    mask_seen:
+        bevy::platform::collections::HashSet<(Option<render_material::MaterialAssetId>, u32, u8)>,
     compact_remap: Vec<u32>,
     compacted: bool,
     compact_tech: Vec<TechType>,
@@ -604,6 +608,7 @@ fn compact_product_draws(
     persist.compact_seen.reserve(product.ordered_draws.len());
     persist.compact_remap.clear();
     persist.compact_remap.reserve(product.ordered_draws.len());
+    persist.mask_seen.clear();
     product.draw_tech.clear();
     product.draw_tech.reserve(product.ordered_draws.len());
     product.code_sampler_mask = 0;
@@ -649,13 +654,18 @@ fn compact_product_draws(
         persist.compact_remap.push(compact);
         product.ordered_draws[output] = draw;
         product.draw_tech.push(draw_tech);
-        product.code_sampler_mask |= super::draw_code_sampler_mask(
-            catalog,
-            prepared,
-            render_material::MaterialDrawKey::new(draw.key, draw.material_rank)
-                .with_material_id(draw.material_id),
-            draw_tech,
-        );
+        if persist
+            .mask_seen
+            .insert((draw.material_id, draw.material_rank, draw_tech.0))
+        {
+            product.code_sampler_mask |= super::draw_code_sampler_mask(
+                catalog,
+                prepared,
+                render_material::MaterialDrawKey::new(draw.key, draw.material_rank)
+                    .with_material_id(draw.material_id),
+                draw_tech,
+            );
+        }
         product.has_codemesh |= matches!(draw.kind, RetainedDrawKind::CodeMesh { .. });
         output += 1;
     }
@@ -1347,12 +1357,6 @@ pub(crate) fn bake_sun_shadow_casters(
     casters.smodel_bucket_context_refused_n = casters
         .smodel_bucket_context_refused_n
         .saturating_add(far.smodel_bucket_context_refused_n);
-    casters.cutout_plus23 = casters.cutout_plus23.saturating_add(far.cutout_plus23);
-    casters.cutout_missing_key = casters
-        .cutout_missing_key
-        .saturating_add(far.cutout_missing_key);
-    casters.cutout_empty_ib = casters.cutout_empty_ib.saturating_add(far.cutout_empty_ib);
-    casters.cutout_custom0 = casters.cutout_custom0.saturating_add(far.cutout_custom0);
     casters
         .smodel_pretess_indices
         .extend(far.smodel_pretess_indices);
