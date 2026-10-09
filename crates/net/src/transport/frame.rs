@@ -293,6 +293,36 @@ pub fn frame_from_acked_tick_with_reliable(
     acks: Vec<(ClientId, CmdSeq)>,
     reliable: ReliablePayload,
 ) -> Frame {
+    let mut frame = frame_without_meta(coder, input, snapshot, acks, reliable);
+    frame.snapshot_meta = snapshot.meta.clone();
+    frame
+}
+
+/// `frame_from_acked_tick` for a snapshot the caller is done with: its meta, the bulk of the
+/// snapshot, moves into the frame instead of being copied.
+pub fn frame_from_owned_tick(
+    coder: &mut crate::SnapshotEncoder,
+    input: &TickInput,
+    mut snapshot: Snapshot,
+    acks: Vec<(ClientId, CmdSeq)>,
+) -> Frame {
+    let reliable = ReliablePayload {
+        ack_through: 0,
+        rows: Vec::new(),
+        dropped_oldest: 0,
+    };
+    let mut frame = frame_without_meta(coder, input, &snapshot, acks, reliable);
+    frame.snapshot_meta = std::mem::take(&mut snapshot.meta);
+    frame
+}
+
+fn frame_without_meta(
+    coder: &mut crate::SnapshotEncoder,
+    input: &TickInput,
+    snapshot: &Snapshot,
+    acks: Vec<(ClientId, CmdSeq)>,
+    reliable: ReliablePayload,
+) -> Frame {
     let world_objects_wire = coder
         .encode_world_objects(snapshot.tick, &snapshot.meta.world_objects)
         .to_vec();
@@ -303,7 +333,7 @@ pub fn frame_from_acked_tick_with_reliable(
         actions: input.actions.clone(),
         acks,
         snapshot_delta: coder.encode(snapshot),
-        snapshot_meta: snapshot.meta.clone(),
+        snapshot_meta: SnapshotMeta::default(),
         world_objects_wire,
         reliable,
         svc_sounds: Vec::new(),

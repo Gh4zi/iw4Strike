@@ -1623,12 +1623,12 @@ impl UdpClientLink {
                 }
                 self.in_ack = header.sequence;
                 let mut input = WireReader::new(&payload);
-                let frame =
+                let mut frame =
                     Frame::decode(&mut input, &mut world_decoder).map_err(|e| e.to_string())?;
                 let mut snapshot = decoder
                     .decode(&frame.snapshot_delta)
                     .map_err(|e| e.to_string())?;
-                snapshot.meta = frame.snapshot_meta.clone();
+                snapshot.meta = std::mem::take(&mut frame.snapshot_meta);
                 self.note_applied_snapshot(snapshot_seq);
                 self.baselines.insert(snapshot_seq, snapshot.clone());
                 self.required_baseline_seq = self.required_baseline_seq.max(baseline_seq);

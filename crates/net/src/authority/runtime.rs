@@ -1266,7 +1266,7 @@ fn fanout_loopback(
             .unwrap_or_default();
         if let Err(e) = loopback.send_tick(
             &tick.input,
-            &listen_snapshot,
+            listen_snapshot,
             acks.clone(),
             svc,
             svc_scores,
