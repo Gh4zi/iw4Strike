@@ -686,7 +686,7 @@ fn decode_model(
     let Some(dirs) = goldsrc else {
         return Err(format!(
             "no Counter-Strike: Source install found ({}) and no Condition Zero or \
-             Counter-Strike 1.6 folder selected (Options > Game Folders)",
+             Counter-Strike 1.6 folder selected (Manage Game Paths on the main menu)",
             asset_transport::CSS_ENV,
         ));
     };

@@ -19,7 +19,7 @@ pub(crate) enum Opened {
     FirstLaunch,
     /// MW2 multiplayer data is nowhere to be found.
     Mw2Missing,
-    /// `iw4l paths`, or Options > Game Folders in the game.
+    /// `iw4l paths`, or Manage Game Paths on the main menu.
     Asked,
 }
 
@@ -694,8 +694,8 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
                         11.0,
                         DIM,
                         format!(
-                            "{settings}Reopen this window from Options > Game Folders, or start \
-                             {} paths. Your games are read in place, never copied.",
+                            "{settings}Reopen this window from Manage Game Paths on the main \
+                             menu, or start {} paths. Your games are read in place, never copied.",
                             if cfg!(windows) { "iw4strike.exe" } else { "iw4strike" }
                         ),
                     ),

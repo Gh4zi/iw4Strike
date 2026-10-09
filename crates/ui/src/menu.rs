@@ -136,15 +136,8 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
             controller.handlers.action = vec![asset_game::MenuEvent::Script(
                 "play mouse_click; close self; open options_controller;".into(),
             )];
-            let mut folders = controller.clone();
+            // The game folders window opens from the main menu (Manage Game Paths), not here.
             menu.items.push(controller);
-            folders.name = "game_folders".into();
-            folders.text_key = "Game Folders".into();
-            folders.rect.y = 128.0;
-            folders.handlers.action = vec![asset_game::MenuEvent::Script(
-                "play mouse_click; exec \"game_paths\";".into(),
-            )];
-            menu.items.push(folders);
         }
 
         let removed_rows: Vec<_> = menu
@@ -165,7 +158,6 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
                     && item.rect.y == y
                     && item.name != "multiplayer_settings"
                     && item.name != "controller_settings"
-                    && item.name != "game_folders"
             })
         });
         if name == "pc_options_controls" {
