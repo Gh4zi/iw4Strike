@@ -3,6 +3,7 @@ use frame::{MatchInstalled, MatchTornDown, SessionSwapApplied};
 use net::ClientSet;
 
 use crate::anim::fpv_prepared::PreparedFpv;
+use crate::anim::remote_body::RemoteBodyTrees;
 use crate::anim::scene_submission::AnimDObjSceneSkels;
 use crate::occupancy::dyn_ent::{DynEntPhysClip, DynEntPhysWorld};
 use crate::occupancy::fpv_present::{
@@ -23,6 +24,7 @@ pub fn reset_anim_for_match(
     mut settled: ResMut<FpvHeldSettled>,
     mut held_life: ResMut<FpvHeldLife>,
     mut scene_skels: ResMut<AnimDObjSceneSkels>,
+    mut remote_trees: ResMut<RemoteBodyTrees>,
     existing: Query<Entity, With<FpvPlacementRoot>>,
 ) {
     let installs = installed.read().count();
@@ -40,6 +42,7 @@ pub fn reset_anim_for_match(
     settled.0 = None;
     held_life.0 = None;
     *scene_skels = AnimDObjSceneSkels::default();
+    *remote_trees = RemoteBodyTrees::default();
 
     for entity in &existing {
         commands.entity(entity).try_despawn();
