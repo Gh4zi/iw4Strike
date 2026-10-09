@@ -54,7 +54,7 @@ impl ListenLoopback {
         frame.svc_game_notifies = svc_game_notifies;
 
         frame.reliable = reliable;
-        self.transport.send(&frame)?;
+        self.transport.send_owned(frame);
         self.sent = self.sent.saturating_add(1);
         Ok(())
     }

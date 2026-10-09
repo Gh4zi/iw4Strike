@@ -60,15 +60,27 @@ impl FrameSectionBytes {
 
 impl Frame {
     pub fn encode(&self, out: &mut WireWriter) {
-        let _ = self.encode_sections(out);
+        let _ = self.encode_sections(out, None);
     }
 
     pub fn section_bytes(&self) -> FrameSectionBytes {
         let mut out = WireWriter::new();
-        self.encode_sections(&mut out)
+        self.encode_sections(&mut out, None)
     }
 
-    fn encode_sections(&self, out: &mut WireWriter) -> FrameSectionBytes {
+    /// The frame's bytes with the meta's list sections sent against `baseline`, the receiver's copy
+    /// of the meta it decodes this frame against (`None` sends them whole, as `to_bytes` does).
+    pub fn to_bytes_against(&self, baseline: Option<&SnapshotMeta>) -> Vec<u8> {
+        let mut out = WireWriter::new();
+        let _ = self.encode_sections(&mut out, baseline);
+        out.finish()
+    }
+
+    fn encode_sections(
+        &self,
+        out: &mut WireWriter,
+        baseline: Option<&SnapshotMeta>,
+    ) -> FrameSectionBytes {
         let start = out.len();
         let mut mark = start;
         out.put_u32(self.tick.0);
@@ -93,8 +105,12 @@ impl Frame {
         mark = out.len();
         self.snapshot_delta.encode(out);
         let snapshot_delta = out.len() - mark;
-        let meta =
-            encode_snapshot_meta_sections(out, &self.snapshot_meta, &self.world_objects_wire);
+        let meta = encode_snapshot_meta_sections(
+            out,
+            &self.snapshot_meta,
+            &self.world_objects_wire,
+            baseline,
+        );
         mark = out.len();
         encode_reliable_payload(
             out,
@@ -121,9 +137,12 @@ impl Frame {
         }
     }
 
+    /// `baseline` is the receiver's copy of the meta the sender encoded against
+    /// (`to_bytes_against`), given up to the decode; `None` for `to_bytes`.
     pub fn decode(
         input: &mut WireReader<'_>,
         world_decoder: &mut WorldObjectSyncDecoder,
+        baseline: Option<SnapshotMeta>,
     ) -> Result<Self, WireError> {
         let tick = Tick(input.get_u32()?);
         let state_hash = input.get_u32()?;
@@ -141,7 +160,8 @@ impl Frame {
             acks.push((client, CmdSeq(input.get_u32()?)));
         }
         let snapshot_delta = SnapshotDelta::decode(input)?;
-        let (snapshot_meta, world_objects_wire) = decode_snapshot_meta(input, world_decoder)?;
+        let (snapshot_meta, world_objects_wire) =
+            decode_snapshot_meta(input, world_decoder, baseline)?;
         let reliable = decode_reliable_payload(input)?;
         let svc_sounds = crate::svc_sound::decode_svc_sounds(input)?;
         let svc_scores = crate::svc_scores::decode_svc_scores(input)?;
@@ -228,10 +248,13 @@ impl From<std::io::Error> for TransportError {
     }
 }
 
+/// An in-order channel: each frame's meta goes against the previous frame's, which both ends keep.
 #[derive(Debug, Default)]
 pub struct LoopbackTransport {
     queue: std::collections::VecDeque<Vec<u8>>,
     world_decoder: WorldObjectSyncDecoder,
+    sent_meta: Option<SnapshotMeta>,
+    received_meta: Option<SnapshotMeta>,
 }
 
 impl LoopbackTransport {
@@ -242,11 +265,21 @@ impl LoopbackTransport {
     pub fn pending(&self) -> usize {
         self.queue.len()
     }
+
+    /// `send` for a frame the caller is done with: its meta becomes the next frame's baseline
+    /// without a copy.
+    pub fn send_owned(&mut self, frame: Frame) {
+        self.queue
+            .push_back(frame.to_bytes_against(self.sent_meta.as_ref()));
+        self.sent_meta = Some(frame.snapshot_meta);
+    }
 }
 
 impl Transport for LoopbackTransport {
     fn send(&mut self, frame: &Frame) -> Result<(), TransportError> {
-        self.queue.push_back(frame.to_bytes());
+        self.queue
+            .push_back(frame.to_bytes_against(self.sent_meta.as_ref()));
+        self.sent_meta = Some(frame.snapshot_meta.clone());
         Ok(())
     }
 
@@ -255,7 +288,13 @@ impl Transport for LoopbackTransport {
             return Ok(None);
         };
         let mut reader = WireReader::new(&bytes);
-        Ok(Some(Frame::decode(&mut reader, &mut self.world_decoder)?))
+        let frame = Frame::decode(
+            &mut reader,
+            &mut self.world_decoder,
+            self.received_meta.take(),
+        )?;
+        self.received_meta = Some(frame.snapshot_meta.clone());
+        Ok(Some(frame))
     }
 }
 

@@ -749,14 +749,78 @@ fn section_span(out: &WireWriter, from: usize) -> usize {
     out.len() - from
 }
 
-pub fn encode_snapshot_meta(out: &mut WireWriter, meta: &SnapshotMeta, world_objects_wire: &[u8]) {
-    let _ = encode_snapshot_meta_sections(out, meta, world_objects_wire);
+/// A list section. Without a baseline: its length, then every row. Against the receiver's
+/// baseline copy of the list: its length, the number of rows that differ from the baseline's row
+/// at the same index (every row past the baseline's end differs), then each such row as
+/// `(index, row)` in index order. Most rows of the big sections are unchanged from tick to tick.
+fn encode_rows<T: PartialEq>(
+    out: &mut WireWriter,
+    rows: &[T],
+    baseline: Option<&[T]>,
+    encode: impl Fn(&mut WireWriter, &T),
+) {
+    debug_assert!(rows.len() <= u16::MAX as usize);
+    out.put_u16(rows.len() as u16);
+    let Some(baseline) = baseline else {
+        for row in rows {
+            encode(out, row);
+        }
+        return;
+    };
+    let changed = |(index, row): &(usize, &T)| baseline.get(*index) != Some(*row);
+    let changed_n = rows.iter().enumerate().filter(changed).count();
+    out.put_u16(changed_n as u16);
+    for (index, row) in rows.iter().enumerate().filter(changed) {
+        out.put_u16(index as u16);
+        encode(out, row);
+    }
 }
 
+/// Decodes what `encode_rows` wrote. The baseline rows are patched in place: the receiver
+/// hands over its copy of the list, and the unchanged rows are never copied.
+fn decode_rows<T>(
+    input: &mut WireReader<'_>,
+    baseline: Option<Vec<T>>,
+    decode: impl Fn(&mut WireReader<'_>) -> Result<T, WireError>,
+) -> Result<Vec<T>, WireError> {
+    let count = input.get_u16()? as usize;
+    let Some(mut rows) = baseline else {
+        let mut rows = Vec::with_capacity(count.min(256));
+        for _ in 0..count {
+            rows.push(decode(input)?);
+        }
+        return Ok(rows);
+    };
+    let changed_n = input.get_u16()? as usize;
+    rows.truncate(count);
+    for _ in 0..changed_n {
+        let index = input.get_u16()? as usize;
+        let row = decode(input)?;
+        if index < rows.len() {
+            rows[index] = row;
+        } else if index == rows.len() && index < count {
+            rows.push(row);
+        } else {
+            return Err(WireError::Malformed("delta row past the end of its list"));
+        }
+    }
+    if rows.len() != count {
+        return Err(WireError::Malformed("delta list is missing rows"));
+    }
+    Ok(rows)
+}
+
+pub fn encode_snapshot_meta(out: &mut WireWriter, meta: &SnapshotMeta, world_objects_wire: &[u8]) {
+    let _ = encode_snapshot_meta_sections(out, meta, world_objects_wire, None);
+}
+
+/// `baseline` is the receiver's copy of the meta it decodes this against; the client rows, entity
+/// DObjs, entities, script movers and entity kernel lists then carry only the rows that changed.
 pub fn encode_snapshot_meta_sections(
     out: &mut WireWriter,
     meta: &SnapshotMeta,
     world_objects_wire: &[u8],
+    baseline: Option<&SnapshotMeta>,
 ) -> SnapshotMetaSectionBytes {
     let mut sizes = SnapshotMetaSectionBytes::default();
     let mut mark = out.len();
@@ -772,12 +836,12 @@ pub fn encode_snapshot_meta_sections(
     out.put_i32(meta.score_limit);
     out.put_u32(meta.time_limit_ms);
     out.put_u8(meta.kind.wire_tag());
-    debug_assert!(meta.clients.len() <= u16::MAX as usize);
-    out.put_u16(meta.clients.len() as u16);
-    for (client, row) in &meta.clients {
-        out.put_u32(client.0);
-        encode_client_meta(out, row);
-    }
+    encode_rows(
+        out,
+        &meta.clients,
+        baseline.map(|b| b.clients.as_slice()),
+        encode_client_row,
+    );
     sizes.match_header = section_span(out, mark);
     mark = out.len();
     debug_assert!(meta.journal.len() <= u16::MAX as usize);
@@ -804,19 +868,34 @@ pub fn encode_snapshot_meta_sections(
     encode_rng_debug(out, &meta.rng);
     sizes.aliases = section_span(out, mark);
     mark = out.len();
-    encode_entity_dobjs(out, &meta.entity_dobjs);
+    encode_rows(
+        out,
+        &meta.entity_dobjs,
+        baseline.map(|b| b.entity_dobjs.as_slice()),
+        encode_entity_dobj,
+    );
     sizes.entity_dobjs = section_span(out, mark);
     mark = out.len();
     encode_corpse_pool(out, &meta.corpses);
     sizes.corpses = section_span(out, mark);
     mark = out.len();
-    encode_entity_states(out, &meta.entities);
+    encode_rows(
+        out,
+        &meta.entities,
+        baseline.map(|b| b.entities.as_slice()),
+        encode_entity_state,
+    );
     sizes.entities = section_span(out, mark);
     mark = out.len();
-    encode_script_movers(out, &meta.script_movers);
+    encode_rows(
+        out,
+        &meta.script_movers,
+        baseline.map(|b| b.script_movers.as_slice()),
+        encode_script_mover,
+    );
     sizes.script_movers = section_span(out, mark);
     mark = out.len();
-    encode_entity_kernel(out, &meta.entity_kernel);
+    encode_entity_kernel(out, &meta.entity_kernel, baseline.map(|b| &b.entity_kernel));
     sizes.entity_kernel = section_span(out, mark);
     mark = out.len();
     encode_item_ammo(out, &meta.item_ammo);
@@ -836,10 +915,14 @@ pub fn encode_snapshot_meta_sections(
     sizes
 }
 
+/// Decodes what `encode_snapshot_meta_sections` wrote against the same `baseline`, which the
+/// receiver gives up: its lists become the decoded ones.
 pub fn decode_snapshot_meta(
     input: &mut WireReader<'_>,
     world_decoder: &mut WorldObjectSyncDecoder,
+    baseline: Option<SnapshotMeta>,
 ) -> Result<(SnapshotMeta, Vec<u8>), WireError> {
+    let mut baseline = baseline;
     let phase = phase_from_tag(input.get_u8()?)?;
     let match_elapsed_ms = input.get_u32()?;
     let prematch_tag = input.get_u8()?;
@@ -854,12 +937,11 @@ pub fn decode_snapshot_meta(
     let time_limit_ms = input.get_u32()?;
     let kind = gamemode_iw4::GameModeKind::from_wire_tag(input.get_u8()?)
         .ok_or(WireError::Malformed("unknown GameModeKind tag"))?;
-    let count = input.get_u16()? as usize;
-    let mut clients = Vec::with_capacity(count.min(64));
-    for _ in 0..count {
-        let client = ClientId(input.get_u32()?);
-        clients.push((client, decode_client_meta(input)?));
-    }
+    let clients = decode_rows(
+        input,
+        baseline.as_mut().map(|b| std::mem::take(&mut b.clients)),
+        decode_client_row,
+    )?;
     let journal_count = input.get_u16()? as usize;
     let mut journal = Vec::with_capacity(journal_count.min(64));
     for _ in 0..journal_count {
@@ -880,11 +962,27 @@ pub fn decode_snapshot_meta(
     let hud_materials = decode_sound_alias_cs(input)?;
     let hud_strings = decode_hud_strings(input)?;
     let rng = decode_rng_debug(input)?;
-    let entity_dobjs = decode_entity_dobjs(input)?;
+    let entity_dobjs = decode_rows(
+        input,
+        baseline
+            .as_mut()
+            .map(|b| std::mem::take(&mut b.entity_dobjs)),
+        decode_entity_dobj,
+    )?;
     let corpses = decode_corpse_pool(input)?;
-    let entities = decode_entity_states(input)?;
-    let script_movers = decode_script_movers(input)?;
-    let entity_kernel = decode_entity_kernel(input)?;
+    let entities = decode_rows(
+        input,
+        baseline.as_mut().map(|b| std::mem::take(&mut b.entities)),
+        decode_entity_state,
+    )?;
+    let script_movers = decode_rows(
+        input,
+        baseline
+            .as_mut()
+            .map(|b| std::mem::take(&mut b.script_movers)),
+        decode_script_mover,
+    )?;
+    let entity_kernel = decode_entity_kernel(input, baseline.map(|b| b.entity_kernel))?;
     let item_ammo = decode_item_ammo(input)?;
     let item_pickups = decode_item_pickups(input)?;
     let area_entities = decode_area_entities(input)?;
@@ -1277,6 +1375,18 @@ fn decode_audience(input: &mut WireReader<'_>) -> Result<EventAudience, WireErro
         }
         _ => Err(WireError::Malformed("unknown EventAudience tag")),
     }
+}
+
+fn encode_client_row(out: &mut WireWriter, (client, meta): &(ClientId, ClientSnapshotMeta)) {
+    out.put_u32(client.0);
+    encode_client_meta(out, meta);
+}
+
+fn decode_client_row(
+    input: &mut WireReader<'_>,
+) -> Result<(ClientId, ClientSnapshotMeta), WireError> {
+    let client = ClientId(input.get_u32()?);
+    Ok((client, decode_client_meta(input)?))
 }
 
 fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
@@ -2473,14 +2583,6 @@ fn decode_corpse_pool(input: &mut WireReader<'_>) -> Result<PlayerCorpsePool, Wi
     Ok(pool)
 }
 
-fn encode_entity_states(out: &mut WireWriter, rows: &[entity_iw4::EntityState]) {
-    debug_assert!(rows.len() <= u16::MAX as usize);
-    out.put_u16(rows.len() as u16);
-    for es in rows {
-        encode_entity_state(out, es);
-    }
-}
-
 fn encode_entity_state(out: &mut WireWriter, es: &entity_iw4::EntityState) {
     out.put_i32(es.number);
     out.put_i32(es.e_type);
@@ -2517,17 +2619,6 @@ fn encode_entity_state(out: &mut WireWriter, es: &entity_iw4::EntityState) {
     for v in es.event_parms {
         out.put_i32(v);
     }
-}
-
-fn decode_entity_states(
-    input: &mut WireReader<'_>,
-) -> Result<Vec<entity_iw4::EntityState>, WireError> {
-    let count = input.get_u16()? as usize;
-    let mut rows = Vec::with_capacity(count.min(256));
-    for _ in 0..count {
-        rows.push(decode_entity_state(input)?);
-    }
-    Ok(rows)
 }
 
 fn decode_entity_state(input: &mut WireReader<'_>) -> Result<entity_iw4::EntityState, WireError> {
@@ -2567,119 +2658,83 @@ fn decode_entity_state(input: &mut WireReader<'_>) -> Result<entity_iw4::EntityS
     Ok(es)
 }
 
-fn encode_script_movers(out: &mut WireWriter, movers: &[sim::ScriptMoverGentity]) {
-    debug_assert!(movers.len() <= u16::MAX as usize);
-    out.put_u16(movers.len() as u16);
-    for mover in movers {
-        out.put_u32(mover.id.to_wire());
-        out.put_u8(u8::from(mover.nonsolid));
-        encode_entity_state(out, &mover.state);
-    }
+fn encode_script_mover(out: &mut WireWriter, mover: &sim::ScriptMoverGentity) {
+    out.put_u32(mover.id.to_wire());
+    out.put_u8(u8::from(mover.nonsolid));
+    encode_entity_state(out, &mover.state);
 }
 
-fn decode_script_movers(
-    input: &mut WireReader<'_>,
-) -> Result<Vec<sim::ScriptMoverGentity>, WireError> {
-    let count = input.get_u16()? as usize;
-    let mut movers = Vec::with_capacity(count.min(256));
-    for _ in 0..count {
-        let id = ScriptModelId::from_wire(input.get_u32()?);
-        let nonsolid = input.get_u8()? != 0;
-        movers.push(sim::ScriptMoverGentity {
-            id,
-            state: decode_entity_state(input)?,
-            nonsolid,
-            ..Default::default()
-        });
-    }
-    Ok(movers)
+fn decode_script_mover(input: &mut WireReader<'_>) -> Result<sim::ScriptMoverGentity, WireError> {
+    let id = ScriptModelId::from_wire(input.get_u32()?);
+    let nonsolid = input.get_u8()? != 0;
+    Ok(sim::ScriptMoverGentity {
+        id,
+        state: decode_entity_state(input)?,
+        nonsolid,
+        ..Default::default()
+    })
 }
 
-fn encode_entity_kernel(out: &mut WireWriter, kernel: &EntityKernelSnapshot) {
+fn encode_entity_kernel(
+    out: &mut WireWriter,
+    kernel: &EntityKernelSnapshot,
+    baseline: Option<&EntityKernelSnapshot>,
+) {
     debug_assert!(kernel.validate().is_ok());
     out.put_i32(kernel.high_water);
     out.put_i32(kernel.level_time_ms);
     out.put_u32(kernel.frame_serial);
-    out.put_u16(kernel.slots.len() as u16);
-    for slot in &kernel.slots {
-        out.put_u32(slot.generation);
-        out.put_i32(slot.freed_at_ms);
-        let Some(occupied) = slot.occupied else {
-            out.put_u8(0);
-            continue;
-        };
-        out.put_u8(1);
-        out.put_u8(entity_run_kind_tag(occupied.kind));
-        out.put_u8(u8::from(occupied.linked));
-        encode_optional_entity_ref(out, occupied.relations.owner);
-        encode_optional_entity_ref(out, occupied.relations.parent);
-        encode_optional_entity_ref(out, occupied.relations.ground);
-        out.put_i32(occupied.relations.parent_tag);
-        encode_axis43(
-            out,
-            occupied.relations.parent_link_axis,
-            occupied.relations.parent_link_origin,
-        );
-        encode_optional_i32(out, occupied.next_think_ms);
-        encode_optional_i32(out, occupied.transient_event_time_ms);
-    }
-    out.put_u16(kernel.free_fifo.len() as u16);
-    for number in &kernel.free_fifo {
-        out.put_i32(*number);
-    }
+    encode_rows(
+        out,
+        &kernel.slots,
+        baseline.map(|b| b.slots.as_slice()),
+        encode_entity_kernel_slot,
+    );
+    encode_rows(
+        out,
+        &kernel.free_fifo,
+        baseline.map(|b| b.free_fifo.as_slice()),
+        |out, number| out.put_i32(*number),
+    );
 }
 
-fn decode_entity_kernel(input: &mut WireReader<'_>) -> Result<EntityKernelSnapshot, WireError> {
+fn encode_entity_kernel_slot(out: &mut WireWriter, slot: &EntityKernelSlotSnapshot) {
+    out.put_u32(slot.generation);
+    out.put_i32(slot.freed_at_ms);
+    let Some(occupied) = slot.occupied else {
+        out.put_u8(0);
+        return;
+    };
+    out.put_u8(1);
+    out.put_u8(entity_run_kind_tag(occupied.kind));
+    out.put_u8(u8::from(occupied.linked));
+    encode_optional_entity_ref(out, occupied.relations.owner);
+    encode_optional_entity_ref(out, occupied.relations.parent);
+    encode_optional_entity_ref(out, occupied.relations.ground);
+    out.put_i32(occupied.relations.parent_tag);
+    encode_axis43(
+        out,
+        occupied.relations.parent_link_axis,
+        occupied.relations.parent_link_origin,
+    );
+    encode_optional_i32(out, occupied.next_think_ms);
+    encode_optional_i32(out, occupied.transient_event_time_ms);
+}
+
+fn decode_entity_kernel(
+    input: &mut WireReader<'_>,
+    baseline: Option<EntityKernelSnapshot>,
+) -> Result<EntityKernelSnapshot, WireError> {
     let high_water = input.get_i32()?;
     let level_time_ms = input.get_i32()?;
     let frame_serial = input.get_u32()?;
-    let slot_count = input.get_u16()? as usize;
-    let mut slots = Vec::with_capacity(slot_count);
-    for _ in 0..slot_count {
-        let generation = input.get_u32()?;
-        let freed_at_ms = input.get_i32()?;
-        let occupied = match input.get_u8()? {
-            0 => None,
-            1 => {
-                let kind = entity_run_kind_from_tag(input.get_u8()?)?;
-                let linked = input.get_u8()? != 0;
-                let owner = decode_optional_entity_ref(input)?;
-                let parent = decode_optional_entity_ref(input)?;
-                let ground = decode_optional_entity_ref(input)?;
-                let parent_tag = input.get_i32()?;
-                let (parent_link_axis, parent_link_origin) = decode_axis43(input)?;
-                Some(EntityKernelOccupiedSnapshot {
-                    kind,
-                    linked,
-                    relations: EntityRelations {
-                        owner,
-                        parent,
-                        ground,
-                        parent_tag,
-                        parent_link_axis,
-                        parent_link_origin,
-                    },
-                    next_think_ms: decode_optional_i32(input)?,
-                    transient_event_time_ms: decode_optional_i32(input)?,
-                })
-            }
-            _ => return Err(WireError::Malformed("bad EntityKernel occupancy tag")),
-        };
-        slots.push(EntityKernelSlotSnapshot {
-            generation,
-            occupied,
-            freed_at_ms,
-        });
-    }
-    let free_count = input.get_u16()? as usize;
-    if free_count > slot_count {
+    let (base_slots, base_free) = baseline.map(|b| (b.slots, b.free_fifo)).unzip();
+    let slots = decode_rows(input, base_slots, decode_entity_kernel_slot)?;
+    let free_fifo = decode_rows(input, base_free, |input| input.get_i32())?;
+    if free_fifo.len() > slots.len() {
         return Err(WireError::Malformed(
             "EntityKernel free FIFO exceeds slot count",
         ));
-    }
-    let mut free_fifo = Vec::with_capacity(free_count);
-    for _ in 0..free_count {
-        free_fifo.push(input.get_i32()?);
     }
     let kernel = EntityKernelSnapshot {
         slots,
@@ -2692,6 +2747,45 @@ fn decode_entity_kernel(input: &mut WireReader<'_>) -> Result<EntityKernelSnapsh
         .validate()
         .map_err(|_| WireError::Malformed("invalid EntityKernel snapshot"))?;
     Ok(kernel)
+}
+
+fn decode_entity_kernel_slot(
+    input: &mut WireReader<'_>,
+) -> Result<EntityKernelSlotSnapshot, WireError> {
+    let generation = input.get_u32()?;
+    let freed_at_ms = input.get_i32()?;
+    let occupied = match input.get_u8()? {
+        0 => None,
+        1 => {
+            let kind = entity_run_kind_from_tag(input.get_u8()?)?;
+            let linked = input.get_u8()? != 0;
+            let owner = decode_optional_entity_ref(input)?;
+            let parent = decode_optional_entity_ref(input)?;
+            let ground = decode_optional_entity_ref(input)?;
+            let parent_tag = input.get_i32()?;
+            let (parent_link_axis, parent_link_origin) = decode_axis43(input)?;
+            Some(EntityKernelOccupiedSnapshot {
+                kind,
+                linked,
+                relations: EntityRelations {
+                    owner,
+                    parent,
+                    ground,
+                    parent_tag,
+                    parent_link_axis,
+                    parent_link_origin,
+                },
+                next_think_ms: decode_optional_i32(input)?,
+                transient_event_time_ms: decode_optional_i32(input)?,
+            })
+        }
+        _ => return Err(WireError::Malformed("bad EntityKernel occupancy tag")),
+    };
+    Ok(EntityKernelSlotSnapshot {
+        generation,
+        occupied,
+        freed_at_ms,
+    })
 }
 
 fn encode_optional_entity_ref(out: &mut WireWriter, entity: Option<EntityRef>) {
@@ -2839,159 +2933,145 @@ fn decode_item_pickups(input: &mut WireReader<'_>) -> Result<Vec<ItemPickupRecor
     Ok(rows)
 }
 
-fn encode_entity_dobjs(
-    out: &mut WireWriter,
-    rows: &[(sim::AuthorityModelOwner, xmodel_runtime::DObjSemanticState)],
-) {
-    debug_assert!(rows.len() <= u16::MAX as usize);
-    out.put_u16(rows.len() as u16);
-    for (owner, state) in rows {
-        match owner {
-            sim::AuthorityModelOwner::ScriptModel(id) => {
-                out.put_u8(0);
-                out.put_u32(id.to_wire());
-            }
+type EntityDObjRow = (sim::AuthorityModelOwner, xmodel_runtime::DObjSemanticState);
+
+fn encode_entity_dobj(out: &mut WireWriter, (owner, state): &EntityDObjRow) {
+    match owner {
+        sim::AuthorityModelOwner::ScriptModel(id) => {
+            out.put_u8(0);
+            out.put_u32(id.to_wire());
         }
-        out.put_u32(state.composition.revision);
-        debug_assert!(state.composition.models.len() <= u16::MAX as usize);
-        out.put_u16(state.composition.models.len() as u16);
-        for model in &state.composition.models {
-            put_text(out, &model.model);
-            out.put_u16(model.parent_model.unwrap_or(u16::MAX));
-            put_optional_text(out, model.attach_tag.as_deref());
-            out.put_u8(u8::from(model.ignore_collision));
-        }
-        out.put_u32(state.pose_revision);
-        put_optional_part_bits(out, state.requested_parts);
-        for word in state.hide_part_bits.words() {
-            out.put_u32(*word);
-        }
-        match &state.tree {
-            None => out.put_u8(0),
-            Some(tree) => {
-                out.put_u8(1);
-                out.put_u32(tree.definition_revision);
-                out.put_u32(tree.state_revision);
-                debug_assert!(tree.nodes.len() <= u16::MAX as usize);
-                out.put_u16(tree.nodes.len() as u16);
-                for node in &tree.nodes {
-                    out.put_u16(node.parent.map_or(u16::MAX, |id| id.0));
-                    out.put_u8(match node.kind {
-                        xmodel_runtime::XAnimSemanticNodeKind::Blend => 0,
-                        xmodel_runtime::XAnimSemanticNodeKind::Additive => 1,
-                        xmodel_runtime::XAnimSemanticNodeKind::Leaf => 2,
-                    });
-                    put_optional_text(out, node.clip.as_deref());
-                    put_optional_part_bits(out, node.parts);
-                    let state = node.state;
-                    out.put_f32(state.time);
-                    out.put_f32(state.old_time);
-                    out.put_i32(i32::from(state.cycle_count));
-                    out.put_i32(i32::from(state.old_cycle_count));
-                    out.put_f32(state.goal_time);
-                    out.put_f32(state.goal_weight);
-                    out.put_f32(state.weight);
-                    out.put_f32(state.rate);
-                }
+    }
+    out.put_u32(state.composition.revision);
+    debug_assert!(state.composition.models.len() <= u16::MAX as usize);
+    out.put_u16(state.composition.models.len() as u16);
+    for model in &state.composition.models {
+        put_text(out, &model.model);
+        out.put_u16(model.parent_model.unwrap_or(u16::MAX));
+        put_optional_text(out, model.attach_tag.as_deref());
+        out.put_u8(u8::from(model.ignore_collision));
+    }
+    out.put_u32(state.pose_revision);
+    put_optional_part_bits(out, state.requested_parts);
+    for word in state.hide_part_bits.words() {
+        out.put_u32(*word);
+    }
+    match &state.tree {
+        None => out.put_u8(0),
+        Some(tree) => {
+            out.put_u8(1);
+            out.put_u32(tree.definition_revision);
+            out.put_u32(tree.state_revision);
+            debug_assert!(tree.nodes.len() <= u16::MAX as usize);
+            out.put_u16(tree.nodes.len() as u16);
+            for node in &tree.nodes {
+                out.put_u16(node.parent.map_or(u16::MAX, |id| id.0));
+                out.put_u8(match node.kind {
+                    xmodel_runtime::XAnimSemanticNodeKind::Blend => 0,
+                    xmodel_runtime::XAnimSemanticNodeKind::Additive => 1,
+                    xmodel_runtime::XAnimSemanticNodeKind::Leaf => 2,
+                });
+                put_optional_text(out, node.clip.as_deref());
+                put_optional_part_bits(out, node.parts);
+                let state = node.state;
+                out.put_f32(state.time);
+                out.put_f32(state.old_time);
+                out.put_i32(i32::from(state.cycle_count));
+                out.put_i32(i32::from(state.old_cycle_count));
+                out.put_f32(state.goal_time);
+                out.put_f32(state.goal_weight);
+                out.put_f32(state.weight);
+                out.put_f32(state.rate);
             }
         }
     }
 }
 
-fn decode_entity_dobjs(
-    input: &mut WireReader<'_>,
-) -> Result<Vec<(sim::AuthorityModelOwner, xmodel_runtime::DObjSemanticState)>, WireError> {
-    let count = input.get_u16()? as usize;
-    let mut rows = Vec::with_capacity(count.min(256));
-    for _ in 0..count {
-        let owner = match input.get_u8()? {
-            0 => sim::AuthorityModelOwner::ScriptModel(sim::ScriptModelId::from_wire(
-                input.get_u32()?,
-            )),
-            _ => return Err(WireError::Malformed("unknown DObj owner tag")),
-        };
-        let composition_revision = input.get_u32()?;
-        let model_count = input.get_u16()? as usize;
-        let mut models = Vec::with_capacity(model_count.min(20));
-        for _ in 0..model_count {
-            let model = get_text(input)?;
-            let parent = input.get_u16()?;
-            models.push(xmodel_runtime::DObjModelDescriptor {
-                model,
-                parent_model: (parent != u16::MAX).then_some(parent),
-                attach_tag: get_optional_text(input)?,
-                ignore_collision: input.get_u8()? != 0,
-            });
-        }
-        let pose_revision = input.get_u32()?;
-        let requested_parts = get_optional_part_bits(input)?;
-        let mut hide_words = [0u32; anim_iw4::PartBits::WORDS];
-        for word in &mut hide_words {
-            *word = input.get_u32()?;
-        }
-        let tree = match input.get_u8()? {
-            0 => None,
-            1 => {
-                let definition_revision = input.get_u32()?;
-                let state_revision = input.get_u32()?;
-                let node_count = input.get_u16()? as usize;
-                let mut nodes = Vec::with_capacity(node_count.min(256));
-                for _ in 0..node_count {
-                    let parent = input.get_u16()?;
-                    let kind = match input.get_u8()? {
-                        0 => xmodel_runtime::XAnimSemanticNodeKind::Blend,
-                        1 => xmodel_runtime::XAnimSemanticNodeKind::Additive,
-                        2 => xmodel_runtime::XAnimSemanticNodeKind::Leaf,
-                        _ => return Err(WireError::Malformed("unknown XAnim node tag")),
-                    };
-                    let clip = get_optional_text(input)?;
-                    let parts = get_optional_part_bits(input)?;
-                    let time = input.get_f32()?;
-                    let old_time = input.get_f32()?;
-                    let cycle_count = i16::try_from(input.get_i32()?)
-                        .map_err(|_| WireError::Malformed("XAnim cycle count overflow"))?;
-                    let old_cycle_count = i16::try_from(input.get_i32()?)
-                        .map_err(|_| WireError::Malformed("XAnim old cycle count overflow"))?;
-                    nodes.push(xmodel_runtime::XAnimSemanticNode {
-                        parent: (parent != u16::MAX).then_some(xmodel_runtime::XAnimNodeId(parent)),
-                        kind,
-                        clip,
-                        parts,
-                        state: xmodel_runtime::XAnimNodeState {
-                            time,
-                            old_time,
-                            cycle_count,
-                            old_cycle_count,
-                            goal_time: input.get_f32()?,
-                            goal_weight: input.get_f32()?,
-                            weight: input.get_f32()?,
-                            rate: input.get_f32()?,
-                        },
-                    });
-                }
-                Some(xmodel_runtime::XAnimTreeSnapshot {
-                    definition_revision,
-                    state_revision,
-                    nodes,
-                })
-            }
-            _ => return Err(WireError::Malformed("unknown optional XAnim tree tag")),
-        };
-        rows.push((
-            owner,
-            xmodel_runtime::DObjSemanticState {
-                composition: xmodel_runtime::DObjCompositionDescriptor {
-                    revision: composition_revision,
-                    models,
-                },
-                pose_revision,
-                tree,
-                requested_parts,
-                hide_part_bits: xmodel_runtime::HidePartBits::from_words(hide_words),
-            },
-        ));
+fn decode_entity_dobj(input: &mut WireReader<'_>) -> Result<EntityDObjRow, WireError> {
+    let owner = match input.get_u8()? {
+        0 => sim::AuthorityModelOwner::ScriptModel(sim::ScriptModelId::from_wire(input.get_u32()?)),
+        _ => return Err(WireError::Malformed("unknown DObj owner tag")),
+    };
+    let composition_revision = input.get_u32()?;
+    let model_count = input.get_u16()? as usize;
+    let mut models = Vec::with_capacity(model_count.min(20));
+    for _ in 0..model_count {
+        let model = get_text(input)?;
+        let parent = input.get_u16()?;
+        models.push(xmodel_runtime::DObjModelDescriptor {
+            model,
+            parent_model: (parent != u16::MAX).then_some(parent),
+            attach_tag: get_optional_text(input)?,
+            ignore_collision: input.get_u8()? != 0,
+        });
     }
-    Ok(rows)
+    let pose_revision = input.get_u32()?;
+    let requested_parts = get_optional_part_bits(input)?;
+    let mut hide_words = [0u32; anim_iw4::PartBits::WORDS];
+    for word in &mut hide_words {
+        *word = input.get_u32()?;
+    }
+    let tree = match input.get_u8()? {
+        0 => None,
+        1 => {
+            let definition_revision = input.get_u32()?;
+            let state_revision = input.get_u32()?;
+            let node_count = input.get_u16()? as usize;
+            let mut nodes = Vec::with_capacity(node_count.min(256));
+            for _ in 0..node_count {
+                let parent = input.get_u16()?;
+                let kind = match input.get_u8()? {
+                    0 => xmodel_runtime::XAnimSemanticNodeKind::Blend,
+                    1 => xmodel_runtime::XAnimSemanticNodeKind::Additive,
+                    2 => xmodel_runtime::XAnimSemanticNodeKind::Leaf,
+                    _ => return Err(WireError::Malformed("unknown XAnim node tag")),
+                };
+                let clip = get_optional_text(input)?;
+                let parts = get_optional_part_bits(input)?;
+                let time = input.get_f32()?;
+                let old_time = input.get_f32()?;
+                let cycle_count = i16::try_from(input.get_i32()?)
+                    .map_err(|_| WireError::Malformed("XAnim cycle count overflow"))?;
+                let old_cycle_count = i16::try_from(input.get_i32()?)
+                    .map_err(|_| WireError::Malformed("XAnim old cycle count overflow"))?;
+                nodes.push(xmodel_runtime::XAnimSemanticNode {
+                    parent: (parent != u16::MAX).then_some(xmodel_runtime::XAnimNodeId(parent)),
+                    kind,
+                    clip,
+                    parts,
+                    state: xmodel_runtime::XAnimNodeState {
+                        time,
+                        old_time,
+                        cycle_count,
+                        old_cycle_count,
+                        goal_time: input.get_f32()?,
+                        goal_weight: input.get_f32()?,
+                        weight: input.get_f32()?,
+                        rate: input.get_f32()?,
+                    },
+                });
+            }
+            Some(xmodel_runtime::XAnimTreeSnapshot {
+                definition_revision,
+                state_revision,
+                nodes,
+            })
+        }
+        _ => return Err(WireError::Malformed("unknown optional XAnim tree tag")),
+    };
+    Ok((
+        owner,
+        xmodel_runtime::DObjSemanticState {
+            composition: xmodel_runtime::DObjCompositionDescriptor {
+                revision: composition_revision,
+                models,
+            },
+            pose_revision,
+            tree,
+            requested_parts,
+            hide_part_bits: xmodel_runtime::HidePartBits::from_words(hide_words),
+        },
+    ))
 }
 
 fn put_optional_part_bits(out: &mut WireWriter, bits: Option<anim_iw4::PartBits>) {

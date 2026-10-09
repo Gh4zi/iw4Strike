@@ -299,7 +299,7 @@ impl RecordReader {
             Err(e) => return Err(e.into()),
         }
         let mut reader = WireReader::new(&bytes);
-        let frame = Frame::decode(&mut reader, &mut self.world_decoder)?;
+        let frame = Frame::decode(&mut reader, &mut self.world_decoder, None)?;
         self.frames += 1;
         Ok(Some(frame))
     }

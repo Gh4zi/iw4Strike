@@ -1001,6 +1001,11 @@ impl UdpAuthorityHub {
             if scores_due {
                 frame.svc_scores = Some(crate::format_scoreboard_from_snapshot(&peer_snap));
             }
+            // The meta's lists go against the acked baseline the client decodes this against.
+            let payload = match peer.baseline.baseline_for_encode() {
+                Some(baseline) if baseline_seq != 0 => frame.to_bytes_against(Some(&baseline.meta)),
+                _ => frame.to_bytes(),
+            };
             let snapshot_seq = peer.next_snap_seq;
             peer.next_snap_seq = snapshot_seq.wrapping_add(1);
             peer.baseline.remember(snapshot_seq, peer_snap);
@@ -1015,7 +1020,7 @@ impl UdpAuthorityHub {
                 header,
                 baseline_seq,
                 snapshot_seq,
-                payload: frame.to_bytes(),
+                payload,
             };
             let relay_bootstrap = self.bootstrap.is_some() && baseline_seq == 0;
             let already_admitted = matches!(peer.admission, PeerAdmission::Committed { .. });
@@ -1623,8 +1628,12 @@ impl UdpClientLink {
                 }
                 self.in_ack = header.sequence;
                 let mut input = WireReader::new(&payload);
-                let mut frame =
-                    Frame::decode(&mut input, &mut world_decoder).map_err(|e| e.to_string())?;
+                let mut frame = Frame::decode(
+                    &mut input,
+                    &mut world_decoder,
+                    baseline.map(|baseline| baseline.meta),
+                )
+                .map_err(|e| e.to_string())?;
                 let mut snapshot = decoder
                     .decode(&frame.snapshot_delta)
                     .map_err(|e| e.to_string())?;
