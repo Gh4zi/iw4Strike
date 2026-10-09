@@ -45,7 +45,8 @@ fn report_rows() -> usize {
         .unwrap_or(REPORT_ROWS)
 }
 
-static TOTALS: Mutex<Option<HashMap<String, (u64, u64)>>> = Mutex::new(None);
+/// Per span: total ns, runs, longest run ns.
+static TOTALS: Mutex<Option<HashMap<String, (u64, u64, u64)>>> = Mutex::new(None);
 
 struct SystemName(String);
 
@@ -130,8 +131,9 @@ where
         if let Some(row) = totals.get_mut(key.as_ref()) {
             row.0 += ns;
             row.1 += 1;
+            row.2 = row.2.max(ns);
         } else {
-            totals.insert(key.into_owned(), (ns, 1));
+            totals.insert(key.into_owned(), (ns, 1, ns));
         }
     }
 }
@@ -155,19 +157,26 @@ fn report(mut clock: Local<ReportClock>) {
         return;
     };
     let mut rows: Vec<_> = totals.into_iter().collect();
-    rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-    let all_ns: u64 = rows.iter().map(|(_, (ns, _))| ns).sum();
+    // `IW4L_PROFILE_BY_MAX=1` ranks by the longest single run, which points at a hitch rather
+    // than at steady cost.
+    if perf::switch("IW4L_PROFILE_BY_MAX") {
+        rows.sort_by(|a, b| b.1.2.cmp(&a.1.2));
+    } else {
+        rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    }
+    let all_ns: u64 = rows.iter().map(|(_, (ns, _, _))| ns).sum();
     diag::info!(
         Launch,
         "system profile: {frames} frames, all systems {:.3} ms/frame (summed over threads)",
         all_ns as f64 / 1e6 / frames as f64
     );
-    for (name, (ns, count)) in rows.into_iter().take(report_rows()) {
+    for (name, (ns, count, max_ns)) in rows.into_iter().take(report_rows()) {
         diag::info!(
             Launch,
-            "system profile: {:>8.3} ms/frame {:>6.2} runs/frame  {name}",
+            "system profile: {:>8.3} ms/frame {:>6.2} runs/frame {:>8.3} max  {name}",
             ns as f64 / 1e6 / frames as f64,
-            count as f64 / frames as f64
+            count as f64 / frames as f64,
+            max_ns as f64 / 1e6
         );
     }
 }
