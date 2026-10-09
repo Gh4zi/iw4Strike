@@ -15,9 +15,10 @@ use std::sync::{Arc, OnceLock};
 use assets::PreparedWeapons;
 use bevy::math::{Affine3A, Vec3A};
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 use render_gpu::{
-    CsViewmodelDraw, CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex,
-    CsWorldModelInstance, CsWorldModelsFrame,
+    CsViewmodelDraw, CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex, CsWorldModelInstance,
+    CsWorldModelsFrame,
 };
 
 /// A body's weapon hand this frame, and the weapon it holds.
@@ -139,15 +140,15 @@ fn image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     image
 }
 
-/// Loads `models/weapons/<name>.mdl` with its rest pose baked into MW2's weapon tag frame, and
-/// where its muzzle ends up; or, `on_floor`, in its own frame standing on the floor (the bomb).
-fn load_world_model(
+/// Builds a world model read from `models/weapons/<name>.mdl`, its rest pose baked into MW2's
+/// weapon tag frame, and where its muzzle ends up; or, `on_floor`, in its own frame standing on
+/// the floor (the bomb).
+fn build_world_model(
     pack: &mdl_source::Vpk,
-    name: &str,
+    loaded: mdl_source::LoadedModel,
     on_floor: bool,
     images: &mut Assets<Image>,
 ) -> Result<(CsViewmodelModel, Option<Vec3>), String> {
-    let loaded = mdl_source::load_model(pack, &format!("models/weapons/{name}.mdl"))?;
     let studio = &loaded.model;
     let mut skin = Vec::new();
     studio.pose(0, 0.0, &mut skin);
@@ -179,9 +180,9 @@ fn load_world_model(
         .find(|a| a.name.eq_ignore_ascii_case("muzzle_flash"))
         .or_else(|| studio.muzzle())
         .and_then(|attachment| {
-        let at = skin.get(attachment.bone)? * affine(&attachment.in_bind);
-        Some(Vec3::from(to_tag.transform_point3a(at.translation)))
-    });
+            let at = skin.get(attachment.bone)? * affine(&attachment.in_bind);
+            Some(Vec3::from(to_tag.transform_point3a(at.translation)))
+        });
 
     let mut vertices: Vec<CsViewmodelVertex> = studio
         .vertices
@@ -275,6 +276,8 @@ struct WorldModel {
 #[derive(Resource, Default)]
 pub struct CsWorldModels {
     models: HashMap<String, Option<WorldModel>>,
+    /// Models being read off the main thread, by the same key.
+    decoding: HashMap<String, Task<Result<mdl_source::LoadedModel, String>>>,
     offsets: HashMap<u32, Mat4>,
 }
 
@@ -314,7 +317,14 @@ fn tag_from_model(model: &WorldModel, mw2_muzzle: Option<Mat4>) -> Mat4 {
 }
 
 impl CsWorldModels {
-    fn get(&mut self, name: &str, on_floor: bool, images: &mut Assets<Image>) -> Option<WorldModel> {
+    /// The world model `name`. One not read yet is read off the main thread (reading it there
+    /// stopped the frame for a few milliseconds a model) and is `None` meanwhile.
+    fn get(
+        &mut self,
+        name: &str,
+        on_floor: bool,
+        images: &mut Assets<Image>,
+    ) -> Option<WorldModel> {
         let key = if on_floor {
             format!("{name} (floor)")
         } else {
@@ -323,7 +333,27 @@ impl CsWorldModels {
         if let Some(model) = self.models.get(&key) {
             return model.clone();
         }
-        let model = css_pack().and_then(|pack| match load_world_model(pack, name, on_floor, images) {
+        let pack = css_pack()?;
+        let task = match self.decoding.remove(&key) {
+            Some(task) if task.is_finished() => task,
+            Some(task) => {
+                self.decoding.insert(key, task);
+                return None;
+            }
+            None => {
+                let path = format!("models/weapons/{name}.mdl");
+                let task = AsyncComputeTaskPool::get().spawn(async move {
+                    // The knife's and grenades' hand frame reads a CS:S player model once.
+                    let _ = hand_to_weapon_bone(pack);
+                    mdl_source::load_model(pack, &path)
+                });
+                self.decoding.insert(key, task);
+                return None;
+            }
+        };
+        let built =
+            block_on(task).and_then(|loaded| build_world_model(pack, loaded, on_floor, images));
+        let model = match built {
             Ok((model, muzzle)) => {
                 diag::info!(
                     World,
@@ -342,7 +372,7 @@ impl CsWorldModels {
                 diag::warn!(World, "cs world model {name}: {error}");
                 None
             }
-        });
+        };
         self.models.insert(key, model.clone());
         model
     }
