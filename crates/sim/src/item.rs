@@ -821,6 +821,19 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
     grab_number(world, walker, number);
 }
 
+fn split_item_ammo(room: i32, clip_r: i32, clip_l: i32, stock: i32) -> (i32, [i32; 3]) {
+    let mut room = room.max(0);
+    let mut take = |have: i32| {
+        let from = have.max(0).min(room);
+        room -= from;
+        (from, have - from)
+    };
+    let (from_stock, stock) = take(stock);
+    let (from_r, clip_r) = take(clip_r);
+    let (from_l, clip_l) = take(clip_l);
+    (from_stock + from_r + from_l, [clip_r, clip_l, stock])
+}
+
 fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
     let Some(item) = world.dropped_item_by_number(number) else {
         return;
@@ -847,8 +860,24 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
     };
     let picker_pm_type = ps.pm_type;
     let already_has = player_weapons_find_slot(&ps.weapons, weapon as i32) >= 0;
-    world.remove_dropped_item_by_number(number);
-    world.free_dynamic_entity_number(item.state.number);
+    let (taken, left) = if already_has {
+        let (_, _, have_stock) = ammo_from_ps(world, &ps, weapon);
+        let room = world
+            .combat_facts_for(weapon)
+            .map_or(0, |facts| facts.max_ammo.saturating_sub(have_stock));
+        split_item_ammo(room, item.clip_r, item.clip_l, item.stock)
+    } else {
+        (0, [0; 3])
+    };
+    let stays = already_has && left.iter().any(|&ammo| ammo > 0);
+    if stays {
+        let row = world
+            .dropped_item_mut_by_number(number)
+            .expect("touched item vanished");
+        [row.clip_r, row.clip_l, row.stock] = left;
+    } else {
+        world.despawn_dropped_item(number);
+    }
     let mut swapped_entnum = ENTITYNUM_NONE;
     let akimbo = world
         .combat_facts_for(weapon)
@@ -861,14 +890,7 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
             next.last_weapon_hand =
                 weapon_iw4::num_hands_for_held(&next.weapons, &next.weapon_data, weapon);
         }
-        add_ammo_on_ps(
-            world,
-            &mut next,
-            weapon,
-            item.clip_r,
-            item.clip_l,
-            item.stock,
-        );
+        add_ammo_on_ps(world, &mut next, weapon, 0, 0, taken);
         if let Some(slot) = world.player_mut(walker) {
             *slot = next;
         }
@@ -961,9 +983,9 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
         picker: walker.0 as i32,
         weapon,
         from_entnum: item.state.number,
-        clip_r: item.clip_r,
-        clip_l: item.clip_l,
-        stock: item.stock,
+        clip_r: if already_has { 0 } else { item.clip_r },
+        clip_l: if already_has { 0 } else { item.clip_l },
+        stock: if already_has { taken } else { item.stock },
         swapped_entnum,
         picker_pm_type,
     });
