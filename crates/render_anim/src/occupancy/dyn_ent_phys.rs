@@ -202,14 +202,12 @@ fn integrate_body(body: &mut DynEntPhysBody, clip: &ClipCollision, dt: f32) {
         CONTENTS_SOLID,
     );
     if hit.allsolid || hit.startsolid {
+        // The hull is the model's whole bounds (a potted plant's leaves with it), so a prop where
+        // the map placed it can already overlap a wall, pillar or shelf. Lifting it out a unit a
+        // step floated such props up until the hull cleared the obstacle, where they fell asleep
+        // in the air; the map's placement stands instead and the prop settles where it is.
         body.vel = Vec3::ZERO;
         body.on_ground = true;
-        let lift = if body.mins[2] < 0.0 {
-            -body.mins[2]
-        } else {
-            1.0
-        };
-        body.origin.z += lift;
         return;
     }
     if hit.fraction < 1.0 {
