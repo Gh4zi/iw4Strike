@@ -331,10 +331,14 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
             settings.resolution.width, settings.resolution.height
         ),
         format!("fullscreen={}", settings.fullscreen),
+        format!("exclusive_fullscreen={}", settings.exclusive_fullscreen),
         format!("vsync={}", settings.vsync),
         format!("master_volume={:.3}", settings.master_volume),
         format!("snd_ambient_volume={:.2}", settings.ambient_volume),
-        format!("snd_timer_warning_volume={:.2}", settings.timer_warning_volume),
+        format!(
+            "snd_timer_warning_volume={:.2}",
+            settings.timer_warning_volume
+        ),
         format!("_vgui_menus={}", u8::from(settings.vgui_menus)),
         format!("cl_roundbanner={}", settings.round_banner),
         format!("brightness={:.3}", settings.brightness),
@@ -444,6 +448,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                     settings.fullscreen = value;
                 }
             }
+            "exclusive_fullscreen" => parse_into(value.trim(), &mut settings.exclusive_fullscreen),
             "vsync" => {
                 if let Ok(value) = value.parse() {
                     settings.vsync = value;
@@ -641,7 +646,10 @@ pub(crate) fn native_menu_settings(
                     settings.resolution = frame::DisplayResolution::new(w, h);
                 }
             }
-            "ui_r_displayMode" => settings.fullscreen = value == "1",
+            "ui_r_displayMode" => {
+                settings.fullscreen = value == "1" || value == "2";
+                settings.exclusive_fullscreen = value == "2";
+            }
             "ui_r_vsync" => settings.vsync = value == "1",
             "ui_volume" => {
                 if let Ok(v) = value.parse::<f32>()
@@ -807,7 +815,11 @@ pub(crate) fn native_menu_settings(
     dvars.set("ui_r_mode", settings.resolution.to_string());
     dvars.set(
         "ui_r_displayMode",
-        if settings.fullscreen { "1" } else { "0" },
+        match (settings.fullscreen, settings.exclusive_fullscreen) {
+            (false, _) => "0",
+            (true, false) => "1",
+            (true, true) => "2",
+        },
     );
     dvars.set("ui_r_vsync", if settings.vsync { "1" } else { "0" });
     dvars.set("ui_pad_layout", settings.pad_layout.to_string());

@@ -2,7 +2,7 @@ use bevy::prelude::Resource;
 use input_iw4::{
     ANGLE2SHORT, AdjustAnglesInput, CL_ANGLESPEEDKEY_DEFAULT, CL_PITCHSPEED_DEFAULT,
     CL_YAWSPEED_DEFAULT, ClientInput, CreateCmdInput, adjust_angles, axis_to_move, create_cmd,
-    mouse_move_angles, sample_move,
+    sample_move,
 };
 use playerstate_iw4::UserCmd;
 use playerstate_iw4::buttons;

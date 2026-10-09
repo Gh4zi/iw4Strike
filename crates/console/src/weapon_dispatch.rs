@@ -93,6 +93,12 @@ pub(crate) fn register_weapon_commands(
             "autobuy — buy the best rifle and armor you can afford (in a buy zone, during the buy time)",
         ));
     }
+    if registry.resolve("buymenu").is_none() {
+        registry.register(
+            crate::CommandSpec::new("buymenu")
+                .usage("buymenu — open or close the buy menu, as its key (B) does"),
+        );
+    }
     if registry.resolve("drop").is_none() {
         registry.register(
             crate::CommandSpec::new("drop")
@@ -240,11 +246,18 @@ pub(crate) fn route_buy_menu(
     local: Res<LocalPresentClient>,
     mut inbox: ResMut<ClientActionInbox>,
     mut seq: ResMut<net::ActionRequestIds>,
+    mut actions: Option<ResMut<net::ClientActionInput>>,
 ) {
     let Some(mut menu) = menu else {
         return;
     };
     for cmd in events.read() {
+        if cmd.name == "buymenu"
+            && let Some(actions) = actions.as_mut()
+        {
+            actions.client.buy_menu = true;
+            continue;
+        }
         if cmd.name == "menuselect"
             && let Some(key) = cmd.args.first().and_then(|n| n.parse::<u8>().ok())
         {

@@ -27,6 +27,10 @@ impl core::fmt::Display for DisplayResolution {
 pub struct GameSettings {
     pub resolution: DisplayResolution,
     pub fullscreen: bool,
+    /// Fullscreen takes the monitor at `resolution` (exclusive) instead of covering it borderless
+    /// at its own: how a 4:3 resolution plays stretched, or with black bars, as the GPU's scaling
+    /// says.
+    pub exclusive_fullscreen: bool,
     pub vsync: bool,
     pub fov: f32,
     /// Counter-Strike viewmodel field of view (horizontal degrees at 4:3, widened Hor+).
@@ -105,6 +109,7 @@ impl Default for GameSettings {
         Self {
             resolution: DisplayResolution::HD,
             fullscreen: false,
+            exclusive_fullscreen: false,
             vsync: true,
             fov: Self::FOV_DEFAULT,
             viewmodel_fov: Self::VIEWMODEL_FOV_DEFAULT,
