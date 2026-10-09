@@ -308,6 +308,9 @@ struct PhysicalInputState {
     mouse_activity: f32,
     mouse_activity_start: f32,
     prompts: Option<(bool, frame::PromptStyle)>,
+    /// `m_rawinput 0`: the pointer was put back at the window's centre last frame, so its offset
+    /// now is the motion since.
+    pointer_centred: bool,
 }
 
 fn publish_client_action_input(
@@ -324,7 +327,7 @@ fn publish_client_action_input(
     mut hud_input: ResMut<frame::HudInputView>,
     settings: Res<frame::GameSettings>,
     mut out: ResMut<ClientActionInput>,
-    (gamepads, active, mut devices, mut physical, prediction, presented, local): (
+    (gamepads, active, mut devices, mut physical, prediction, presented, local, mut windows): (
         Query<&bevy::input::gamepad::Gamepad>,
         Res<frame::ActivePad>,
         ResMut<frame::InputDevices>,
@@ -332,6 +335,7 @@ fn publish_client_action_input(
         Res<net::ClientPredictionState>,
         Res<PresentedSnapshot>,
         Res<net::LocalPresentClient>,
+        Query<&mut Window, With<PrimaryWindow>>,
     ),
 ) {
     if time.elapsed_secs() - physical.mouse_activity_start > 0.3 {
@@ -361,6 +365,8 @@ fn publish_client_action_input(
     out.frame_msec = key_frame_msec(time.delta_secs());
     out.now_msec = frame_time_msec(time.elapsed_secs());
     out.sensitivity = settings.sensitivity;
+    out.zoom_sensitivity_ratio = settings.zoom_sensitivity_ratio;
+    out.fov_match = settings.sensitivity_fov_match;
     if out.m_yaw == 0.0 {
         out.m_yaw = 0.022;
     }
@@ -415,6 +421,7 @@ fn publish_client_action_input(
         }
     }
     if captured {
+        physical.pointer_centred = false;
         let mut mouse_activity = 0.0;
         for event in motion.read() {
             mouse_activity += event.delta.x.abs() + event.delta.y.abs();
@@ -505,9 +512,35 @@ fn publish_client_action_input(
         out.mouse_x += sx + rx;
         out.mouse_y += sy + ry;
 
-        for event in motion.read() {
-            out.mouse_x += event.delta.x;
-            out.mouse_y += event.delta.y;
+        if settings.raw_input {
+            // `m_rawinput 1`: the mouse's own counts.
+            for event in motion.read() {
+                out.mouse_x += event.delta.x;
+                out.mouse_y += event.delta.y;
+            }
+            physical.pointer_centred = false;
+        } else {
+            // `m_rawinput 0`: the pointer's motion, through Windows' pointer speed and
+            // acceleration, read as GoldSrc does: its offset from the window's centre, then put
+            // back there.
+            for _ in motion.read() {}
+            // Only while the game has the focus: alt-tabbed away, the pointer is the desktop's.
+            if !devices.focused {
+                physical.pointer_centred = false;
+            } else if let Ok(mut window) = windows.single_mut() {
+                let centre = Vec2::new(
+                    window.physical_width() as f32,
+                    window.physical_height() as f32,
+                ) * 0.5;
+                if let Some(at) = window.physical_cursor_position() {
+                    if physical.pointer_centred {
+                        out.mouse_x += at.x - centre.x;
+                        out.mouse_y += at.y - centre.y;
+                    }
+                    window.set_physical_cursor_position(Some(centre.as_dvec2()));
+                    physical.pointer_centred = true;
+                }
+            }
         }
         let mouse_moved = out.mouse_x != 0.0 || out.mouse_y != 0.0;
         if mouse_moved {

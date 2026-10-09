@@ -51,6 +51,30 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "viewmodel_fov [54-90] — how wide the CS gun is drawn (bigger = gun further away)",
         ));
     }
+    for (name, usage) in [
+        (
+            "sensitivity",
+            "sensitivity [value] — mouse speed, as CS's (a count turns value × 0.022°)",
+        ),
+        (
+            "sensitivity_fov_match",
+            "sensitivity_fov_match [0|1] — 1: CS's sensitivity at fov 90, converted to your fov \
+             (same feel on screen); 0: the same turn per count at any fov",
+        ),
+        (
+            "zoom_sensitivity_ratio",
+            "zoom_sensitivity_ratio [value] — scoped mouse speed (1 CS:GO / CS2, 1.2 CS 1.6)",
+        ),
+        (
+            "m_rawinput",
+            "m_rawinput [0|1] — 1: the mouse's raw counts; 0: Windows' pointer (its speed and \
+             acceleration)",
+        ),
+    ] {
+        if registry.resolve(name).is_none() {
+            registry.register(crate::CommandSpec::new(name).usage(usage));
+        }
+    }
     if registry.resolve("cl_righthand").is_none() {
         registry.register(
             crate::CommandSpec::new("cl_righthand").usage(
@@ -200,6 +224,55 @@ pub(crate) fn route_movement_commands(
                 },
                 _ => "usage: viewmodel_fov [54-90]".to_owned(),
             },
+            "sensitivity" | "zoom_sensitivity_ratio" => {
+                let slot = if cmd.name == "sensitivity" {
+                    &mut game.sensitivity
+                } else {
+                    &mut game.zoom_sensitivity_ratio
+                };
+                match cmd.args.as_slice() {
+                    [] => format!("{} = {}", cmd.name, *slot),
+                    [arg] => match arg.parse::<f32>() {
+                        Ok(value) if value.is_finite() && value > 0.0 => {
+                            *slot = value;
+                            game.sanitize();
+                            game.touch();
+                            let now = if cmd.name == "sensitivity" {
+                                game.sensitivity
+                            } else {
+                                game.zoom_sensitivity_ratio
+                            };
+                            format!("{} = {now}", cmd.name)
+                        }
+                        _ => format!("usage: {} [value]", cmd.name),
+                    },
+                    _ => format!("usage: {} [value]", cmd.name),
+                }
+            }
+            "sensitivity_fov_match" | "m_rawinput" => {
+                let raw = cmd.name == "m_rawinput";
+                match cmd.args.as_slice() {
+                    [] => format!(
+                        "{} = {}",
+                        cmd.name,
+                        u8::from(if raw {
+                            game.raw_input
+                        } else {
+                            game.sensitivity_fov_match
+                        })
+                    ),
+                    [arg] if arg == "0" || arg == "1" => {
+                        if raw {
+                            game.raw_input = arg == "1";
+                        } else {
+                            game.sensitivity_fov_match = arg == "1";
+                        }
+                        game.touch();
+                        format!("{} = {arg}", cmd.name)
+                    }
+                    _ => format!("usage: {} [0|1]", cmd.name),
+                }
+            }
             "cl_righthand" => match cmd.args.as_slice() {
                 [] => format!("cl_righthand = {}", u8::from(game.right_hand)),
                 [arg] if arg == "0" || arg == "1" => {

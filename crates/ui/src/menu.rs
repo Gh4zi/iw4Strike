@@ -85,17 +85,21 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
             *item = asset_game::MenuItem {
                 name: "look_sensitivity".into(),
                 dvar: "ui_sensitivity".into(),
+                // CS's `sensitivity`: players' values sit around 0.5-5, to two decimals.
                 slider: Some(asset_game::MenuSlider {
                     min: 0.1,
-                    max: 30.0,
-                    step: 0.1,
+                    max: 10.0,
+                    step: 0.01,
                     display_range: None,
-                    decimals: 1,
+                    decimals: 2,
                     suffix: String::new(),
                 }),
                 ..template.clone()
             };
             item.rect.y = y;
+        }
+        if name == "pc_options_look" {
+            mouse_rows(&mut menu.items);
         }
         if matches!(name.as_str(), "popup_endgame" | "popup_endgame_ranked") {
             for item in &mut menu.items {
@@ -200,6 +204,101 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
 /// Game Rules > Team Options rows of ours, copies of a stock toggle (button plus value
 /// display) under the panel's last row: how many enemy bots, and in team modes how many
 /// friendly bots, join when the match starts.
+/// The Look page's mouse rows as CS players expect them. MW2's yes/no rows (Invert Mouse, Smooth
+/// Mouse, Free Look) drew no value here; they become choices for Invert Mouse, Raw Input
+/// (`m_rawinput`) and Sensitivity FOV Match, and a Zoom Sensitivity Ratio slider goes under them,
+/// the key bindings a row lower.
+fn mouse_rows(items: &mut Vec<asset_game::MenuItem>) {
+    const ROW: f32 = 20.0;
+    let on_off = [("Off", "0"), ("On", "1")];
+    let rows = [
+        (
+            "ui_mousePitch",
+            "ui_invert_mouse",
+            "@MENU_INVERT_MOUSE",
+            None,
+            [("No", "0"), ("Yes", "1")],
+        ),
+        (
+            "m_filter",
+            "ui_raw_input",
+            "@MENU_SMOOTH_MOUSE",
+            Some("Raw Input"),
+            on_off,
+        ),
+        (
+            "cl_freelook",
+            "ui_fov_match",
+            "@MENU_FREE_LOOK",
+            Some("Sensitivity FOV Match"),
+            on_off,
+        ),
+    ];
+    for (old, dvar, label_key, label, choices) in rows {
+        if let Some(item) = items.iter_mut().find(|item| item.dvar == old) {
+            item.item_type = 12;
+            dvar.clone_into(&mut item.dvar);
+            item.choices = choices
+                .iter()
+                .map(|(text, value)| ((*text).to_owned(), (*value).to_owned()))
+                .collect();
+            item.text_align_mode = 10;
+            item.text_align_x = -8.0;
+            item.text_align_y = 0.0;
+            item.handlers.action = vec![asset_game::MenuEvent::Script("play mouse_click;".into())];
+        }
+        if let Some(text) = label
+            && let Some(item) = items.iter_mut().find(|item| item.text_key == label_key)
+        {
+            text.clone_into(&mut item.text_key);
+        }
+    }
+    let Some(binds_y) = items
+        .iter()
+        .filter(|item| item.item_type == 14)
+        .map(|item| item.rect.y)
+        .reduce(f32::min)
+    else {
+        return;
+    };
+    let (Some(slider), Some(label)) = (
+        items
+            .iter()
+            .find(|item| item.name == "look_sensitivity")
+            .cloned(),
+        items
+            .iter()
+            .find(|item| item.text_key == "@MENU_MOUSE_SENSITIVITY")
+            .cloned(),
+    ) else {
+        return;
+    };
+    for item in items.iter_mut() {
+        if item.rect.x == 232.0 && item.rect.y >= binds_y {
+            item.rect.y += ROW;
+        }
+    }
+    let mut ratio = asset_game::MenuItem {
+        name: "look_zoom_sensitivity_ratio".into(),
+        dvar: "ui_zoom_sensitivity_ratio".into(),
+        slider: Some(asset_game::MenuSlider {
+            min: 0.1,
+            max: 3.0,
+            step: 0.05,
+            display_range: None,
+            decimals: 2,
+            suffix: String::new(),
+        }),
+        ..slider
+    };
+    ratio.rect.y = binds_y;
+    let mut ratio_label = label;
+    ratio_label.text_key = "Zoom Sensitivity Ratio".into();
+    ratio_label.rect.y = binds_y;
+    items.push(ratio);
+    items.push(ratio_label);
+}
+
 fn add_bot_rows(items: &mut Vec<asset_game::MenuItem>) {
     let pair = |items: &[asset_game::MenuItem], dvar: &str| {
         let button = items

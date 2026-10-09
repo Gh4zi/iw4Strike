@@ -38,6 +38,14 @@ pub struct ClientActionInput {
     pub fov_scale: f32,
 
     pub shellshock_look_scale: f32,
+    /// `zoom_sensitivity_ratio`: a CS scope's mouse speed over its fov's share of 90.
+    pub zoom_sensitivity_ratio: f32,
+    /// `sensitivity_fov_match`: CS's sensitivity at fov 90 converted to the fov in use.
+    pub fov_match: bool,
+    /// The part of a short-angle unit the mouse turned but the last command could not carry
+    /// (pitch, yaw), added to the next: CS keeps view angles in floats, and dropping it every
+    /// frame slowed slow aiming at high frame rates.
+    pub mouse_carry: [f32; 2],
 
     pub cgame_max_pitch_speed: f32,
 
@@ -85,6 +93,9 @@ impl Default for ClientActionInput {
             mouse_accel: 0.0,
             fov_scale: 1.0,
             shellshock_look_scale: 1.0,
+            zoom_sensitivity_ratio: 1.0,
+            fov_match: true,
+            mouse_carry: [0.0; 2],
             cgame_max_pitch_speed: 0.0,
             cgame_max_yaw_speed: 0.0,
             m_yaw: 0.022,
@@ -174,7 +185,10 @@ pub fn build_usercmd(input: &mut ClientActionInput, look: &LookState, server_tim
         input.mouse_accel,
         input.fov_scale,
     );
-    let (mouse_pitch, mouse_yaw) = mouse_move_angles(mx, my, input.m_yaw, input.m_pitch);
+    let pitch = my * input.m_pitch * ANGLE2SHORT + input.mouse_carry[0];
+    let yaw = -mx * input.m_yaw * ANGLE2SHORT + input.mouse_carry[1];
+    let (mouse_pitch, mouse_yaw) = (pitch.trunc() as i32, yaw.trunc() as i32);
+    input.mouse_carry = [pitch.fract(), yaw.fract()];
     let mouse_look = input.mouse_x != 0.0 || input.mouse_y != 0.0;
     let pad_pitch = if mouse_look {
         0

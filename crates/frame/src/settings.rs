@@ -60,8 +60,19 @@ pub struct GameSettings {
     pub max_frames_ahead: u8,
     /// The CS crosshair (`cl_crosshair*`).
     pub crosshair: crate::Crosshair,
+    /// CS's `sensitivity`: degrees a mouse count turns, over `m_yaw` (0.022), at fov 90.
     pub sensitivity: f32,
     pub invert_mouse: bool,
+    /// `sensitivity_fov_match`: at another fov the sensitivity turns as CS's at 90 looks on
+    /// screen (monitor distance 0%, by the fovs' half-angle tangents); off, a count turns CS's
+    /// degrees at any fov (the same distance a full turn).
+    pub sensitivity_fov_match: bool,
+    /// `zoom_sensitivity_ratio`: a CS scope slows the mouse by its fov over 90 times this (1 in
+    /// CS:GO and CS2, 1.2 in CS 1.6).
+    pub zoom_sensitivity_ratio: f32,
+    /// `m_rawinput`: the mouse's own counts (Windows raw input); off, the pointer's motion, with
+    /// Windows' pointer speed and acceleration.
+    pub raw_input: bool,
     pub player_name: String,
 
     pub pad_layout: u8,
@@ -112,8 +123,11 @@ impl Default for GameSettings {
             bloom: true,
             max_frames_ahead: Self::MAX_FRAMES_AHEAD_DEFAULT,
             crosshair: crate::Crosshair::default(),
-            sensitivity: 5.0,
+            sensitivity: 2.5,
             invert_mouse: false,
+            sensitivity_fov_match: true,
+            zoom_sensitivity_ratio: 1.0,
+            raw_input: true,
             player_name: "Player".to_owned(),
             pad_layout: 0,
             pad_stick_layout: 0,
@@ -184,7 +198,12 @@ impl GameSettings {
             0.0
         };
         self.master_volume = self.master_volume.clamp(0.0, 1.0);
-        self.sensitivity = self.sensitivity.clamp(0.1, 30.0);
+        self.sensitivity = self.sensitivity.clamp(0.01, 30.0);
+        self.zoom_sensitivity_ratio = if self.zoom_sensitivity_ratio.is_finite() {
+            self.zoom_sensitivity_ratio.clamp(0.1, 5.0)
+        } else {
+            1.0
+        };
         self.max_frames_ahead = self.max_frames_ahead.clamp(1, 2);
         self.shadows = self.shadows.min(Self::SHADOWS_ALL);
         self.crosshair.sanitize();

@@ -349,6 +349,15 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("bloom={}", settings.bloom),
         format!("max_frames_ahead={}", settings.max_frames_ahead),
         format!("sensitivity={:.3}", settings.sensitivity),
+        format!(
+            "sensitivity_fov_match={}",
+            u8::from(settings.sensitivity_fov_match)
+        ),
+        format!(
+            "zoom_sensitivity_ratio={:.3}",
+            settings.zoom_sensitivity_ratio
+        ),
+        format!("m_rawinput={}", u8::from(settings.raw_input)),
         format!("invert_mouse={}", settings.invert_mouse),
         format!("player_name={safe_name}"),
         format!("pad_layout={}", settings.pad_layout),
@@ -513,6 +522,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                     settings.sensitivity = value;
                 }
             }
+            "sensitivity_fov_match" => settings.sensitivity_fov_match = value.trim() != "0",
+            "zoom_sensitivity_ratio" => {
+                parse_into(value.trim(), &mut settings.zoom_sensitivity_ratio)
+            }
+            "m_rawinput" => settings.raw_input = value.trim() != "0",
             "invert_mouse" => {
                 if let Ok(value) = value.parse() {
                     settings.invert_mouse = value;
@@ -656,6 +670,10 @@ pub(crate) fn native_menu_settings(
                     settings.sensitivity = v;
                 }
             }
+            "ui_zoom_sensitivity_ratio" => parse_into(value, &mut settings.zoom_sensitivity_ratio),
+            "ui_invert_mouse" => settings.invert_mouse = value == "1",
+            "ui_raw_input" => settings.raw_input = value == "1",
+            "ui_fov_match" => settings.sensitivity_fov_match = value == "1",
             "ui_fov" => {
                 if let Ok(v) = value.parse::<f32>() {
                     settings.fov = v;
@@ -762,6 +780,17 @@ pub(crate) fn native_menu_settings(
     dvars.set("ui_brightness", settings.brightness.to_string());
     dvars.set("ui_fov", settings.fov.to_string());
     dvars.set("ui_sensitivity", settings.sensitivity.to_string());
+    dvars.set(
+        "ui_zoom_sensitivity_ratio",
+        settings.zoom_sensitivity_ratio.to_string(),
+    );
+    for (dvar, on) in [
+        ("ui_invert_mouse", settings.invert_mouse),
+        ("ui_raw_input", settings.raw_input),
+        ("ui_fov_match", settings.sensitivity_fov_match),
+    ] {
+        dvars.set(dvar, if on { "1" } else { "0" });
+    }
     for name in ["ui_third_person", "cg_thirdPerson"] {
         dvars.set(name, if settings.third_person { "1" } else { "0" });
     }

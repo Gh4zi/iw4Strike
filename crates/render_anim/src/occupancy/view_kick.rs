@@ -534,9 +534,21 @@ fn apply_fpv_lens_fov(
     // A CS scope snaps straight to its zoom (4:3 horizontal degrees, as CS's fov), and the mouse
     // slows with it.
     let horiz = if cs_zoom != 0 { cs_zoom as f32 } else { horiz };
-    let zoom_sensitivity = zoom_sensitivity(horiz);
     if let Some(actions) = actions {
-        actions.fov_scale = zoom_sensitivity * actions.shellshock_look_scale;
+        // CS turns `sensitivity * m_yaw` degrees a count at its fov of 90, and a scope slows it by
+        // its fov over 90 times `zoom_sensitivity_ratio` (Source's `GetFOVSensitivityAdjust`,
+        // GoldSrc's the same). Another fov keeps CS's feel on screen (`sensitivity_fov_match`:
+        // by the half-angle tangents) or its degrees a count. MW2 scales by the view's width.
+        let zoom = if !movement_iw4::rules::CS_RULES {
+            zoom_sensitivity(horiz)
+        } else if cs_zoom != 0 {
+            cs_zoom as f32 / 90.0 * actions.zoom_sensitivity_ratio
+        } else if actions.fov_match {
+            (horiz.to_radians() * 0.5).tan()
+        } else {
+            1.0
+        };
+        actions.fov_scale = zoom * actions.shellshock_look_scale;
     }
     let vertical = horizontal_to_vertical_fov_deg(horiz).to_radians();
     for mut projection in lenses.iter_mut() {
