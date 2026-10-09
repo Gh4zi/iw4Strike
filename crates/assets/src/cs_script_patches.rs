@@ -36,7 +36,7 @@ const GAMEOBJECTS: &str = "maps/mp/gametypes/_gameobjects";
 ///   (the site's use code then runs it: 3 s, frozen, progress bar).
 /// - `csBombCarrierThink` (the carrier): attack with the C4 outside a site says where to plant.
 /// - `csBombDropThink` (the carrier): `drop` with the C4 in hand (the engine's `cs_drop_bomb`)
-///   drops the bomb at the carrier's feet.
+///   drops the bomb at the carrier's feet, for a teammate to take (the dropper only once away).
 const CS_BOMB_FUNCTIONS: &str = r#"csPlantThink()
 {
     self endon ( "deleted" );
@@ -92,7 +92,12 @@ csBombDropThink( bomb )
     self endon ( "cs_bomb_gone" );
     self waittill ( "cs_drop_bomb" );
     if ( isDefined( self.carryObject ) && self.carryObject == bomb && !( isDefined( self.isPlanting ) && self.isPlanting ) )
+    {
+        // The bomb lands at the dropper's feet, in its pickup trigger: they take it again only
+        // once they have walked away, so a teammate can have it.
+        self thread maps\mp\gametypes\_gameobjects::pickupObjectDelay( self.origin );
         bomb thread maps\mp\gametypes\_gameobjects::setDropped();
+    }
 }
 
 initGametypeAwards()
@@ -263,6 +268,16 @@ const PATCHES: &[Patch] = &[
         "\tif ( level.inGracePeriod )\n\t\treturn;\n\n\tif ( level.teamBased )\n\t{\n\t\tlivesCount",
         "\tif ( level.teamBased )\n\t{\n\t\tlivesCount",
         "defusal: a team wiped out in the first 15 s ends the round at once",
+    ),
+    // A carried object picked up by touch (the bomb) skipped `pickupObjectDelay`, which only the
+    // "use" pickups honoured: the bomb a player dropped at their feet was theirs again at once.
+    // MW2 never dropped the bomb by hand; CS does, for a teammate.
+    once(
+        GAMEOBJECTS,
+        "if ( self canInteractWith( player.pers[\"team\"], player ) && self.claimTeam == \"none\" )",
+        "if ( !( self.type == \"carryObject\" && !player.canPickupObject ) \
+         && self canInteractWith( player.pers[\"team\"], player ) && self.claimTeam == \"none\" )",
+        "CS C4: a dropped bomb isn't the dropper's again until they walk away",
     ),
     // Changing team kills a living player (`self suicide()`), then moves them (`addToTeam`). The
     // engine settles a scripted death after the script that caused it, so `Callback_PlayerKilled`
