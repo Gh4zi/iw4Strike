@@ -866,11 +866,17 @@ pub fn sample_client_input(
         .and_then(|snapshot| snapshot.meta.for_client(local.0))
         .and_then(|meta| meta.location_selection.as_ref())
         .map(|selection| selection.choose_direction);
-    let location_mouse = choose_direction.is_some().then(|| {
+    let location_input = choose_direction.is_some().then(|| {
         let mouse = (actions.mouse_x, actions.mouse_y);
+        let pad = LocationPad::capture(&actions);
         actions.mouse_x = 0.0;
         actions.mouse_y = 0.0;
-        mouse
+        actions.pad_look_delta = [0.0; 2];
+        actions.pad_move = [0.0; 2];
+        actions.pad_turn_rate = [0.0; 2];
+        actions.pad_lockon = None;
+        actions.pad_autoaim = None;
+        (mouse, pad)
     });
     let remote_mouse = presented
         .snapshot()
@@ -1119,8 +1125,8 @@ pub fn sample_client_input(
             cmd.off_hand_index = loadout.tactical as u16;
         }
     }
-    match location_mouse {
-        Some((mouse_x, mouse_y)) => {
+    match location_input {
+        Some(((mouse_x, mouse_y), pad)) => {
             let held = cmd.buttons;
             let directing =
                 choose_direction == Some(true) && held & playerstate_iw4::buttons::ADS != 0;
@@ -1129,7 +1135,15 @@ pub fn sample_client_input(
             } else {
                 playerstate_iw4::buttons::ADS | playerstate_iw4::buttons::MELEE_CHARGE
             };
-            cmd.selected_location = cursor.step(&actions, mouse_x, mouse_y, directing);
+            cmd.selected_location = cursor.step(
+                &actions,
+                mouse_x,
+                mouse_y,
+                pad,
+                cls.frametime_secs(),
+                choose_direction == Some(true),
+                directing,
+            );
             if choose_direction != Some(true) {
                 cmd.selected_location[2] = 0;
             }
@@ -1248,16 +1262,61 @@ impl Default for LocationCursor {
 
 const LOCATION_CURSOR_SPEED: f32 = 0.6;
 
+const LOCATION_PAD_SPEED: f32 = 0.6;
+
+const LOCATION_PAD_AIM_DEFLECTION: f32 = 0.5;
+
+#[derive(Clone, Copy, Debug)]
+struct LocationPad {
+    /// Forward and right.
+    movement: [f32; 2],
+    /// Right and up, with up map-up even when look is inverted.
+    look: [f32; 2],
+    look_deflection: f32,
+}
+
+impl LocationPad {
+    fn capture(input: &ClientActionInput) -> Self {
+        let up = if input.pad_invert {
+            -input.pad_look[1]
+        } else {
+            input.pad_look[1]
+        };
+        Self {
+            movement: input.pad_move,
+            look: [input.pad_look[0], up],
+            look_deflection: input.pad_deflection,
+        }
+    }
+}
+
 impl LocationCursor {
+    #[allow(clippy::too_many_arguments)]
     fn step(
         &mut self,
         input: &ClientActionInput,
         mouse_x: f32,
         mouse_y: f32,
+        pad: LocationPad,
+        dt: f32,
+        choose_direction: bool,
         directing: bool,
     ) -> [u8; 3] {
         let scale = LOCATION_CURSOR_SPEED * input.sensitivity * 0.002;
-        let moved = [mouse_x * scale, mouse_y * scale];
+        let further = |a: f32, b: f32| if a.abs() >= b.abs() { a } else { b };
+        let (right, up) = if choose_direction {
+            (pad.movement[1], pad.movement[0])
+        } else {
+            (
+                further(pad.look[0], pad.movement[1]),
+                further(pad.look[1], pad.movement[0]),
+            )
+        };
+        let pad_step = LOCATION_PAD_SPEED * dt.clamp(0.0, 0.1);
+        let moved = [
+            mouse_x * scale + right * pad_step,
+            mouse_y * scale - up * pad_step,
+        ];
         self.directing = directing;
         if directing {
             self.aim = [
@@ -1274,6 +1333,15 @@ impl LocationCursor {
                 (self.at[1] + moved[1]).clamp(0.0, 1.0),
             ];
             self.aim = self.at;
+            if choose_direction
+                && pad.look_deflection >= LOCATION_PAD_AIM_DEFLECTION
+                && (pad.look[0] != 0.0 || pad.look[1] != 0.0)
+            {
+                self.yaw = (-pad.look[0])
+                    .atan2(pad.look[1])
+                    .to_degrees()
+                    .rem_euclid(360.0);
+            }
         }
         let byte = |v: f32| ((v * 255.0 - 128.0).round() as i32).clamp(-128, 127) as i8 as u8;
         let yaw = (self.yaw * (256.0 / 360.0)).round() as i32 as u8;
