@@ -1807,8 +1807,14 @@ pub fn publish_presented(
             },
         );
         local_body_angles = predicted.viewangles;
-        // CS weapons: the camera shows the recoil punch the next bullet will fire along.
-        for (angle, punch) in predicted.viewangles.iter_mut().zip(predicted.cs_punch) {
+        // CS weapons: the camera shows the recoil punch the next bullet will fire along (CS:GO's
+        // view follows part of it, plus its shake).
+        let recoil = weapon_iw4::csgo::view_offset(
+            predicted.cs_shooting_mode,
+            predicted.cs_punch,
+            predicted.cs_view_punch,
+        );
+        for (angle, punch) in predicted.viewangles.iter_mut().zip(recoil) {
             *angle += punch;
         }
     }

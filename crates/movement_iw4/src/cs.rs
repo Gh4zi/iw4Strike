@@ -179,7 +179,10 @@ pub(crate) fn pmove<C: CollisionBackend>(
         collision,
     );
 
-    {
+    let csgo_ladder = csgo_ladders();
+    let on_ladder = if csgo_ladder {
+        cs_ladder_grab(ps, &pml, cmd, bounds, collision) && cs_ladder_climb(ps, &pml, cmd, walk_key)
+    } else {
         let mut ladder_backend = LadderBackend { collision, bounds };
         if check_ladder_move(
             ps,
@@ -188,9 +191,21 @@ pub(crate) fn pmove<C: CollisionBackend>(
         ) {
             pml.record_jump_animation(crate::JumpAnimation::Forward, true);
         }
-    }
+        ps.pm_flags & pm_flags::LADDER != 0
+    };
 
-    if ps.pm_flags & pm_flags::LADDER != 0 {
+    if on_ladder && csgo_ladder {
+        // On a CS:GO ladder there is no gravity; the climb velocity slides along walls.
+        slide_move(
+            ps,
+            &pml,
+            collision,
+            bounds.mins,
+            bounds.maxs,
+            bounds.tracemask,
+            None,
+        );
+    } else if on_ladder {
         ladder_move(
             ps,
             &mut pml,
@@ -228,7 +243,11 @@ pub(crate) fn pmove<C: CollisionBackend>(
     crate::crash::cs_landing_pain(ps, &pml, fall_damage(landing_speed));
 
     if ps.pm_flags & pm_flags::LADDER != 0 {
-        ladder_footsteps(ps, pml.msec, cmd.server_time);
+        if csgo_ladder {
+            crate::footstep::cs_ladder_footsteps(ps, pml.msec, walk_key);
+        } else {
+            ladder_footsteps(ps, pml.msec, cmd.server_time);
+        }
     } else {
         let old_bob = ps.bob_cycle as u8;
         footsteps_bob_cycle(
@@ -761,6 +780,174 @@ impl<C: CollisionBackend> LadderAttachBackend for LadderBackend<'_, C> {
             surface_flags: hit.surface_flags,
         })
     }
+}
+
+/// CS:GO's ladders (`CGameMovement::LadderMove` with CS's `ClimbSpeed`), for every movement
+/// preset but CS 1.6 (which keeps its own).
+fn csgo_ladders() -> bool {
+    crate::rules::mode() != crate::rules::MovementMode::Cs16
+}
+
+/// `MAX_CLIMB_SPEED`; crouching or walking climbs at `CS_PLAYER_SPEED_CLIMB_MODIFIER` of it, and
+/// CS scales every climb by `sv_ladder_scale_speed`.
+const CS_LADDER_CLIMB_SPEED: f32 = 200.0;
+const CS_LADDER_SLOW_CLIMB: f32 = 0.34;
+const CS_LADDER_SCALE: f32 = 0.78;
+/// Moving across the ladder while looking more than 135 degrees off its face keeps only this much
+/// of the sideways part (`sv_ladder_angle`, `sv_ladder_dampen`).
+const CS_LADDER_ANGLE: f32 = -0.707;
+const CS_LADDER_DAMPEN: f32 = 0.2;
+/// Jumping lets go, pushed straight off the ladder; not in the first 0.2 s on it
+/// (`IGNORE_JUMP_TIME`).
+const CS_LADDER_JUMP_SPEED: f32 = 270.0;
+const CS_LADDER_JUMP_IGNORE_MS: i32 = 200;
+/// The ladder is grabbed by moving into it from this close and held from this far
+/// (`LadderDistance`).
+const CS_LADDER_REACH: f32 = 2.0;
+const CS_LADDER_HOLD: f32 = 10.0;
+/// Walking off a ledge with a ladder below (`bCatchCliffLadder`): looked for this far back along
+/// the fall, from this far down.
+const CS_LADDER_EDGE_GRAB: f32 = 24.0;
+const CS_LADDER_EDGE_DROP: f32 = 6.0;
+/// Only a walk off the ledge catches the ladder, not a jump (`m_bHasWalkMovedSinceLastJump`):
+/// none for this long since the last jump.
+const CS_LADDER_EDGE_AFTER_JUMP_MS: i32 = 1000;
+
+fn is_ladder(trace: &trace_iw4::Trace) -> bool {
+    // A flat surface is never a ladder (`CCSGameMovement::OnLadder`).
+    trace.fraction < 1.0
+        && trace.surface_flags & crate::ladder::SURF_LADDER != 0
+        && trace.normal[2] != 1.0
+}
+
+/// Whether the player is on a ladder this command (`LadderMove`'s grab): moving into one within
+/// `CS_LADDER_REACH`, or still within `CS_LADDER_HOLD` of the one they are on, or walking off a
+/// ledge onto one below (not after a jump, falling slowly, moving sideways too).
+fn cs_ladder_grab<C: CollisionBackend>(
+    ps: &mut PlayerState,
+    pml: &Pml,
+    cmd: &UserCmd,
+    bounds: MoveBounds,
+    collision: &C,
+) -> bool {
+    let on = ps.pm_flags & pm_flags::LADDER != 0;
+    let (fm, rm) = (f32::from(cmd.forwardmove), f32::from(cmd.rightmove));
+    let dir = if on {
+        ps.v_ladder_vec.map(|v| -v)
+    } else if fm != 0.0 || rm != 0.0 {
+        let mut dir: [f32; 3] = core::array::from_fn(|i| pml.forward[i] * fm + pml.right[i] * rm);
+        normalize(&mut dir);
+        dir
+    } else {
+        return false;
+    };
+    let reach = if on { CS_LADDER_HOLD } else { CS_LADDER_REACH };
+    let trace_box = |start: [f32; 3], end: [f32; 3]| {
+        collision.trace(GroundTraceInput {
+            start,
+            end,
+            mins: bounds.mins,
+            maxs: bounds.maxs,
+            tracemask: bounds.tracemask,
+        })
+    };
+    let end: [f32; 3] = core::array::from_fn(|i| ps.origin[i] + dir[i] * reach);
+    let hit = trace_box(ps.origin, end);
+    let mut normal = is_ladder(&hit).then_some(hit.normal);
+    let v = ps.velocity;
+    if normal.is_none()
+        && !on
+        && ps.ground_entity_num == ENTITYNUM_NONE
+        && cmd.server_time.wrapping_sub(ps.jump_time) > CS_LADDER_EDGE_AFTER_JUMP_MS
+        && v[2] <= 0.0
+        && v[2] > -50.0
+        && v[0] != 0.0
+        && v[1] != 0.0
+    {
+        let mut back = v;
+        normalize(&mut back);
+        let from = [
+            ps.origin[0],
+            ps.origin[1],
+            ps.origin[2] - CS_LADDER_EDGE_DROP,
+        ];
+        let to: [f32; 3] = core::array::from_fn(|i| ps.origin[i] - back[i] * CS_LADDER_EDGE_GRAB);
+        let edge = trace_box(from, to);
+        if is_ladder(&edge) {
+            ps.velocity = [0.0; 3];
+            ps.origin = edge.endpos;
+            normal = Some(edge.normal);
+        }
+    }
+    let Some(normal) = normal else {
+        ps.pm_flags &= !pm_flags::LADDER;
+        return false;
+    };
+    if !on {
+        ps.cs_ladder_ms = cmd.server_time;
+    }
+    ps.v_ladder_vec = normal;
+    ps.pm_flags |= pm_flags::LADDER;
+    true
+}
+
+/// Climbing (`LadderMove`): forward/back and strafe each at the climb speed along the view, the
+/// part into the ladder turned into going up or down it, scaled down; standing on the floor and
+/// moving away from it steps off. Nothing pressed holds still. Jump lets go, pushed off. Returns
+/// whether the player is still on the ladder.
+fn cs_ladder_climb(ps: &mut PlayerState, pml: &Pml, cmd: &UserCmd, walk_key: bool) -> bool {
+    let n = ps.v_ladder_vec;
+    if cmd.buttons & buttons::JUMP != 0 {
+        if cmd.server_time.wrapping_sub(ps.cs_ladder_ms) >= CS_LADDER_JUMP_IGNORE_MS {
+            ps.pm_flags &= !pm_flags::LADDER;
+            ps.velocity = n.map(|v| v * CS_LADDER_JUMP_SPEED);
+            return false;
+        }
+        return true;
+    }
+    let climb = CS_LADDER_CLIMB_SPEED
+        * if cmd.buttons & buttons::CROUCH != 0 || walk_key {
+            CS_LADDER_SLOW_CLIMB
+        } else {
+            1.0
+        };
+    let step = |mv: i8| match mv {
+        0 => 0.0,
+        m if m > 0 => climb,
+        _ => -climb,
+    };
+    let (forward_speed, right_speed) = (step(cmd.forwardmove), step(cmd.rightmove));
+    if forward_speed == 0.0 && right_speed == 0.0 {
+        ps.velocity = [0.0; 3];
+        return true;
+    }
+    let velocity: [f32; 3] =
+        core::array::from_fn(|i| pml.forward[i] * forward_speed + pml.right[i] * right_speed);
+    let mut perp = [-n[1], n[0], 0.0];
+    normalize(&mut perp);
+    let into = dot(&velocity, &n);
+    let cross: [f32; 3] = n.map(|v| v * into);
+    let mut lateral: [f32; 3] = core::array::from_fn(|i| velocity[i] - cross[i]);
+    let up = [
+        n[1] * perp[2] - n[2] * perp[1],
+        n[2] * perp[0] - n[0] * perp[2],
+        n[0] * perp[1] - n[1] * perp[0],
+    ];
+    let along = dot(&up, &lateral);
+    let across = dot(&perp, &lateral);
+    let mut angle: [f32; 3] = core::array::from_fn(|i| perp[i] * across + cross[i]);
+    normalize(&mut angle);
+    if dot(&angle, &n) < CS_LADDER_ANGLE {
+        lateral = core::array::from_fn(|i| up[i] * along + perp[i] * CS_LADDER_DAMPEN * across);
+    }
+    ps.velocity = core::array::from_fn(|i| (lateral[i] - up[i] * into) * CS_LADDER_SCALE);
+    let on_floor = pml.walking != 0 || ps.ground_entity_num != ENTITYNUM_NONE;
+    if on_floor && into > 0.0 {
+        for (v, axis) in ps.velocity.iter_mut().zip(n) {
+            *v += axis * CS_LADDER_CLIMB_SPEED;
+        }
+    }
+    true
 }
 
 fn length(v: &[f32; 3]) -> f32 {

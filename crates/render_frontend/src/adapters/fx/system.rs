@@ -2636,9 +2636,18 @@ fn explosion(
     } else {
         cursor.explosion_gap = cursor.explosion_gap.saturating_add(1);
     }
+    // The second firing of a CS smoke's cloud only keeps the cloud going: no sound.
+    let refire = payload.event_parm == weapon_iw4::cs::CS_SMOKE_REFIRE_PARM
+        && weapons
+            .as_deref()
+            .and_then(|weapons| {
+                weapon_iw4::cs::cs_grenade_for_projectile(&weapons.0.script_name_of(payload.weapon))
+            })
+            .is_some_and(|grenade| grenade.name == "smokegrenade");
     let alias = weapons
         .as_deref()
         .zip(sound_bank.as_deref())
+        .filter(|_| !refire)
         .and_then(|(weapons, bank)| {
             cs_grenade_explosion_alias(
                 &weapons.0.script_name_of(payload.weapon),
@@ -2672,7 +2681,7 @@ fn explosion(
             origin_inches: Some(payload.origin),
             snd_ent: audio::ent_from_number(payload.number),
         });
-    } else {
+    } else if !refire {
         cursor.explosion_sound_gap = cursor.explosion_sound_gap.saturating_add(1);
     }
     log_combat_fx_gaps(&mut cursor, &combat);

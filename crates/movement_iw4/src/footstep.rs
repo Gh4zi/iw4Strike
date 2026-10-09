@@ -366,6 +366,34 @@ pub fn footstep_event(
     true
 }
 
+/// CS:GO's step every this long on a ladder (`STEPSOUNDTIME_ON_LADDER` 200 ms times
+/// `sv_footstep_sound_frequency` 0.97, plus 100 on a ladder), and none slower than CS's walk
+/// (`CS_PLAYER_SPEED_RUN` 260 times the walk modifier 0.52) or with the walk key held.
+const CS_LADDER_STEP_MS: f32 = 200.0 * 0.97 + 100.0;
+const CS_STEP_MIN_SPEED: f32 = 260.0 * 0.52;
+
+/// CS:GO's ladder steps (`CCSPlayer::UpdateStepSound`): one each `CS_LADDER_STEP_MS` while
+/// climbing fast enough; crouching or walking up a ladder is silent.
+pub(crate) fn cs_ladder_footsteps(ps: &mut PlayerState, msec: i32, walk_key: bool) -> bool {
+    if (ps.pm_flags & pm_flags::LADDER) == 0 {
+        return false;
+    }
+    let v = ps.velocity;
+    let speed = libm::sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if walk_key || speed < CS_STEP_MIN_SPEED {
+        return false;
+    }
+    // The bob cycle steps once every half turn.
+    let old = ps.bob_cycle as u8;
+    let new = libm::roundf(old as f32 + msec as f32 * 128.0 / CS_LADDER_STEP_MS) as i32 as u8;
+    ps.bob_cycle = i32::from(new);
+    if !bob_cycle_wrapped(old, new) {
+        return false;
+    }
+    add_predictable_event(ps, EV_FOOTSTEP_RUN, CS_LADDER_STEP_SURFACE as i32);
+    true
+}
+
 pub fn ladder_footsteps(ps: &mut PlayerState, msec: i32, server_time: i32) -> bool {
     if (ps.pm_flags & pm_flags::LADDER) == 0 {
         return false;

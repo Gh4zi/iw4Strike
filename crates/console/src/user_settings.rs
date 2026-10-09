@@ -346,6 +346,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("viewmodel_fov={:.0}", settings.viewmodel_fov),
         format!("cl_righthand={}", u8::from(settings.right_hand)),
         format!("mv_mode={}", settings.mv_mode),
+        format!("shooting_mode={}", settings.shooting_mode),
         format!("sv_destructibles={}", u8::from(settings.destructibles)),
         format!("third_person={}", settings.third_person),
         format!("shadows={}", settings.shadows),
@@ -486,6 +487,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "mv_mode" => {
                 if movement_iw4::rules::MovementMode::from_name(value).is_some() {
                     value.trim().clone_into(&mut settings.mv_mode);
+                }
+            }
+            "shooting_mode" => {
+                if weapon_iw4::csgo::shooting_mode_from_name(value).is_some() {
+                    settings.shooting_mode = value.trim().to_ascii_lowercase();
                 }
             }
             "brightness" => {

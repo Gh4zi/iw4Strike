@@ -229,6 +229,9 @@ impl ViewWeapon {
             dual: weapon.dual,
             scope_overlay: weapon.scope_overlay,
             shell_reload: weapon.shell_reload,
+            // CS:S builds most guns left-handed and mirrors them; these three it builds
+            // right-handed (`BuiltRightHanded`).
+            css_right_handed: matches!(weapon.name, "m249" | "galil" | "famas"),
             ..Self::plain(weapon.name, weapon.view_model, weapon.css_view_model)
         }
     }
@@ -1025,9 +1028,10 @@ fn sway_placement(state: &mut CsViewmodels, ps: &PlayerState, dt: f32) -> Mat3x4
         state.lagged_forward = None;
         return mdl_goldsrc::IDENTITY;
     }
+    let recoil = recoil_view(ps);
     let view = [
-        ps.viewangles[0] - ps.cs_punch[0],
-        ps.viewangles[1] - ps.cs_punch[1],
+        ps.viewangles[0] - recoil[0],
+        ps.viewangles[1] - recoil[1],
         0.0,
     ];
     let (forward, right, up) = math_iw4::angle_vectors(view);
@@ -1088,6 +1092,11 @@ fn sway_placement(state: &mut CsViewmodels, ps: &PlayerState, dt: f32) -> Mat3x4
 }
 
 /// Rotation that undoes the view's recoil punch (pitch, yaw degrees) in GoldSrc view axes.
+/// How far the recoil turned the camera (CS 1.6 punch or CS:GO view offset).
+fn recoil_view(ps: &PlayerState) -> [f32; 3] {
+    weapon_iw4::csgo::view_offset(ps.cs_shooting_mode, ps.cs_punch, ps.cs_view_punch)
+}
+
 fn unpunch(punch: [f32; 3]) -> Mat3x4 {
     view_rotation(-punch[0], -punch[1], 0.0)
 }
@@ -1362,7 +1371,7 @@ pub fn update_cs_viewmodel(
     let sway = sway_placement(&mut state, ps, time.delta_secs());
     let CsViewmodels { bones, .. } = &mut *state;
     model.studio.pose(sequence, seconds, bones);
-    let mut place = mdl_goldsrc::concat(&sway, &unpunch(ps.cs_punch));
+    let mut place = mdl_goldsrc::concat(&sway, &unpunch(recoil_view(ps)));
     let right_handed = match model.format {
         Format::Source => weapon.css_right_handed,
         Format::GoldSrc => model.goldsrc_right_handed,

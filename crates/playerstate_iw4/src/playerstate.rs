@@ -144,11 +144,23 @@ pub struct PlayerState {
     /// Fixed-tick movement: the origin before the last movement step; players are drawn between
     /// it and the origin, one step behind, so they glide instead of jumping step to step.
     pub cs_move_prev_origin: [f32; 3],
-    /// CS weapons: recoil punch (pitch, yaw, roll) bullets and the view follow (`punchangle`).
+    /// CS:GO ladders: server time the player last grabbed a ladder (a jump only lets go
+    /// 0.2 s later, `m_ignoreLadderJumpTime`).
+    pub cs_ladder_ms: i32,
+    /// How CS guns shoot: `weapon_iw4::csgo::SHOOTING_CSGO` or `SHOOTING_CS16` (the server's
+    /// `shooting_mode`, copied to every player).
+    pub cs_shooting_mode: u32,
+    /// CS weapons: recoil punch (pitch, yaw, roll) bullets and the view follow (`punchangle`;
+    /// CS:GO's aim punch, `m_aimPunchAngle`).
     pub cs_punch: [f32; 3],
+    /// CS:GO shooting: the aim punch's velocity (`m_aimPunchAngleVel`), the view shake
+    /// (`m_viewPunchAngle`) and the spray position (`m_flRecoilIndex`).
+    pub cs_punch_vel: [f32; 3],
+    pub cs_view_punch: [f32; 3],
+    pub cs_recoil_index: f32,
     /// CS weapons: shots in the current spray (`m_iShotsFired`).
     pub cs_shots_fired: i32,
-    /// CS weapons: spray inaccuracy (`m_flAccuracy`).
+    /// CS weapons: spray inaccuracy (`m_flAccuracy`; CS:GO's `m_fAccuracyPenalty`).
     pub cs_accuracy: f32,
     /// CS weapons: server time of the previous shot, 0 before the first.
     pub cs_last_fire_ms: i32,
@@ -171,19 +183,25 @@ pub struct PlayerState {
     /// CS scope: the zoom a shot dropped, restored once the gun is ready again
     /// (`m_iLastZoom` while `m_bResumeZoom`); 0 for none.
     pub cs_last_zoom: u32,
-    /// CS grenade in hand: `cs_grenade::IDLE`, `PULLED` (pin out, `cs_next_attack2_ms` the pull
-    /// time) or `THROWN` (`cs_last_fire_ms` the throw); `cs_next_attack_ms` is when it next acts.
+    /// CS grenade in hand: `cs_grenade::IDLE`, `PULLED` (pin out, `cs_next_attack2_ms` when
+    /// the throw strength last moved) or `THROWN` (`cs_last_fire_ms` the release,
+    /// `cs_next_attack2_ms` when the grenade leaves the hand, 0 once it has);
+    /// `cs_next_attack_ms` is when it next acts.
     pub cs_grenade: u32,
+    /// CS grenade throw strength (CS:GO `m_flThrowStrength`): 1 a full throw (left button),
+    /// 0 a lob (right button), 0.5 both.
+    pub cs_grenade_strength: f32,
     /// CS kevlar points (0-100) and whether a helmet comes with them (`m_iKevlar`).
     pub cs_armor: u32,
     pub cs_helmet: u32,
     /// CS defuse kit (`m_bHasDefuser`): a Counter-Terrorist with one defuses in half the time.
     pub cs_defuser: u32,
-    /// CS flashbang on this player: when it went off (server ms), how long it holds the screen
-    /// white and then fades (ms), and how white (255 full) — `weapon_iw4::cs::CsFlash`.
+    /// CS flashbang on this player: when the white-out began (server ms), how long the latest
+    /// flash lasts and when (ms after the start) the white-out ends, and how white it gets (255
+    /// full) — `weapon_iw4::cs::CsFlash`.
     pub cs_flash_start_ms: i32,
-    pub cs_flash_hold_ms: i32,
-    pub cs_flash_fade_ms: i32,
+    pub cs_flash_duration_ms: i32,
+    pub cs_flash_end_ms: i32,
     pub cs_flash_alpha: u32,
     /// CS guns with their silencer on, one bit per CS weapon index (`cs::silencer_bit`), and
     /// until when (server ms) a silencer is being attached or detached (no firing).
@@ -461,7 +479,12 @@ impl PlayerState {
         cs_move_buttons: 0,
         cs_move_latched: 0,
         cs_move_prev_origin: [0.0; 3],
+        cs_ladder_ms: 0,
+        cs_shooting_mode: 0,
         cs_punch: [0.0; 3],
+        cs_punch_vel: [0.0; 3],
+        cs_view_punch: [0.0; 3],
+        cs_recoil_index: 0.0,
         cs_shots_fired: 0,
         cs_accuracy: 0.0,
         cs_last_fire_ms: 0,
@@ -475,12 +498,13 @@ impl PlayerState {
         cs_zoom: 0,
         cs_last_zoom: 0,
         cs_grenade: 0,
+        cs_grenade_strength: 0.0,
         cs_armor: 0,
         cs_helmet: 0,
         cs_defuser: 0,
         cs_flash_start_ms: 0,
-        cs_flash_hold_ms: 0,
-        cs_flash_fade_ms: 0,
+        cs_flash_duration_ms: 0,
+        cs_flash_end_ms: 0,
         cs_flash_alpha: 0,
         cs_silencers: 0,
         cs_adjust_ms: 0,

@@ -1,7 +1,21 @@
 //! Counter-Strike fork server switches that are not movement rules: what of MW2's sandbox stays
 //! on for competitive play. A listen server and its own client share these.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+/// How CS guns shoot (`shooting_mode`): `weapon_iw4::csgo::SHOOTING_CSGO` (the default) or
+/// `SHOOTING_CS16`. The server copies its own onto every player (`PlayerState::cs_shooting_mode`),
+/// so its clients shoot the same way whatever theirs says.
+static SHOOTING_MODE: AtomicU32 = AtomicU32::new(weapon_iw4::csgo::SHOOTING_CSGO);
+
+#[must_use]
+pub fn shooting_mode() -> u32 {
+    SHOOTING_MODE.load(Ordering::Relaxed)
+}
+
+pub fn set_shooting_mode(mode: u32) {
+    SHOOTING_MODE.store(mode, Ordering::Relaxed);
+}
 
 /// Map destructibles (cars, explosive barrels, breakable walls) take damage and blow up. Off by
 /// default under CS rules (`sv_destructibles 0`): a competitive map should not change shape.

@@ -377,7 +377,12 @@ ps_netfields! {
     cs_move_buttons: u32 = Replication::Replicated, Validation::Exact;
     cs_move_latched: u32 = Replication::Replicated, Validation::Exact;
     cs_move_prev_origin: vec3 = Replication::Replicated, Validation::Exact;
+    cs_ladder_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_shooting_mode: u32 = Replication::Replicated, Validation::AdoptOnly("the server's shooting mode");
     cs_punch: vec3 = Replication::Replicated, Validation::Exact;
+    cs_punch_vel: vec3 = Replication::Replicated, Validation::Exact;
+    cs_view_punch: vec3 = Replication::Replicated, Validation::Exact;
+    cs_recoil_index: f32 = Replication::Replicated, Validation::Exact;
     cs_shots_fired: i32 = Replication::Replicated, Validation::Exact;
     cs_accuracy: f32 = Replication::Replicated, Validation::Exact;
     cs_last_fire_ms: i32 = Replication::Replicated, Validation::Exact;
@@ -391,10 +396,11 @@ ps_netfields! {
     cs_zoom: u32 = Replication::Replicated, Validation::Exact;
     cs_last_zoom: u32 = Replication::Replicated, Validation::Exact;
     cs_grenade: u32 = Replication::Replicated, Validation::Exact;
+    cs_grenade_strength: f32 = Replication::Replicated, Validation::Exact;
     cs_armor: u32 = Replication::Replicated, Validation::Exact;
     cs_flash_start_ms: i32 = Replication::Replicated, Validation::Exact;
-    cs_flash_hold_ms: i32 = Replication::Replicated, Validation::Exact;
-    cs_flash_fade_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_flash_duration_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_flash_end_ms: i32 = Replication::Replicated, Validation::Exact;
     cs_flash_alpha: u32 = Replication::Replicated, Validation::Exact;
     cs_silencers: u32 = Replication::Replicated, Validation::Exact;
     cs_adjust_ms: i32 = Replication::Replicated, Validation::Exact;

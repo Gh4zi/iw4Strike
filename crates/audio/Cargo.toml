@@ -21,6 +21,7 @@ net.workspace = true
 sim.workspace = true
 hud_iw4 = { path = "../hud_iw4" }
 playerstate_iw4.workspace = true
+weapon_iw4.workspace = true
 gamemode_iw4.workspace = true
 perf.workspace = true
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "pcm", "wav", "adpcm"] }

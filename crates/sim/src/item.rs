@@ -1,6 +1,8 @@
 use crate::frame::FrameWorld;
 use anim_iw4::random;
-use entity_iw4::{TR_GRAVITY, TR_STATIONARY, Trajectory, evaluate_trajectory};
+use entity_iw4::{
+    TR_GRAVITY, TR_STATIONARY, Trajectory, evaluate_trajectory, evaluate_trajectory_delta,
+};
 use math_iw4::angle_vectors;
 use playerstate_iw4::{ENTITYNUM_NONE, PERK_SCAVENGER, PM_TYPE_DEAD, PlayerState};
 use weapon_iw4::{
@@ -28,8 +30,21 @@ pub const ITEM_MINS: [f32; 3] = [0.0, 0.0, 0.0];
 pub const ITEM_MAXS: [f32; 3] = [1.0, 1.0, 1.0];
 
 pub const PLAYER_DROP_Z: f32 = (PLAYER_MAXS[2] - PLAYER_MINS[2]) * 0.5;
-/// CS throws a dropped gun at `v_forward * 300 + v_forward * 100`.
-const CS_DROP_SPEED: f32 = 400.0;
+/// CS:GO's `drop` (`CSWeaponDrop` thrown forward): the gun leaves from this far below the eye and
+/// is tossed onto the point this far out from the body's centre along the view.
+const CS_DROP_BELOW_EYE: f32 = 12.0;
+const CS_DROP_REACH: f32 = 100.0;
+/// The toss (`VecCheckToss`): its arc rises at most this much of the throw's length above the
+/// higher end, and stays this far under a ceiling found within `CS_TOSS_CEILING_PROBE`.
+const CS_TOSS_HEIGHT_RATIO: f32 = 0.2;
+const CS_TOSS_CEILING_PROBE: f32 = 300.0;
+const CS_TOSS_CEILING_GAP: f32 = 15.0;
+/// `sv_gravity`, which dropped guns fall at.
+const CS_GRAVITY: f32 = 800.0;
+/// E picks up a gun on the floor this far along the view at most (`MAX_WEAPON_NAME_POPUP_RANGE`),
+/// and this close to the line of sight.
+const CS_USE_RANGE: f32 = 128.0;
+const CS_USE_AIM_RADIUS: f32 = 16.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DroppedItem {
@@ -288,8 +303,14 @@ fn launch_dropped_from_ps(
     scavenger: bool,
 ) -> i32 {
     let mut seed = world.anim_event_seed();
-    let velocity = drop_item_velocity(ps.viewangles[1], &mut seed);
+    let mut velocity = drop_item_velocity(ps.viewangles[1], &mut seed);
     world.set_anim_event_seed(seed);
+    // Counter-Strike (CS:GO `DropWeaponSlot` on death): the gun is not thrown; it falls where the
+    // player was.
+    let cs = movement_iw4::rules::CS_RULES && !scavenger;
+    if cs {
+        velocity = [0.0; 3];
+    }
 
     let origin = [ps.origin[0], ps.origin[1], ps.origin[2] + PLAYER_DROP_Z];
     let time_ms = crate::corpse::level_time_ms(tick);
@@ -307,9 +328,13 @@ fn launch_dropped_from_ps(
         tr_delta: [0.0; 3],
         tr_base: [0.0, ps.viewangles[1], 0.0],
     };
-    push_dropped_item(
+    let number = push_dropped_item(
         world, weapon, origin, pos, apos, owner, clip_r, clip_l, stock, true, scavenger,
-    )
+    );
+    if cs && let Some(item) = world.dropped_item_mut_by_number(number) {
+        item.state.time2 = time_ms;
+    }
+    number
 }
 
 pub(crate) fn drop_weapon(
@@ -416,18 +441,25 @@ pub(crate) fn throw_cs_weapon(
         return None;
     }
     let (clip_r, clip_l, stock) = ammo_from_ps(world, &ps, weapon);
-    let (forward, _, _) = angle_vectors([ps.viewangles[0] / 3.0, ps.viewangles[1], 0.0]);
+    let (forward, _, _) = angle_vectors(ps.viewangles);
     let origin = [
-        ps.origin[0] + forward[0] * 10.0,
-        ps.origin[1] + forward[1] * 10.0,
-        ps.origin[2] + PLAYER_DROP_Z,
+        ps.origin[0],
+        ps.origin[1],
+        ps.origin[2] + ps.view_height_current - CS_DROP_BELOW_EYE,
+    ];
+    // The body's centre: half way up the hull, which the eye sits 8 below the top of.
+    let center_z = ps.origin[2] + (ps.view_height_current + 8.0) * 0.5;
+    let target = [
+        ps.origin[0] + forward[0] * CS_DROP_REACH,
+        ps.origin[1] + forward[1] * CS_DROP_REACH,
+        center_z + forward[2] * CS_DROP_REACH,
     ];
     let time_ms = crate::corpse::level_time_ms(tick);
     let pos = Trajectory {
         tr_type: TR_GRAVITY,
         tr_time: time_ms,
         tr_duration: 0,
-        tr_delta: forward.map(|v| v * CS_DROP_SPEED),
+        tr_delta: cs_toss_velocity(world, origin, target),
         tr_base: origin,
     };
     let apos = Trajectory {
@@ -453,8 +485,79 @@ pub(crate) fn throw_cs_weapon(
     if number == ENTITYNUM_NONE {
         return None;
     }
+    // When it left the hand (`time2`, unused by items): who may pick it up when hangs on it.
+    if let Some(item) = world.dropped_item_mut_by_number(number) {
+        item.state.time2 = time_ms;
+    }
     crate::script_player::take_weapon(world, player, weapon);
     Some(number)
+}
+
+/// CS:GO's touch pickup of a thrown gun: anyone after 0.1 s (even in the air), the player who
+/// threw it only after 1.5 s (`m_nextOwnerTouchTime`, `mp_weapon_prev_owner_touch_time`). Guns
+/// not thrown by a CS drop (`time2` 0) wait until they land.
+fn cs_touch_ready(item: &DroppedItem, walker: ClientId, now_ms: i32) -> bool {
+    const ANYONE_MS: i32 = 100;
+    const THROWER_MS: i32 = 1500;
+    let thrown_ms = item.state.time2;
+    if thrown_ms == 0 {
+        return !item.falling;
+    }
+    let wait = if item.state.client_num == walker.0 as i32 {
+        THROWER_MS
+    } else {
+        ANYONE_MS
+    };
+    now_ms.wrapping_sub(thrown_ms) >= wait
+}
+
+/// The velocity that tosses something from `start` onto `target` (CS:GO `VecCheckToss`): up to an
+/// apex half way across, no higher than [`CS_TOSS_HEIGHT_RATIO`] of the throw above the higher
+/// end and clear of the ceiling; nothing (it just falls) when the target is far above, too
+/// close, or the arc is blocked.
+fn cs_toss_velocity(world: &FrameWorld, start: [f32; 3], target: [f32; 3]) -> [f32; 3] {
+    const FAIL: [f32; 3] = [0.0; 3];
+    let blocked = |from: [f32; 3], to: [f32; 3]| {
+        let trace = world.trace_static_world(from, to, [0.0; 3], [0.0; 3], MASK_PLAYER_SOLID);
+        trace.fraction < 1.0 || trace.startsolid != 0
+    };
+    if target[2] - start[2] > 500.0 {
+        return FAIL;
+    }
+    let mut apex: [f32; 3] = core::array::from_fn(|i| start[i] + (target[i] - start[i]) * 0.5);
+    let up = [apex[0], apex[1], apex[2] + CS_TOSS_CEILING_PROBE];
+    let ceiling = world.trace_static_world(apex, up, [0.0; 3], [0.0; 3], MASK_PLAYER_SOLID);
+    if ceiling.fraction < 1.0 {
+        apex = ceiling.endpos;
+        apex[2] -= CS_TOSS_CEILING_GAP;
+    } else {
+        apex = up;
+    }
+    let length = (0..3)
+        .map(|i| (target[i] - start[i]).powi(2))
+        .sum::<f32>()
+        .sqrt();
+    let highest = start[2].max(target[2]);
+    apex[2] = apex[2].min(highest + CS_TOSS_HEIGHT_RATIO * length);
+    if apex[2] < start[2] || apex[2] < target[2] {
+        return FAIL;
+    }
+    let rise = ((apex[2] - start[2]) / (0.5 * CS_GRAVITY)).sqrt();
+    let fall = ((apex[2] - target[2]) / (0.5 * CS_GRAVITY)).sqrt();
+    if rise < 0.1 {
+        return FAIL;
+    }
+    let mut velocity: [f32; 3] = core::array::from_fn(|i| (target[i] - start[i]) / (rise + fall));
+    velocity[2] = CS_GRAVITY * rise;
+    let top = [
+        start[0] + velocity[0] * rise,
+        start[1] + velocity[1] * rise,
+        apex[2],
+    ];
+    if blocked(start, top) || blocked(target, top) {
+        return FAIL;
+    }
+    velocity
 }
 
 /// The CS gun `player` owns in `weapon`'s slot, other than `weapon` itself.
@@ -525,6 +628,12 @@ pub(crate) fn think_item_move(world: &mut FrameWorld, time_ms: i32, number: i32)
         item.state.tr_delta = [0.0; 3];
         item.state.tr_time = 0;
         item.state.tr_duration = 0;
+    } else if movement_iw4::rules::CS_RULES {
+        // A CS gun thrown into a wall drops down it instead of hanging there.
+        let falling = evaluate_trajectory_delta(&traj, time_ms)[2].min(0.0);
+        item.state.tr_base = endpos;
+        item.state.tr_time = time_ms;
+        item.state.tr_delta = [0.0, 0.0, falling];
     }
 }
 
@@ -560,9 +669,9 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
             continue;
         }
 
-        // Counter-Strike: a landed gun whose slot is empty is picked up by walking over it.
+        // Counter-Strike: a gun whose slot is empty is picked up by walking over it.
         let cs_takes = !item.scavenger
-            && !item.falling
+            && cs_touch_ready(&item, walker, world.entity_kernel().level_time_ms())
             && !ps.weapons.contains(&item.state.index)
             && cs_gun_slot(world, item.state.index as u32)
                 .is_some_and(|slot| owned_in_cs_slot(world, &ps, slot, 0).is_none());
@@ -641,14 +750,20 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
             _ => true,
         };
         if let Some(slot) = cs_slot {
-            // Counter-Strike: the gun takes its own slot, dropping the one already there.
+            // Counter-Strike: the gun takes its own slot, and the one already there is thrown
+            // forward (CS:GO `Weapon_Equip` drops it with `CSWeaponDrop`).
             if let Some(owned) = owned_in_cs_slot(world, &ps, slot, weapon) {
-                swapped_entnum = drop_current_primary_at(
-                    world,
-                    walker,
-                    owned,
-                    item.origin,
-                    item.state.apos_tr_base,
+                let tick = Tick(
+                    (world.entity_kernel().level_time_ms() / crate::MATCH_TICK_MS as i32) as u32,
+                );
+                swapped_entnum =
+                    throw_cs_weapon(world, tick, walker, owned).unwrap_or(ENTITYNUM_NONE);
+                diag::debug!(
+                    Sim,
+                    "cs pickup: client {} took {} for {} (thrown as item {swapped_entnum})",
+                    walker.0,
+                    world.weapon_script_name(weapon),
+                    world.weapon_script_name(owned)
                 );
             }
         } else {
@@ -1009,6 +1124,68 @@ fn selected_item(world: &FrameWorld, walker: ClientId, ps: &PlayerState) -> Opti
     best.map(|(_, item)| item)
 }
 
+/// The CS gun on the floor E would pick up (CS:GO `FindUseEntity`): one the view ray passes close
+/// to within [`CS_USE_RANGE`], in sight, that the player doesn't own; the nearest along the ray.
+/// Nothing while E belongs to the game script (the bomb's plant and defuse).
+fn cs_selected_item(world: &mut FrameWorld, walker: ClientId, ps: &PlayerState) -> Option<UseItem> {
+    if !walker_can_touch(world, walker, ps)
+        || ps.pm_flags & (4 | 0x4000) != 0
+        || (16..=20).contains(&ps.weaponstate_primary)
+        || crate::script::host::triggers::script_use_available(world.ecs(), walker.0)
+    {
+        return None;
+    }
+    let eye = [
+        ps.origin[0],
+        ps.origin[1],
+        ps.origin[2] + ps.view_height_current,
+    ];
+    let (forward, _, _) = angle_vectors(ps.viewangles);
+    let mut best: Option<(f32, UseItem)> = None;
+    for number in world.dropped_item_numbers_sorted() {
+        let Some(item) = world.dropped_item_by_number(number) else {
+            continue;
+        };
+        let weapon = u32::try_from(item.state.index).unwrap_or(0);
+        if item.scavenger
+            || weapon == 0
+            || ps.weapons.contains(&item.state.index)
+            || cs_gun_slot(world, weapon).is_none()
+        {
+            continue;
+        }
+        let center: [f32; 3] =
+            core::array::from_fn(|i| item.origin[i] + (ITEM_MINS[i] + ITEM_MAXS[i]) * 0.5);
+        let delta: [f32; 3] = core::array::from_fn(|i| center[i] - eye[i]);
+        let along: f32 = (0..3).map(|i| delta[i] * forward[i]).sum();
+        if along <= 0.0 || along > CS_USE_RANGE {
+            continue;
+        }
+        let off: f32 = (0..3)
+            .map(|i| (delta[i] - forward[i] * along).powi(2))
+            .sum::<f32>()
+            .sqrt();
+        if off > CS_USE_AIM_RADIUS
+            || best.as_ref().is_some_and(|(nearest, _)| along >= *nearest)
+            || world
+                .trace_world(eye, center, [0.0; 3], [0.0; 3], 0x11)
+                .fraction
+                < 1.0
+        {
+            continue;
+        }
+        best = Some((
+            along,
+            UseItem {
+                number: item.state.number,
+                weapon,
+                projectile: false,
+            },
+        ));
+    }
+    best.map(|(_, item)| item)
+}
+
 pub(crate) fn phase_use_items(
     world: &mut FrameWorld,
     tick: Tick,
@@ -1020,11 +1197,13 @@ pub(crate) fn phase_use_items(
         let Some(ps) = world.player(id).copied() else {
             continue;
         };
-        // Counter-Strike picks guns up by walking over them, never with E (E defuses the bomb),
-        // and shows no "swap" hint.
-        let selected = (!movement_iw4::rules::CS_RULES)
-            .then(|| selected_item(world, id, &ps))
-            .flatten();
+        // Counter-Strike (CS:GO): E picks up the gun looked at, swapping it for the one in its
+        // slot; the bomb's plant and defuse come first.
+        let selected = if movement_iw4::rules::CS_RULES {
+            cs_selected_item(world, id, &ps)
+        } else {
+            selected_item(world, id, &ps)
+        };
         let held = cmds.iter().any(|(client, bits)| {
             *client == id.0
                 && bits & (playerstate_iw4::buttons::USE | playerstate_iw4::buttons::USE_RELOAD)
@@ -1055,14 +1234,10 @@ pub(crate) fn phase_use_items(
             }
             world.client_meta_mut(id).item_use_entity = None;
         }
+        // Counter-Strike shows no "swap" hint; E still picks the gun up.
+        let ps = world.player(id).copied().expect("client exists");
         let selected = (!movement_iw4::rules::CS_RULES)
-            .then(|| {
-                selected_item(
-                    world,
-                    id,
-                    &world.player(id).copied().expect("client exists"),
-                )
-            })
+            .then(|| selected_item(world, id, &ps))
             .flatten();
         let dual = selected.is_some_and(|item| {
             world

@@ -637,12 +637,12 @@ pub(crate) fn apply_flashbang_blast(
     }
 }
 
-/// Counter-Strike's flashbang (`RadiusFlash`) instead of MW2's: everyone within 1500 units with
-/// a clear line from the flash to their eyes is blinded by distance and by where they look —
-/// with their back to it, only a short light flash. The client draws it from `PlayerState::cs_flash_*`; MW2's
+/// Counter-Strike's flashbang (CS:GO `RadiusFlash`) instead of MW2's: everyone within 3000
+/// units it reaches is blinded by distance, by where they look and by how much of it gets to
+/// their eyes ([`cs_flash_seen`]). The client draws it from `PlayerState::cs_flash_*`; MW2's
 /// script flash (shellshock) is not used.
 fn apply_cs_flash(world: &mut FrameWorld, origin: [f32; 3]) {
-    use weapon_iw4::cs::{CS_FLASH_RADIUS, CsFlash, flash_for, stack_flash};
+    use weapon_iw4::cs::{CS_FLASH_RADIUS, CsFlash, blind, flash_for};
     let now = crate::script::host::players::now_ms(world.ecs()) as i32;
     let source = [origin[0], origin[1], origin[2] + 1.0];
     let mut hits = Vec::new();
@@ -653,13 +653,11 @@ fn apply_cs_flash(world: &mut FrameWorld, origin: [f32; 3]) {
         {
             continue;
         }
-        if player_radius_vis_scale(world, source, target, None) <= 0.0 {
-            continue;
-        }
         let Some(ps) = world.player(target) else {
             continue;
         };
         let eye = [ps.origin[0], ps.origin[1], ps.origin[2] + ps.view_height_current];
+        let seen = cs_flash_seen(world, source, eye);
         let to_flash: [f32; 3] = core::array::from_fn(|i| source[i] - eye[i]);
         let distance = to_flash.iter().map(|v| v * v).sum::<f32>().sqrt();
         let (forward, _, _) = math_iw4::angle_vectors(ps.viewangles);
@@ -668,29 +666,75 @@ fn apply_cs_flash(world: &mut FrameWorld, origin: [f32; 3]) {
         } else {
             1.0
         };
-        let Some(flash) = flash_for(distance, facing) else {
+        let Some((hold, fade)) = flash_for(distance, facing, seen) else {
             continue;
         };
         let old = (ps.cs_flash_alpha > 0).then(|| {
             (
                 CsFlash {
-                    hold_ms: ps.cs_flash_hold_ms,
-                    fade_ms: ps.cs_flash_fade_ms,
+                    duration_ms: ps.cs_flash_duration_ms,
+                    end_ms: ps.cs_flash_end_ms,
                     alpha: ps.cs_flash_alpha,
                 },
                 now - ps.cs_flash_start_ms,
             )
         });
-        hits.push((target, stack_flash(flash, old)));
+        let (flash, fresh) = blind(fade, old);
+        diag::debug!(
+            Sim,
+            "cs flash: client {} at {distance:.0} units, facing {facing:.2}, seen {seen:.3}: \
+             hold {hold:.2} s, fade {fade:.2} s, screen {} ms{}",
+            target.0,
+            flash.duration_ms,
+            if fresh { "" } else { " (on top of the last)" }
+        );
+        hits.push((target, flash, fresh));
     }
-    for (target, flash) in hits {
+    for (target, flash, fresh) in hits {
         if let Some(ps) = world.player_mut(target) {
-            ps.cs_flash_start_ms = now;
-            ps.cs_flash_hold_ms = flash.hold_ms;
-            ps.cs_flash_fade_ms = flash.fade_ms;
+            if fresh {
+                ps.cs_flash_start_ms = now;
+            }
+            ps.cs_flash_duration_ms = flash.duration_ms;
+            ps.cs_flash_end_ms = flash.end_ms;
             ps.cs_flash_alpha = flash.alpha;
         }
     }
+}
+
+/// How much of a CS flash at `flash` reaches `eye` (CS:GO `PercentageOfFlashForPlayer`;
+/// players don't block it): all of it along a clear straight line, else
+/// [`weapon_iw4::cs::CS_FLASH_PARTIAL`] for each bent line — out to a point above the flash or
+/// to either side of it (as seen from the eye), then on to the eye — that gets through.
+fn cs_flash_seen(world: &FrameWorld, flash: [f32; 3], eye: [f32; 3]) -> f32 {
+    use weapon_iw4::cs::{
+        CS_FLASH_BEND_SIDE, CS_FLASH_BEND_SIDE_UP, CS_FLASH_BEND_UP, CS_FLASH_PARTIAL,
+    };
+    let clear = |start: [f32; 3], end: [f32; 3]| {
+        t_trace_passed(&world.trace_world_except(start, end, G_CAN_DAMAGE_CONTENTS_MASK, None))
+    };
+    if clear(flash, eye) {
+        return 1.0;
+    }
+    let toward_eye: [f32; 3] = core::array::from_fn(|i| eye[i] - flash[i]);
+    let (_, right, up) = math_iw4::angle_vectors(math_iw4::vect_to_angles(toward_eye));
+    let bends = [
+        (0.0, CS_FLASH_BEND_UP),
+        (CS_FLASH_BEND_SIDE, CS_FLASH_BEND_SIDE_UP),
+        (-CS_FLASH_BEND_SIDE, CS_FLASH_BEND_SIDE_UP),
+    ];
+    bends
+        .iter()
+        .filter(|(side, lift)| {
+            let bend: [f32; 3] =
+                core::array::from_fn(|i| flash[i] + right[i] * side + up[i] * lift);
+            let corner = world
+                .trace_world_except(flash, bend, G_CAN_DAMAGE_CONTENTS_MASK, None)
+                .endpos;
+            clear(corner, eye)
+        })
+        .count() as f32
+        * CS_FLASH_PARTIAL
 }
 
 fn flashbang_amount_distance(dist: f32, min_r: f32, max_r: f32) -> f32 {

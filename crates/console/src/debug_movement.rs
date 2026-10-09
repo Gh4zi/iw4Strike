@@ -21,6 +21,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "mv_mode [csgo|csgo64|csgo128|css|surf|mmod|cs16] — movement preset: CS:GO (100, 64 or 128 tick), CS:S style, surf, Momentum bhop, CS 1.6",
         ));
     }
+    if registry.resolve("shooting_mode").is_none() {
+        registry.register(crate::CommandSpec::new("shooting_mode").usage(
+            "shooting_mode [csgo|cs16] — how CS guns shoot on the server you host: CS:GO's spray, inaccuracy and recoil (default) or CS 1.6's",
+        ));
+    }
     if registry.resolve("sv_destructibles").is_none() {
         registry.register(crate::CommandSpec::new("sv_destructibles").usage(
             "sv_destructibles [0|1] — cars, barrels and breakable walls take damage (default 0)",
@@ -100,6 +105,12 @@ pub(crate) fn sync_movement_mode(game: Res<frame::GameSettings>) {
         sim::cs_settings::set_destructibles(game.destructibles);
         diag::info!(Console, "sv_destructibles = {}", u8::from(game.destructibles));
     }
+    if let Some(wanted) = weapon_iw4::csgo::shooting_mode_from_name(&game.shooting_mode)
+        && wanted != sim::cs_settings::shooting_mode()
+    {
+        sim::cs_settings::set_shooting_mode(wanted);
+        diag::info!(Console, "shooting_mode = {}", game.shooting_mode);
+    }
     if let Some(wanted) = movement_iw4::rules::MovementMode::from_name(&game.mv_mode)
         && wanted != movement_iw4::rules::mode()
     {
@@ -137,6 +148,22 @@ pub(crate) fn route_movement_commands(
                     format!("cl_dynamiccrosshair = {arg}")
                 }
                 _ => "usage: cl_dynamiccrosshair [0|1]".to_owned(),
+            },
+            "shooting_mode" => match cmd.args.as_slice() {
+                [] => format!(
+                    "shooting_mode = {} (csgo: CS:GO's spray and inaccuracy; cs16: CS 1.6's)",
+                    game.shooting_mode
+                ),
+                [arg] if weapon_iw4::csgo::shooting_mode_from_name(arg).is_some() => {
+                    game.shooting_mode = arg.trim().to_ascii_lowercase();
+                    game.touch();
+                    format!(
+                        "shooting_mode = {} — for the server you host; on someone else's, theirs \
+                         applies",
+                        game.shooting_mode
+                    )
+                }
+                _ => "usage: shooting_mode [csgo|cs16]".to_owned(),
             },
             "mv_mode" => {
                 use movement_iw4::rules::{MovementMode, mode, set_mode};

@@ -8,16 +8,16 @@ pub const TR_LINEAR_STOP: i32 = 3;
 
 pub const TR_GRAVITY: i32 = 5;
 
-/// Counter-Strike grenades (`pev->gravity` 0.5): a gravity trajectory at half gravity, so they
-/// fly the long, floaty arcs CS throws do.
-pub const TR_GRAVITY_HALF: i32 = 0x20;
+/// Counter-Strike grenades (CS:GO `GetGrenadeGravity` 0.4): a gravity trajectory at 0.4 of the
+/// world's gravity, so they fly the long, floaty arcs CS throws do.
+pub const TR_GRAVITY_CS_GRENADE: i32 = 0x20;
 
-const HALF_GRAVITY: f32 = 0.5;
+const CS_GRENADE_GRAVITY: f32 = 0.4;
 
 /// Whether `tr_type` falls under gravity.
 #[must_use]
 pub fn is_gravity(tr_type: i32) -> bool {
-    matches!(tr_type, 5 | 6 | 0xb | TR_GRAVITY_HALF)
+    matches!(tr_type, 5 | 6 | 0xb | TR_GRAVITY_CS_GRENADE)
 }
 
 const TRAJECTORY_MSEC_TO_SEC: f32 = 0.001;
@@ -41,10 +41,10 @@ pub fn evaluate_trajectory(tr: &Trajectory, at_time: i32) -> [f32; 3] {
         2 | 10 => vec3_mad(tr.tr_base, trajectory_dt(tr.tr_time, at_time), tr.tr_delta),
         3 => evaluate_linear_stop(tr, at_time),
         5 | 6 | 0xb => evaluate_gravity(tr, at_time),
-        TR_GRAVITY_HALF => {
+        TR_GRAVITY_CS_GRENADE => {
             let dt = trajectory_dt(tr.tr_time, at_time);
             let mut origin = vec3_mad(tr.tr_base, dt, tr.tr_delta);
-            origin[2] -= TRAJECTORY_GRAVITY * HALF_GRAVITY * dt * dt;
+            origin[2] -= TRAJECTORY_GRAVITY * CS_GRENADE_GRAVITY * dt * dt;
             origin
         }
         4 | 7 | 8 => panic!("trajectory SINE/accel types are not supported"),
@@ -99,12 +99,12 @@ pub fn evaluate_trajectory_delta(tr: &Trajectory, at_time: i32) -> [f32; 3] {
                 tr.tr_delta[2] - dt * TRAJECTORY_GRAVITY_DELTA,
             ]
         }
-        TR_GRAVITY_HALF => {
+        TR_GRAVITY_CS_GRENADE => {
             let dt = trajectory_dt(tr.tr_time, at_time);
             [
                 tr.tr_delta[0],
                 tr.tr_delta[1],
-                tr.tr_delta[2] - dt * TRAJECTORY_GRAVITY_DELTA * HALF_GRAVITY,
+                tr.tr_delta[2] - dt * TRAJECTORY_GRAVITY_DELTA * CS_GRENADE_GRAVITY,
             ]
         }
         4 | 7 | 8 => panic!("trajectory delta SINE/accel types are not supported"),

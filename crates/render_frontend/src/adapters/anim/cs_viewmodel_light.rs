@@ -174,9 +174,10 @@ fn light_cs_viewmodel(
     let step = (SUN_FADE_PER_SECOND * time.delta_secs()).min(1.0);
     *sun_visible += (target - *sun_visible) * step;
     // The gun is drawn in the view's frame without the recoil punch; so is its sun.
+    let recoil = weapon_iw4::csgo::view_offset(ps.cs_shooting_mode, ps.cs_punch, ps.cs_view_punch);
     let (forward, right, up) = math_iw4::angle_vectors([
-        ps.viewangles[0] - ps.cs_punch[0],
-        ps.viewangles[1] - ps.cs_punch[1],
+        ps.viewangles[0] - recoil[0],
+        ps.viewangles[1] - recoil[1],
         0.0,
     ]);
     let d = sun.direction;

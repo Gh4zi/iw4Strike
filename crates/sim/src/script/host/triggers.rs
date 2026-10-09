@@ -897,6 +897,53 @@ pub(crate) fn is_touching(world: &mut World, a: u64, b: u64) -> bool {
     touching.unwrap_or(false)
 }
 
+/// Whether a use press by `client` would go to the game script: a usable object in reach, or a
+/// use trigger the player is in (and looks into, where it asks). CS puts the bomb's plant and
+/// defuse before picking up a gun.
+pub(crate) fn script_use_available(world: &mut World, client: u32) -> bool {
+    if world
+        .resource::<Runtime>()
+        .use_selected
+        .contains_key(&client)
+    {
+        return true;
+    }
+    let mut runtime = std::mem::take(&mut *world.resource_mut::<Runtime>());
+    let mut found = false;
+    {
+        let frame = FrameWorld::from_world(world);
+        if let Some(player) = runtime.players.get(&client).map(|slot| slot.object) {
+            let triggers: Vec<u64> = runtime
+                .entities
+                .iter()
+                .filter(|(object, entity)| {
+                    !runtime.fired_once.contains(object)
+                        && fires(&entity.classname) == Some(Fires::Use)
+                })
+                .map(|(object, _)| *object)
+                .collect();
+            for trigger in triggers {
+                if !eligible(&runtime, &frame, trigger, client, true) {
+                    continue;
+                }
+                let Some(volume) = volume(&mut runtime, &frame, trigger) else {
+                    continue;
+                };
+                let (mins, maxs) = toucher(&mut runtime, &frame, player);
+                if volume.touches(mins, maxs)
+                    && (!runtime.require_look_at.contains(&trigger)
+                        || looks_into(&frame, client, &volume))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+    *world.resource_mut::<Runtime>() = runtime;
+    found
+}
+
 pub(crate) fn dispatch_triggers(world: &mut World) {
     refresh_claims(world);
     let mut runtime = std::mem::take(&mut *world.resource_mut::<Runtime>());

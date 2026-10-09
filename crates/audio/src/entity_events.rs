@@ -722,17 +722,32 @@ fn grenade_contact(
 ) {
     let payload = &contact.event.payload;
     let surf = usize::try_from(payload.event_parm).unwrap_or(usize::from(payload.surf_type));
-    let Some((namespace, alias)) = weapons.as_deref().and_then(|weapons| {
-        let bank = bank.as_deref()?;
-        let alias = weapons
-            .0
-            .bounce_sound_alias(payload.weapon, surf, &bank.0)?;
-        let namespace = weapons
-            .0
-            .namespace_of(payload.weapon)
-            .unwrap_or(asset_core::AssetNamespace::Iw4);
-        Some((namespace, alias))
-    }) else {
+    // A CS grenade bounces with its CS sound whatever it hits; anything else with the MW2
+    // grenade's sound for the surface.
+    let cs = weapons
+        .as_deref()
+        .zip(bank.as_deref())
+        .and_then(|(weapons, bank)| {
+            cs_grenade_bounce_alias(
+                &weapons.0.script_name_of(payload.weapon),
+                payload.origin[0].to_bits() ^ payload.origin[1].to_bits(),
+                &bank.0,
+            )
+        });
+    let Some((namespace, alias)) = cs
+        .map(|alias| (asset_core::AssetNamespace::Iw4, alias))
+        .or_else(|| {
+            let (weapons, bank) = weapons.as_deref().zip(bank.as_deref())?;
+            let alias = weapons
+                .0
+                .bounce_sound_alias(payload.weapon, surf, &bank.0)?;
+            let namespace = weapons
+                .0
+                .namespace_of(payload.weapon)
+                .unwrap_or(asset_core::AssetNamespace::Iw4);
+            Some((namespace, alias.to_owned()))
+        })
+    else {
         diag::warn!(
             Audio,
             "audio: grenade bounce alias for eventParm {} is unavailable (typed gap)",
@@ -748,8 +763,34 @@ fn grenade_contact(
             0,
         )),
         namespace,
-        alias: alias.to_owned(),
+        alias,
         origin_inches: Some(payload.origin),
         snd_ent: ent_from_number(payload.number),
     });
+}
+
+/// A Counter-Strike grenade bouncing with its own sound (CS rules only): CS:S's sound script
+/// entry when it is in the bank, else one of CS 1.6's waves (picked by `seed`, the same on every
+/// client).
+fn cs_grenade_bounce_alias(
+    projectile: &str,
+    seed: u32,
+    bank: &asset_audio::SoundCatalog,
+) -> Option<String> {
+    if !movement_iw4::rules::CS_RULES {
+        return None;
+    }
+    let grenade = weapon_iw4::cs::cs_grenade_for_projectile(projectile)?;
+    let css = format!(
+        "{}{}",
+        asset_audio::CSS_SOUND_PREFIX,
+        grenade.css_bounce_sound.to_ascii_lowercase()
+    );
+    let goldsrc = (!grenade.bounce_sounds.is_empty()).then(|| {
+        let wave = grenade.bounce_sounds[seed as usize % grenade.bounce_sounds.len()];
+        format!("{}{wave}", asset_audio::CS_SOUND_PREFIX)
+    });
+    core::iter::once(css)
+        .chain(goldsrc)
+        .find(|alias| bank.has_alias(asset_core::AssetNamespace::Iw4, alias))
 }

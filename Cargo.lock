@@ -594,6 +594,7 @@ dependencies = [
  "playerstate_iw4",
  "sim",
  "symphonia",
+ "weapon_iw4",
 ]
 
 [[package]]

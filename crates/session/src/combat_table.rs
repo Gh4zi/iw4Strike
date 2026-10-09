@@ -226,12 +226,11 @@ pub fn apply_cs_grenade_rules(weapons: &WeaponRegistry, equipment: &mut [sim::Eq
             continue;
         };
         facts.fuse_time_ms = weapon_iw4::cs::CS_GRENADE_FUSE_MS;
-        // CS bounces (`MOVETYPE_BOUNCE`, backoff 2 - friction, then x0.8 on the ground): a
-        // glancing hit keeps most of its speed, a head-on one only what the friction leaves
-        // (HE friction 0.7, flash and smoke 0.8).
-        let head_on = if grenade.name == "hegrenade" { 0.3 } else { 0.2 };
-        facts.parallel_bounce = Some([0.8; 31]);
-        facts.perpendicular_bounce = Some([head_on; 31]);
+        // The sim bounces and rests CS grenades itself (`cs::grenade_bounce`); these are the
+        // same CS:GO elasticity for anything that only reads the tables. They never stick.
+        facts.parallel_bounce = Some([weapon_iw4::cs::CS_GRENADE_ELASTICITY; 31]);
+        facts.perpendicular_bounce = Some([weapon_iw4::cs::CS_GRENADE_ELASTICITY; 31]);
+        facts.stickiness = 0;
         // A CS grenade that hits someone just bounces off.
         facts.impact_damage = 0;
         if grenade.name == "flashbang" {

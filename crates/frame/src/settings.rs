@@ -39,6 +39,8 @@ pub struct GameSettings {
     pub right_hand: bool,
     /// Movement preset (`mv_mode`): csgo, surf, mmod or cs16.
     pub mv_mode: String,
+    /// How CS guns shoot when this game is the server (`shooting_mode`): csgo or cs16.
+    pub shooting_mode: String,
     /// Map destructibles (cars, barrels) take damage (`sv_destructibles`); off for CS play.
     pub destructibles: bool,
     pub third_person: bool,
@@ -115,6 +117,7 @@ impl Default for GameSettings {
             viewmodel_fov: Self::VIEWMODEL_FOV_DEFAULT,
             right_hand: true,
             mv_mode: "csgo".to_owned(),
+            shooting_mode: "csgo".to_owned(),
             destructibles: false,
             third_person: false,
             master_volume: 1.0,

@@ -1549,6 +1549,10 @@ pub struct CsGrenade {
     pub css_explode_sound: Option<&'static str>,
     /// CS 1.6 `sound/weapons` waves for the same, picked by the explosion.
     pub explode_sounds: &'static [&'static str],
+    /// CS:S sound script entry played when it bounces (CS:GO's `BounceSound` plays the same).
+    pub css_bounce_sound: &'static str,
+    /// CS 1.6 `sound/weapons` waves for the same, picked by the bounce.
+    pub bounce_sounds: &'static [&'static str],
 }
 
 pub const CS_GRENADES: [CsGrenade; 3] = [
@@ -1563,6 +1567,8 @@ pub const CS_GRENADES: [CsGrenade; 3] = [
         css_explode_sound: Some("BaseGrenade.Explode"),
         // Half-Life's `weapons/explode3-5.wav`, CS 1.6's HE blast.
         explode_sounds: &["explode3", "explode4", "explode5"],
+        css_bounce_sound: "HEGrenade.Bounce",
+        bounce_sounds: &["he_bounce-1"],
     },
     CsGrenade {
         name: "flashbang",
@@ -1574,6 +1580,8 @@ pub const CS_GRENADES: [CsGrenade; 3] = [
         carry: 2,
         css_explode_sound: Some("Flashbang.Explode"),
         explode_sounds: &["flashbang-1", "flashbang-2"],
+        css_bounce_sound: "Flashbang.Bounce",
+        bounce_sounds: &["grenade_hit1", "grenade_hit2", "grenade_hit3"],
     },
     CsGrenade {
         name: "smokegrenade",
@@ -1583,8 +1591,10 @@ pub const CS_GRENADES: [CsGrenade; 3] = [
         css_view_model: "v_eq_smokegrenade",
         price: 300,
         carry: 1,
-        css_explode_sound: None,
-        explode_sounds: &[],
+        css_explode_sound: Some("BaseSmokeEffect.Sound"),
+        explode_sounds: &["sg_explode"],
+        css_bounce_sound: "SmokeGrenade.Bounce",
+        bounce_sounds: &["grenade_hit1", "grenade_hit2", "grenade_hit3"],
     },
 ];
 
@@ -1654,103 +1664,233 @@ pub const CS_HE_DAMAGE: i32 = 100;
 pub const CS_HE_RADIUS: i32 = 350;
 /// Every CS grenade's fuse once thrown.
 pub const CS_GRENADE_FUSE_MS: i32 = 1500;
+/// CS:GO's smoke grenade (`CSmokeGrenadeProjectile`): still moving when its fuse is up, it looks
+/// again every this long until it has stopped, then pops.
+pub const CS_SMOKE_RECHECK_MS: i32 = 200;
+/// A popped smoke grenade lies in its smoke this long before it is removed (`Think_Fade` 12.5 s
+/// on, then 255 alpha steps a tick at 64 ticks a second).
+pub const CS_SMOKE_GRENADE_LINGER_MS: i32 = 16_500;
+/// `event_parm` of the second firing of a CS smoke's cloud, which keeps it going as long as
+/// CS's; it makes no sound.
+pub const CS_SMOKE_REFIRE_PARM: i32 = 1;
 /// A pulled pin throws no sooner than this after the pull.
 pub const CS_GRENADE_PULL_MS: i32 = 500;
 /// After a throw: the next grenade comes up, or the last one's hand retires.
 pub const CS_GRENADE_REDEPLOY_MS: i32 = 750;
 pub const CS_GRENADE_RETIRE_MS: i32 = 500;
 
-/// Flashbang (`RadiusFlash`, retail 1.6): strength 4 at the flash, falling to 0 at 1500 units;
-/// it needs a clear line from the flash to the eyes.
-pub const CS_FLASH_STRENGTH: f32 = 4.0;
-pub const CS_FLASH_RADIUS: f32 = 1500.0;
+/// Flashbang (`RadiusFlash`, CS:GO): strength 3 at the flash (`sv_flashbang_strength` 3.55,
+/// read as a whole number), falling to 0 at 3000 units.
+pub const CS_FLASH_STRENGTH: f32 = 3.0;
+pub const CS_FLASH_RADIUS: f32 = 3000.0;
+/// How much of a flash reaches eyes it has no straight line to (`PercentageOfFlashForPlayer`):
+/// this much for each of three bent lines that gets there — via a point 50 units above the
+/// flash, and via points 75 units to either side of it (and 10 up).
+pub const CS_FLASH_PARTIAL: f32 = 0.167;
+pub const CS_FLASH_BEND_UP: f32 = 50.0;
+pub const CS_FLASH_BEND_SIDE: f32 = 75.0;
+pub const CS_FLASH_BEND_SIDE_UP: f32 = 10.0;
 
-/// How long a flash holds the screen white, how long it then fades, and how white it gets
-/// (255 full).
+/// A CS flash on a player's screen (CS:GO `m_flFlashDuration`, `m_flFlashBangTime`,
+/// `m_flFlashMaxAlpha`), timed from when the white-out began: it ends `end_ms` in, the latest
+/// flash lasts `duration_ms` (what the frozen frame fades over), and `alpha` is how white it
+/// gets (255 full).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CsFlash {
-    pub hold_ms: i32,
-    pub fade_ms: i32,
+    pub duration_ms: i32,
+    pub end_ms: i32,
     pub alpha: u32,
 }
 
-/// The flash a player gets at `distance` from it, `facing` = cosine between their view and the
-/// line to the flash. CS 1.6 numbers: in front (facing ≥ 0) full white, hold strength / 1.5,
-/// fade strength × 3; turned partly away (to -0.5) alpha 200, hold strength / 3.5, fade
-/// strength × 1.75. Behind you (facing below -0.5) it only lights the screen up: alpha 150,
-/// hold strength / 8, fade strength × 0.75 (at 350 units 0.4 s of white fading out over 2.3 s).
+/// What a flash does to a player at `distance` from it (`RadiusFlash`), `facing` = cosine
+/// between their view and the line to the flash, `seen` = how much of it reaches their eyes (1
+/// for a straight line, else [`CS_FLASH_PARTIAL`] per bent line): (hold, fade) in seconds.
+/// CS:GO numbers per point of strength: looking at it (facing ≥ 0.6) 1.25 and 2.5; to the side
+/// (≥ 0.3) 0.8 and 1.75; further to the side (≥ -0.2) 0.5 and 1; facing away 0.25 and 0.5.
 #[must_use]
-pub fn flash_for(distance: f32, facing: f32) -> Option<CsFlash> {
+pub fn flash_for(distance: f32, facing: f32, seen: f32) -> Option<(f32, f32)> {
     let strength = CS_FLASH_STRENGTH - distance * CS_FLASH_STRENGTH / CS_FLASH_RADIUS;
-    if strength <= 0.0 {
+    if strength <= 0.0 || seen <= 0.0 {
         return None;
     }
-    let ms = |seconds: f32| libm::roundf(seconds * 1000.0) as i32;
-    if facing >= 0.0 {
-        Some(CsFlash {
-            hold_ms: ms(strength / 1.5),
-            fade_ms: ms(strength * 3.0),
-            alpha: 255,
-        })
-    } else if facing >= -0.5 {
-        Some(CsFlash {
-            hold_ms: ms(strength / 3.5),
-            fade_ms: ms(strength * 1.75),
-            alpha: 200,
-        })
+    let (hold, fade) = if facing >= 0.6 {
+        (1.25, 2.5)
+    } else if facing >= 0.3 {
+        (0.8, 1.75)
+    } else if facing >= -0.2 {
+        (0.5, 1.0)
     } else {
-        Some(CsFlash {
-            hold_ms: ms(strength / 8.0),
-            fade_ms: ms(strength * 0.75),
-            alpha: 150,
-        })
-    }
+        (0.25, 0.5)
+    };
+    Some((strength * hold * seen, strength * fade * seen))
 }
 
-/// A new flash on top of one still running (`RadiusFlash`): a full flash adds the hold left of
-/// the old one, the longer fade and the whiter alpha win while the old one still shows.
+/// The screen lasts the flash's fade over this (`Blind`).
+pub const CS_FLASH_DURATION_DIVISOR: f32 = 1.4;
+/// The white comes up over this long at the start of a fresh flash (255 / 45 a frame at 60).
+pub const CS_FLASH_BUILD_UP_MS: f32 = 255.0 / 45.0 / 60.0 * 1000.0;
+/// The screen stays fully white until this much of the flash is left, then clears.
+pub const CS_FLASH_CERTAIN_BLINDNESS_MS: f32 = 3000.0;
+
+/// A flash with `fade_s` blinding a player (`Blind`): the screen lasts `fade_s / 1.4`. On top of
+/// a flash still showing (`old` and the time since it began) it only lasts as long as whichever
+/// is longer, carrying on from the old one (no new white-up, same frozen frame); otherwise it
+/// starts afresh. Returns the flash and whether it starts afresh now.
 #[must_use]
-pub fn stack_flash(new: CsFlash, old: Option<(CsFlash, i32)>) -> CsFlash {
-    let mut out = new;
-    if let Some((old, elapsed_ms)) = old {
-        let hold_left = old.hold_ms - elapsed_ms;
-        if hold_left > 0 && new.alpha == 255 {
-            out.hold_ms += hold_left;
+pub fn blind(fade_s: f32, old: Option<(CsFlash, i32)>) -> (CsFlash, bool) {
+    let duration_ms = libm::roundf(fade_s / CS_FLASH_DURATION_DIVISOR * 1000.0) as i32;
+    match old {
+        Some((old, elapsed_ms)) if elapsed_ms >= 0 && elapsed_ms < old.end_ms => {
+            let duration_ms = duration_ms.max(old.end_ms - elapsed_ms);
+            let flash = CsFlash {
+                duration_ms,
+                end_ms: elapsed_ms + duration_ms,
+                alpha: old.alpha.max(255),
+            };
+            (flash, false)
         }
-        if elapsed_ms < old.hold_ms + old.fade_ms {
-            out.fade_ms = out.fade_ms.max(old.fade_ms);
-            out.alpha = out.alpha.max(old.alpha);
+        _ => {
+            let flash = CsFlash {
+                duration_ms,
+                end_ms: duration_ms,
+                alpha: 255,
+            };
+            (flash, true)
         }
     }
-    out
 }
 
-/// How white the screen is `elapsed_ms` into `flash` (0..1), and how strongly the frozen
-/// frame of the flash moment still shows over the world (it outlasts the white, like CS:S).
+/// How white the screen is `elapsed_ms` into `flash` (0..1), and how strongly the frozen frame
+/// of the flash moment still shows over the world (`UpdateFlashBangEffect`): both come up over
+/// [`CS_FLASH_BUILD_UP_MS`]; then the frozen frame fades evenly to the end of the latest flash,
+/// while the white stays full until [`CS_FLASH_CERTAIN_BLINDNESS_MS`] are left and clears on
+/// the square of what is left of those.
 #[must_use]
 pub fn flash_screen(flash: CsFlash, elapsed_ms: i32) -> Option<(f32, f32)> {
-    if elapsed_ms < 0 || elapsed_ms >= flash.hold_ms + flash.fade_ms {
+    if elapsed_ms < 0 || elapsed_ms >= flash.end_ms {
         return None;
     }
     let peak = flash.alpha as f32 / 255.0;
-    let left = if elapsed_ms < flash.hold_ms || flash.fade_ms <= 0 {
-        1.0
+    let elapsed = elapsed_ms as f32;
+    if elapsed < CS_FLASH_BUILD_UP_MS {
+        let up = peak * elapsed / CS_FLASH_BUILD_UP_MS;
+        return Some((up, up));
+    }
+    let left = (flash.end_ms - elapsed_ms) as f32;
+    let frame = peak * (left / flash.duration_ms.max(1) as f32).clamp(0.0, 1.0);
+    let white = if left > CS_FLASH_CERTAIN_BLINDNESS_MS {
+        peak
     } else {
-        1.0 - (elapsed_ms - flash.hold_ms) as f32 / flash.fade_ms as f32
+        let part = left / CS_FLASH_CERTAIN_BLINDNESS_MS;
+        peak * part * part
     };
-    Some((peak * left, peak * libm::sqrtf(left.max(0.0))))
+    Some((white, frame))
 }
 
-/// CS's throw (`WeaponIdle`): the view pitch (positive down) is lifted 10 degrees and
-/// stretched, and the speed is `(90 - pitch) * 6`, at most 750. Returns (pitch, speed).
+/// CS:GO's grenade throw velocity (every grenade's weapon data); a throw flies at 0.9 of it.
+pub const CS_GRENADE_THROW_VELOCITY: f32 = 750.0;
+/// A throw leaves the hand this long after the buttons are let go (`StartGrenadeThrow`).
+pub const CS_GRENADE_RELEASE_MS: i32 = 100;
+/// The thrower's own velocity rides along this much: a running or jumping throw goes further.
+pub const CS_GRENADE_OWNER_VELOCITY: f32 = 1.25;
+/// The weakest throw (right click alone) flies at this much of the speed, from this much below
+/// the eye.
+pub const CS_GRENADE_LOB_SPEED: f32 = 0.3;
+pub const CS_GRENADE_LOB_LOWER: f32 = 12.0;
+/// How fast (per second) the throw strength moves toward what the held buttons ask for.
+pub const CS_GRENADE_STRENGTH_RATE: f32 = 1.3;
+/// The throw starts this far ahead of the eye, pulled back this much from anything in the way
+/// (a 4-unit box traced 22 units out, then 6 back).
+pub const CS_GRENADE_THROW_REACH: f32 = 22.0;
+pub const CS_GRENADE_THROW_PULLBACK: f32 = 6.0;
+pub const CS_GRENADE_THROW_HALF_SIZE: f32 = 2.0;
+
+/// The throw strength a pin is pulled with: a right click starts a lob (0), a left click a full
+/// throw (1). Both at once start from the lob.
 #[must_use]
-pub fn grenade_throw(view_pitch: f32) -> (f32, f32) {
-    let pitch = if view_pitch < 0.0 {
-        -10.0 + view_pitch * ((90.0 - 10.0) / 90.0)
+pub fn grenade_strength_at_pull(secondary: bool) -> f32 {
+    if secondary { 0.0 } else { 1.0 }
+}
+
+/// The throw strength `dt_ms` later with the pin out and these buttons held: it moves toward 1
+/// for the left button, 0 for the right, 0.5 for both.
+#[must_use]
+pub fn grenade_strength(strength: f32, primary: bool, secondary: bool, dt_ms: i32) -> f32 {
+    let ideal = 0.5 + if primary { 0.5 } else { 0.0 } - if secondary { 0.5 } else { 0.0 };
+    let step = CS_GRENADE_STRENGTH_RATE * dt_ms.max(0) as f32 / 1000.0;
+    if strength < ideal {
+        (strength + step).min(ideal)
     } else {
-        -10.0 + view_pitch * ((90.0 + 10.0) / 90.0)
-    };
-    (pitch, ((90.0 - pitch) * 6.0).min(750.0))
+        (strength - step).max(ideal)
+    }
+}
+
+/// CS:GO's throw (`ThrowGrenade`) at `strength` (0 lob .. 1 full): the view pitch (positive
+/// down) gets up to 10 degrees of lift (all of it looking level, none looking straight up or
+/// down), and the speed is 675, a lob's 30% of it. Returns (pitch, speed).
+#[must_use]
+pub fn grenade_throw(view_pitch: f32, strength: f32) -> (f32, f32) {
+    let mut pitch = view_pitch;
+    if pitch > 90.0 {
+        pitch -= 360.0;
+    } else if pitch < -90.0 {
+        pitch += 360.0;
+    }
+    let pitch = pitch.clamp(-90.0, 90.0);
+    let pitch = pitch - 10.0 * (90.0 - pitch.abs()) / 90.0;
+    let strength = strength.clamp(0.0, 1.0);
+    let speed = (CS_GRENADE_THROW_VELOCITY * 0.9).clamp(15.0, 750.0)
+        * (CS_GRENADE_LOB_SPEED + (1.0 - CS_GRENADE_LOB_SPEED) * strength);
+    (pitch, speed)
+}
+
+/// How far below the eye a throw at `strength` starts.
+#[must_use]
+pub fn grenade_throw_lower(strength: f32) -> f32 {
+    CS_GRENADE_LOB_LOWER * (1.0 - strength.clamp(0.0, 1.0))
+}
+
+/// How much speed a CS grenade keeps off a bounce (`GetGrenadeElasticity`), and off a player
+/// a further 0.3 of that.
+pub const CS_GRENADE_ELASTICITY: f32 = 0.45;
+pub const CS_GRENADE_PLAYER_ELASTICITY: f32 = 0.3;
+/// A grenade that lands slower than this comes to rest.
+pub const CS_GRENADE_SLEEP_SPEED: f32 = 20.0;
+
+/// A CS grenade bouncing off a surface with `normal` (`ResolveFlyCollisionCustom`): reflected
+/// and slowed to [`CS_GRENADE_ELASTICITY`]. Landing on a floor (normal up past 0.7, or a slope
+/// slower than [`CS_GRENADE_SLEEP_SPEED`]) it comes to rest once that slow; a fast steep landing
+/// loses more (so the first toss doesn't spring off the ground). Players are not floors. Returns
+/// the new velocity and whether it now rests.
+#[must_use]
+pub fn grenade_bounce(incoming: [f32; 3], normal: [f32; 3], off_player: bool) -> ([f32; 3], bool) {
+    let elasticity = (CS_GRENADE_ELASTICITY
+        * if off_player {
+            CS_GRENADE_PLAYER_ELASTICITY
+        } else {
+            1.0
+        })
+    .clamp(0.0, 0.9);
+    let into: f32 = (0..3).map(|i| incoming[i] * normal[i]).sum();
+    let mut out: [f32; 3] =
+        core::array::from_fn(|i| (incoming[i] - 2.0 * into * normal[i]) * elasticity);
+    let speed_sq: f32 = out.iter().map(|v| v * v).sum();
+    let sleep_sq = CS_GRENADE_SLEEP_SPEED * CS_GRENADE_SLEEP_SPEED;
+    let floor = normal[2] > 0.7 || (normal[2] > 0.1 && speed_sq < sleep_sq);
+    if off_player || !floor {
+        return (out, false);
+    }
+    if speed_sq < sleep_sq {
+        return ([0.0; 3], true);
+    }
+    if speed_sq > 96_000.0 {
+        let along = (0..3).map(|i| out[i] * normal[i]).sum::<f32>() / libm::sqrtf(speed_sq);
+        if along > 0.5 {
+            let padding = (1.0 - along) + 0.5;
+            out = out.map(|v| v * padding);
+        }
+    }
+    (out, false)
 }
 
 impl CsWeapon {
@@ -2514,11 +2654,55 @@ mod tests {
             assert_eq!(facts.clip_size, g.carry);
         }
         assert!(!is_grenade(CS_KNIFE_INDEX));
-        // Level throw: pitch lifted to -10, speed 600; looking up hard caps at 750.
-        assert_eq!(grenade_throw(0.0), (-10.0, 600.0));
-        assert_eq!(grenade_throw(-60.0).1, 750.0);
-        let (pitch, speed) = grenade_throw(45.0);
-        assert!((pitch - 40.0).abs() < 1e-4 && (speed - 300.0).abs() < 1e-3);
+        // CS:GO: a level throw is lifted 10 degrees, half way down 5, straight down none; the
+        // speed is 675 whatever the pitch (a wrapped 350 is 10 up).
+        assert_eq!(grenade_throw(0.0, 1.0), (-10.0, 675.0));
+        assert_eq!(grenade_throw(45.0, 1.0), (40.0, 675.0));
+        assert_eq!(grenade_throw(90.0, 1.0).0, 90.0);
+        let (pitch, _) = grenade_throw(350.0, 1.0);
+        assert!((pitch - (-10.0 - 10.0 * 80.0 / 90.0)).abs() < 1e-4);
+        // Right click lobs at 30% from 12 lower; both buttons half way between.
+        assert!((grenade_throw(0.0, 0.0).1 - 202.5).abs() < 1e-3);
+        assert!((grenade_throw(0.0, 0.5).1 - 438.75).abs() < 1e-3);
+        assert_eq!(
+            (grenade_throw_lower(0.0), grenade_throw_lower(1.0)),
+            (12.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn grenade_strength_follows_the_held_buttons() {
+        assert_eq!(grenade_strength_at_pull(false), 1.0);
+        assert_eq!(grenade_strength_at_pull(true), 0.0);
+        // Both held from a lob: 1.3 a second toward the middle, and no further.
+        assert!((grenade_strength(0.0, true, true, 100) - 0.13).abs() < 1e-6);
+        assert_eq!(grenade_strength(0.0, true, true, 1000), 0.5);
+        assert_eq!(grenade_strength(1.0, true, true, 1000), 0.5);
+        assert_eq!(grenade_strength(0.5, false, true, 1000), 0.0);
+        assert_eq!(grenade_strength(0.5, true, false, 1000), 1.0);
+    }
+
+    #[test]
+    fn grenades_bounce_like_csgo() {
+        let up = [0.0, 0.0, 1.0];
+        // A wall hit keeps 45%, reflected.
+        let (v, rests) = grenade_bounce([400.0, 0.0, 0.0], [-1.0, 0.0, 0.0], false);
+        assert!(!rests && (v[0] + 180.0).abs() < 1e-3);
+        // Off a player only 13.5%, and never rests on one.
+        let (v, rests) = grenade_bounce([0.0, 0.0, -100.0], up, true);
+        assert!(!rests && (v[2] - 13.5).abs() < 1e-3);
+        // A slow landing rests; a slow touch on a wall doesn't.
+        assert_eq!(
+            grenade_bounce([30.0, 0.0, -20.0], up, false),
+            ([0.0; 3], true)
+        );
+        assert!(!grenade_bounce([0.0, 30.0, 0.0], [1.0, 0.0, 0.0], false).1);
+        // A fast steep first toss loses more than the 45%: 900 down comes back at 405 * 0.5.
+        let (v, _) = grenade_bounce([0.0, 0.0, -900.0], up, false);
+        assert!((v[2] - 202.5).abs() < 1e-3);
+        // A fast glancing landing keeps its 45%.
+        let (v, _) = grenade_bounce([900.0, 0.0, -100.0], up, false);
+        assert!((v[0] - 405.0).abs() < 1e-3 && (v[2] - 45.0).abs() < 1e-3);
     }
 
     #[test]
@@ -2539,25 +2723,38 @@ mod tests {
 
     #[test]
     fn flashbangs_follow_cs_facing_and_distance() {
-        // Point blank, facing it: white for 2.67 s, then a 12 s fade.
-        let full = flash_for(0.0, 1.0).expect("facing");
-        assert_eq!((full.hold_ms, full.fade_ms, full.alpha), (2667, 12000, 255));
-        // Half way out: half of it.
-        let half = flash_for(750.0, 1.0).expect("half");
-        assert_eq!((half.hold_ms, half.fade_ms), (1333, 6000));
-        // Turned partly away: weaker; behind you: a short light flash; out of range: nothing.
-        assert_eq!(flash_for(0.0, -0.3).map(|f| f.alpha), Some(200));
-        let behind = flash_for(0.0, -0.8).expect("behind");
-        assert_eq!((behind.hold_ms, behind.fade_ms, behind.alpha), (500, 3000, 150));
-        assert!(flash_for(1500.0, 1.0).is_none());
-        // The screen: full during the hold, half way through the fade half white.
-        assert_eq!(flash_screen(full, 1000), Some((1.0, 1.0)));
-        let (white, frame) = flash_screen(full, 2667 + 6000).expect("fading");
-        assert!((white - 0.5).abs() < 0.01 && frame > white);
-        assert!(flash_screen(full, 15_000).is_none());
-        // A second full flash during the hold adds what was left of it.
-        let stacked = stack_flash(full, Some((full, 1000)));
-        assert_eq!(stacked.hold_ms, 2667 + 1667);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        // Point blank, looking at it: hold 3.75 s, fade 7.5 s; half way out, half of that.
+        let (hold, fade) = flash_for(0.0, 1.0, 1.0).expect("facing");
+        assert!(near(hold, 3.75) && near(fade, 7.5));
+        let (hold, fade) = flash_for(1500.0, 1.0, 1.0).expect("half");
+        assert!(near(hold, 1.875) && near(fade, 3.75));
+        // To the side, further to the side, facing away; out of range or unseen: nothing.
+        let fade = |facing| flash_for(0.0, facing, 1.0).expect("in range").1;
+        assert!(near(fade(0.4), 5.25) && near(fade(0.0), 3.0) && near(fade(-0.8), 1.5));
+        assert!(flash_for(3000.0, 1.0, 1.0).is_none());
+        assert!(flash_for(0.0, 1.0, 0.0).is_none());
+        // Round a corner, one bent line through: a sixth of it.
+        let (_, fade) = flash_for(0.0, 1.0, CS_FLASH_PARTIAL).expect("corner");
+        assert!(near(fade, 7.5 * 0.167));
+        // The screen lasts fade / 1.4: 7.5 s of fade is 5.357 s.
+        let (full, fresh) = blind(7.5, None);
+        assert!(fresh && full.duration_ms == 5357 && full.end_ms == 5357 && full.alpha == 255);
+        // It whites up over 94 ms, holds full white until 3 s are left, then clears on the
+        // square: 1.5 s left is a quarter white, the frozen frame still 1.5 / 5.357.
+        let (white, frame) = flash_screen(full, 47).expect("building up");
+        assert!(near(white, 0.4977) && white == frame);
+        assert_eq!(flash_screen(full, 2000).map(|s| s.0), Some(1.0));
+        let (white, frame) = flash_screen(full, 5357 - 1500).expect("clearing");
+        assert!(near(white, 0.25) && near(frame, 1500.0 / 5357.0));
+        assert!(flash_screen(full, 5357).is_none());
+        // A weaker flash 1 s in only carries the old one on; a longer one stretches it to its
+        // own length from now. Neither starts afresh. Once the old one is over, a new one does.
+        let (weak, fresh) = blind(1.4, Some((full, 1000)));
+        assert!(!fresh && weak.end_ms == 5357 && weak.duration_ms == 4357);
+        let (strong, _) = blind(14.0, Some((full, 1000)));
+        assert!(strong.end_ms == 11_000 && strong.duration_ms == 10_000);
+        assert!(blind(1.4, Some((full, 6000))).1);
     }
 
     #[test]

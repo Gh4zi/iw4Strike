@@ -50,8 +50,8 @@ pub struct AcceptedShot {
     pub combat_seed: u32,
     pub owner_velocity: [f32; 3],
     pub spread_degrees: f32,
-    /// CS 1.6 weapons: `FireBullets3` spread, replacing `spread_degrees`.
-    pub cs_spread: Option<f32>,
+    /// CS weapons: how the bullets scatter (CS 1.6's or CS:GO's), replacing `spread_degrees`.
+    pub cs_spread: Option<weapon_iw4::csgo::ShotSpread>,
     /// Fired with its silencer on (CS damage and range of the silenced gun).
     pub cs_silenced: bool,
     /// 1 for the first bullet of a burst, 2 for a later one, else 0 (CS burst damage and range).
@@ -206,8 +206,24 @@ pub(crate) fn advance_weapon_command(
             .find(|(c, _)| c == id)
             .map_or(cmd.angles, |(_, a)| *a);
 
+        // The server's `shooting_mode` rides on every player; clients take it from snapshots.
+        let shooting_mode = world
+            .publishes_snapshot()
+            .then(crate::cs_settings::shooting_mode);
         if let Some(ps) = world.player_mut(*id) {
-            weapon_iw4::cs::drop_punch(&mut ps.cs_punch, frametime);
+            if let Some(mode) = shooting_mode {
+                ps.cs_shooting_mode = mode;
+            }
+            if ps.cs_shooting_mode == weapon_iw4::csgo::SHOOTING_CS16 {
+                weapon_iw4::cs::drop_punch(&mut ps.cs_punch, frametime);
+            } else {
+                weapon_iw4::csgo::decay_punch(
+                    &mut ps.cs_punch,
+                    &mut ps.cs_punch_vel,
+                    &mut ps.cs_view_punch,
+                    frametime,
+                );
+            }
         }
         let Some(ps) = world.player(*id).copied() else {
             return accepted;
@@ -225,7 +241,7 @@ pub(crate) fn advance_weapon_command(
         };
         let mut fire_gate = CsGate::Pass;
         if let Some(ps) = world.player_mut(*id) {
-            fire_gate = cs_weapon_frame(ps, &facts, facts_weapon, cmd, old_buttons);
+            fire_gate = cs_weapon_frame(ps, &facts, facts_weapon, cmd, old_buttons, frametime);
         }
 
         {
@@ -657,11 +673,18 @@ pub(crate) fn advance_weapon_command(
         {
             cs_knife_frame(world, tick, *id, facts_weapon, cmd);
         }
+        let thrown_not_out = world.player(*id).is_some_and(|ps| {
+            ps.cs_grenade == playerstate_iw4::cs_grenade::THROWN && ps.cs_next_attack2_ms != 0
+        });
         if grenade_held
             && hand0.weapon == facts_weapon
             && hand0.weaponstate == weapon_iw4::WeaponState::Ready as i32
         {
             cs_grenade_frame(world, tick, *id, facts_weapon, cmd);
+        } else if grenade_held && hand0.weapon == facts_weapon && thrown_not_out {
+            // Switching away in the moment between letting go and the grenade leaving the hand
+            // still throws it (the throw has started: its sound and animation are out).
+            launch_cs_grenade(world, tick, *id, facts_weapon);
         } else if world.player(*id).is_some_and(|ps| ps.cs_grenade != 0)
             && (!grenade_held || hand0.weapon != facts_weapon)
         {
@@ -760,8 +783,10 @@ pub(crate) fn advance_weapon_command(
                     let cs = cs_gun.as_ref();
                     let mut shot_angles = ps.viewangles;
                     if cs.is_some() {
-                        // CS fires along the view plus the recoil punch; MW2 gun sway is ignored.
-                        for (angle, punch) in shot_angles.iter_mut().zip(ps.cs_punch) {
+                        // CS fires along the view plus the recoil punch (twice CS:GO's aim
+                        // punch); MW2 gun sway is ignored.
+                        let aim = weapon_iw4::csgo::aim_offset(ps.cs_shooting_mode, ps.cs_punch);
+                        for (angle, punch) in shot_angles.iter_mut().zip(aim) {
                             *angle += punch;
                         }
                     } else {
@@ -827,7 +852,15 @@ pub(crate) fn advance_weapon_command(
                     let cs_spread = cs
                         .zip(world.player_mut(*id))
                         .map(|(cs, ps_mut)| {
-                            cs_weapon_fire(cs, ps_mut, *id, cmd.server_time, cs_burst, facts.cs_weapon)
+                            cs_weapon_fire(
+                                cs,
+                                ps_mut,
+                                *id,
+                                cmd.server_time,
+                                cs_burst,
+                                facts.cs_weapon,
+                                cmd.buttons,
+                            )
                         });
                     accepted.push(AcceptedShot {
                         shot_id,
@@ -1140,6 +1173,7 @@ fn cs_weapon_frame(
     weapon: u32,
     cmd: &playerstate_iw4::UserCmd,
     old_buttons: u32,
+    frametime: f32,
 ) -> CsGate {
     ps.cs_burst_shot = 0;
     let Some(cs) = weapon_iw4::cs::cs_weapon(facts.cs_weapon) else {
@@ -1149,12 +1183,18 @@ fn cs_weapon_frame(
         ps.cs_burst_left = 0;
         return CsGate::Pass;
     };
+    let csgo = csgo_gun_for(ps, cs);
     let reloading = weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
         .is_ok_and(weapon_iw4::WeaponState::is_reload_family);
     if reloading {
-        // `Reload`: a fresh magazine starts a fresh spray, unzoomed.
+        // `Reload`: a fresh magazine starts a fresh spray, unzoomed (CS:GO keeps the
+        // inaccuracy, which recovers on its own).
         ps.cs_shots_fired = 0;
-        ps.cs_accuracy = weapon_iw4::cs::initial_accuracy(cs);
+        if csgo.is_some() {
+            ps.cs_recoil_index = 0.0;
+        } else {
+            ps.cs_accuracy = weapon_iw4::cs::initial_accuracy(cs);
+        }
         ps.cs_delay_fire = 0;
         ps.cs_zoom = 0;
         ps.cs_last_zoom = 0;
@@ -1169,7 +1209,13 @@ fn cs_weapon_frame(
         }
         ps.cs_gun_weapon = weapon;
         ps.cs_shots_fired = 0;
-        ps.cs_accuracy = weapon_iw4::cs::initial_accuracy(cs);
+        // CS:GO's `Deploy` clears the inaccuracy and the spray position.
+        ps.cs_accuracy = if csgo.is_some() {
+            0.0
+        } else {
+            weapon_iw4::cs::initial_accuracy(cs)
+        };
+        ps.cs_recoil_index = 0.0;
         ps.cs_last_fire_ms = 0;
         ps.cs_decrease_shots_ms = 0;
         ps.cs_delay_fire = 0;
@@ -1193,7 +1239,57 @@ fn cs_weapon_frame(
     );
     ps.cs_delay_fire = u32::from(delay_fire);
     store_cs_gun_state(ps, state);
+    if let Some(gun) = csgo {
+        let since_shot = if ps.cs_last_fire_ms == 0 {
+            f32::MAX
+        } else {
+            (cmd.server_time - ps.cs_last_fire_ms) as f32 / 1000.0
+        };
+        weapon_iw4::csgo::update_accuracy(
+            gun,
+            csgo_mode(ps, cs, facts.cs_weapon),
+            csgo_shooter(ps, cmd.buttons),
+            &mut ps.cs_accuracy,
+            &mut ps.cs_recoil_index,
+            frametime,
+            since_shot,
+        );
+    }
     gate
+}
+
+/// The CS:GO numbers `cs` shoots with, when the server's `shooting_mode` is CS:GO's.
+fn csgo_gun_for(
+    ps: &PlayerState,
+    cs: &weapon_iw4::cs::CsWeapon,
+) -> Option<&'static weapon_iw4::csgo::CsgoGun> {
+    (ps.cs_shooting_mode != weapon_iw4::csgo::SHOOTING_CS16)
+        .then(|| weapon_iw4::csgo::csgo_gun(cs.name))
+        .flatten()
+}
+
+/// The CS:GO mode a CS gun shoots in: alternate while scoped, silenced or in burst.
+fn csgo_mode(ps: &PlayerState, cs: &weapon_iw4::cs::CsWeapon, index: u8) -> usize {
+    let bit = weapon_iw4::cs::silencer_bit(index);
+    weapon_iw4::csgo::gun_mode(
+        ps.cs_zoom != 0,
+        cs.silencer.is_some() && ps.cs_silencers & bit != 0,
+        cs.burst.is_some() && ps.cs_burst_modes & bit != 0,
+    )
+}
+
+/// What the shooter is doing, for CS:GO's inaccuracy.
+fn csgo_shooter(ps: &PlayerState, buttons: u32) -> weapon_iw4::csgo::CsgoShooter {
+    weapon_iw4::csgo::CsgoShooter {
+        on_ground: ps.ground_entity_num != ENTITYNUM_NONE,
+        ducked: ps.pm_flags & playerstate_iw4::pm_flags::CROUCH != 0,
+        on_ladder: ps.pm_flags & playerstate_iw4::pm_flags::LADDER != 0,
+        walking: buttons & playerstate_iw4::buttons::SPRINT != 0,
+        reloading: weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
+            .is_ok_and(weapon_iw4::WeaponState::is_reload_family),
+        speed: ps.velocity[0].hypot(ps.velocity[1]),
+        vertical_speed: ps.velocity[2],
+    }
 }
 
 /// What a gun whose shots the CS layer times does with the fire button this command.
@@ -1326,9 +1422,10 @@ fn cs_silencer_frame(
     }
 }
 
-/// A CS 1.6 shot leaves: accuracy and spread for it, then the recoil punch for the next one.
-/// Returns the spread. The kick side flip is hashed from the shot so prediction agrees with it.
-/// A scoped gun drops its zoom for the bolt (`AWPFire`) and takes it back when ready.
+/// A CS shot leaves: accuracy and spread for it, then the recoil punch for the next one, CS:GO's
+/// way or (`shooting_mode cs16`) CS 1.6's. Returns how its bullets scatter. CS 1.6's kick side
+/// flip is hashed from the shot so prediction agrees with it. A scoped gun drops its zoom for
+/// the bolt (`AWPFire`) and takes it back when ready.
 fn cs_weapon_fire(
     cs: &weapon_iw4::cs::CsWeapon,
     ps: &mut PlayerState,
@@ -1336,10 +1433,33 @@ fn cs_weapon_fire(
     server_time: i32,
     burst_shot: u8,
     index: u8,
-) -> f32 {
+    buttons: u32,
+) -> weapon_iw4::csgo::ShotSpread {
     if cs.dual {
         // The Elites fire left, right, left...: the bit says which hand is next.
         ps.cs_burst_modes ^= weapon_iw4::cs::silencer_bit(index);
+    }
+    if let Some(gun) = csgo_gun_for(ps, cs) {
+        // CS:GO (`CSBaseGunFire`, and every bullet of a burst alike): the bullet takes the
+        // inaccuracy and spread as they stand, then the gun's fire penalty and its spray kick
+        // are added for the next.
+        let mode = csgo_mode(ps, cs, index);
+        let inaccuracy =
+            weapon_iw4::csgo::inaccuracy(gun, mode, ps.cs_accuracy, csgo_shooter(ps, buttons));
+        let spread = weapon_iw4::csgo::spread(gun, mode);
+        weapon_iw4::csgo::fire(
+            gun,
+            mode,
+            &mut ps.cs_accuracy,
+            &mut ps.cs_recoil_index,
+            &mut ps.cs_punch_vel,
+            &mut ps.cs_view_punch,
+        );
+        ps.cs_shots_fired += 1;
+        ps.cs_last_fire_ms = server_time;
+        ps.cs_delay_fire = 1;
+        cs_unzoom_for_bolt(cs, ps, server_time);
+        return weapon_iw4::csgo::ShotSpread::Csgo { inaccuracy, spread };
     }
     let shooter = cs_shooter(ps);
     let mut state = cs_gun_state(ps);
@@ -1348,19 +1468,14 @@ fn cs_weapon_fire(
         // bullet's) and neither wear the accuracy nor kick the view again. The shot still shows
         // (viewmodel animation, muzzle flash, crosshair) through `cs_last_fire_ms`.
         ps.cs_last_fire_ms = server_time;
-        return cs
-            .burst
-            .and_then(|burst| burst.follow_spread)
-            .unwrap_or_else(|| weapon_iw4::cs::spread(cs, state.accuracy, shooter));
+        return weapon_iw4::csgo::ShotSpread::Cs16(
+            cs.burst
+                .and_then(|burst| burst.follow_spread)
+                .unwrap_or_else(|| weapon_iw4::cs::spread(cs, state.accuracy, shooter)),
+        );
     }
     let spread = weapon_iw4::cs::fire(cs, &mut state, shooter, server_time);
-    if !cs.zoom.is_empty() {
-        if ps.cs_zoom != 0 && cs.unzoom_on_fire {
-            ps.cs_last_zoom = ps.cs_zoom;
-            ps.cs_zoom = 0;
-        }
-        ps.cs_next_attack2_ms = server_time + (cs.cycle * 1000.0).round() as i32;
-    }
+    cs_unzoom_for_bolt(cs, ps, server_time);
     let mut roll = (id.0 as u32)
         .wrapping_mul(0x9e37_79b9)
         .wrapping_add(server_time as u32)
@@ -1370,7 +1485,42 @@ fn cs_weapon_fire(
     weapon_iw4::cs::recoil(cs, &mut state, shooter, &mut ps.cs_punch, roll);
     ps.cs_delay_fire = 1;
     store_cs_gun_state(ps, state);
-    spread
+    weapon_iw4::csgo::ShotSpread::Cs16(spread)
+}
+
+/// A scoped gun drops its zoom for the bolt (`AWPFire`) and takes it back when ready.
+fn cs_unzoom_for_bolt(cs: &weapon_iw4::cs::CsWeapon, ps: &mut PlayerState, server_time: i32) {
+    if !cs.zoom.is_empty() {
+        if ps.cs_zoom != 0 && cs.unzoom_on_fire {
+            ps.cs_last_zoom = ps.cs_zoom;
+            ps.cs_zoom = 0;
+        }
+        ps.cs_next_attack2_ms = server_time + (cs.cycle * 1000.0).round() as i32;
+    }
+}
+
+/// The released CS grenade `weapon` leaves the hand (`ThrowGrenade`): only now is it spent, and
+/// the authority launches it.
+fn launch_cs_grenade(world: &mut FrameWorld, tick: Tick, id: ClientId, weapon: u32) {
+    let (Some(ps), Some(facts)) = (world.player(id).copied(), world.combat_facts_for(weapon))
+    else {
+        return;
+    };
+    let Some(grenade) = weapon_iw4::cs::cs_grenade(facts.cs_weapon) else {
+        return;
+    };
+    let clip_key = clip_table_key(facts.clip_index, weapon);
+    let left = (get_clip_for_hand(&ps.ammoclip, clip_key, 0) - 1).max(0);
+    {
+        let ps = world.player_mut(id).expect("present player");
+        ps.cs_next_attack2_ms = 0;
+        set_clip_for_hand(&mut ps.ammoclip, clip_key, 0, left);
+    }
+    world.client_meta_mut(id).set_ammo(weapon, left, 0);
+    if world.publishes_snapshot() {
+        let ps = *world.player(id).expect("present player");
+        throw_cs_grenade(world, tick, id, &ps, grenade);
+    }
 }
 
 /// A CS grenade in hand, once per command (`CHEGrenade::PrimaryAttack` / `WeaponIdle`): attack
@@ -1386,17 +1536,20 @@ fn cs_grenade_frame(
 ) {
     use playerstate_iw4::cs_grenade::{IDLE, PULLED, THROWN};
     use weapon_iw4::cs::{
-        CS_GRENADE_PULL_MS, CS_GRENADE_REDEPLOY_MS, CS_GRENADE_RETIRE_MS, cs_grenade,
+        CS_GRENADE_PULL_MS, CS_GRENADE_REDEPLOY_MS, CS_GRENADE_RELEASE_MS, CS_GRENADE_RETIRE_MS,
+        cs_grenade, grenade_strength, grenade_strength_at_pull,
     };
     let (Some(ps), Some(facts)) = (world.player(id).copied(), world.combat_facts_for(weapon))
     else {
         return;
     };
-    let Some(grenade) = cs_grenade(facts.cs_weapon) else {
+    if cs_grenade(facts.cs_weapon).is_none() {
         return;
-    };
+    }
     let now = cmd.server_time;
+    // Left button a full throw, right a lob, both in between (CS:GO).
     let attack = cmd.buttons & playerstate_iw4::buttons::ATTACK != 0;
+    let attack2 = cmd.buttons & playerstate_iw4::buttons::ADS != 0;
     let clip_key = clip_table_key(facts.clip_index, weapon);
     let count = get_clip_for_hand(&ps.ammoclip, clip_key, 0);
     match ps.cs_grenade {
@@ -1406,37 +1559,50 @@ fn cs_grenade_frame(
                 // timer ran left it in the hand with 0 left.
                 crate::script_player::take_weapon(world, id, weapon);
                 crate::item::raise_best_cs_weapon(world, id);
-            } else if attack && now >= ps.cs_next_attack_ms {
+            } else if (attack || attack2) && now >= ps.cs_next_attack_ms {
                 let ps = world.player_mut(id).expect("present player");
                 ps.cs_grenade = PULLED;
+                ps.cs_grenade_strength = grenade_strength_at_pull(attack2);
                 ps.cs_next_attack2_ms = now;
                 ps.cs_next_attack_ms = now + CS_GRENADE_PULL_MS;
             }
         }
         PULLED => {
-            if attack || now < ps.cs_next_attack_ms {
+            if attack || attack2 {
+                let ps = world.player_mut(id).expect("present player");
+                ps.cs_grenade_strength = grenade_strength(
+                    ps.cs_grenade_strength,
+                    attack,
+                    attack2,
+                    now - ps.cs_next_attack2_ms,
+                );
+                ps.cs_next_attack2_ms = now;
                 return;
             }
+            if now < ps.cs_next_attack_ms {
+                return;
+            }
+            // Let go: the throw starts, and the grenade leaves the hand a moment later.
             let left = (count - 1).max(0);
             {
                 let ps = world.player_mut(id).expect("present player");
                 ps.cs_grenade = THROWN;
                 ps.cs_last_fire_ms = now;
+                ps.cs_next_attack2_ms = now + CS_GRENADE_RELEASE_MS;
                 ps.cs_next_attack_ms = now
                     + if left > 0 {
                         CS_GRENADE_REDEPLOY_MS
                     } else {
                         CS_GRENADE_RETIRE_MS
                     };
-                set_clip_for_hand(&mut ps.ammoclip, clip_key, 0, left);
             }
-            world.client_meta_mut(id).set_ammo(weapon, left, 0);
             apply_player_anim_event(world, id, ANIM_ET_FIREWEAPON);
-            if world.publishes_snapshot() {
-                throw_cs_grenade(world, tick, id, &ps, grenade);
-            }
         }
         _ => {
+            if ps.cs_next_attack2_ms != 0 && now >= ps.cs_next_attack2_ms {
+                launch_cs_grenade(world, tick, id, weapon);
+                return;
+            }
             if now < ps.cs_next_attack_ms {
                 return;
             }
@@ -1451,8 +1617,9 @@ fn cs_grenade_frame(
     }
 }
 
-/// Launch `grenade`'s MW2 projectile along CS's throw: from 16 units in front of the eye, at the
-/// lifted pitch and its speed, plus the thrower's own velocity.
+/// Launch `grenade`'s MW2 projectile along CS:GO's throw (`ThrowGrenade`): at the lifted pitch
+/// and the speed of the player's throw strength, plus 1.25 times their own velocity (a jump
+/// throw carries the jump), from 16 units in front of the eye (a lob lower) or short of a wall.
 fn throw_cs_grenade(
     world: &mut FrameWorld,
     tick: Tick,
@@ -1460,19 +1627,33 @@ fn throw_cs_grenade(
     ps: &PlayerState,
     grenade: &weapon_iw4::cs::CsGrenade,
 ) {
+    use weapon_iw4::cs::{
+        CS_GRENADE_OWNER_VELOCITY, CS_GRENADE_THROW_HALF_SIZE, CS_GRENADE_THROW_PULLBACK,
+        CS_GRENADE_THROW_REACH, grenade_throw, grenade_throw_lower,
+    };
     let Some(projectile) = world.weapon_index_by_script_name(grenade.projectile) else {
         diag::warn!(Sim, "cs grenade: no MW2 `{}` to throw", grenade.projectile);
         return;
     };
-    let (pitch, speed) = weapon_iw4::cs::grenade_throw(ps.viewangles[0] + ps.cs_punch[0]);
-    let angles = [pitch, ps.viewangles[1] + ps.cs_punch[1], 0.0];
+    let strength = ps.cs_grenade_strength;
+    let aim = weapon_iw4::csgo::aim_offset(ps.cs_shooting_mode, ps.cs_punch);
+    let (pitch, speed) = grenade_throw(ps.viewangles[0] + aim[0], strength);
+    let angles = [pitch, ps.viewangles[1] + aim[1], 0.0];
     let (direction, _, _) = math_iw4::angle_vectors(angles);
-    let origin: [f32; 3] = core::array::from_fn(|i| {
-        ps.origin[i]
-            + direction[i] * 16.0
-            + if i == 2 { ps.view_height_current } else { 0.0 }
-    });
-    let velocity: [f32; 3] = core::array::from_fn(|i| direction[i] * speed + ps.velocity[i]);
+    let eye = [
+        ps.origin[0],
+        ps.origin[1],
+        ps.origin[2] + ps.view_height_current - grenade_throw_lower(strength),
+    ];
+    let reach: [f32; 3] = core::array::from_fn(|i| eye[i] + direction[i] * CS_GRENADE_THROW_REACH);
+    let half = CS_GRENADE_THROW_HALF_SIZE;
+    let clear = world
+        .trace_static_world(eye, reach, [-half; 3], [half; 3], crate::MASK_BULLET_WORLD)
+        .endpos;
+    let origin: [f32; 3] =
+        core::array::from_fn(|i| clear[i] - direction[i] * CS_GRENADE_THROW_PULLBACK);
+    let velocity: [f32; 3] =
+        core::array::from_fn(|i| direction[i] * speed + ps.velocity[i] * CS_GRENADE_OWNER_VELOCITY);
     let thrown = crate::equipment::spawn_grenade_projectile_with_velocity(
         world,
         id,
@@ -1487,7 +1668,8 @@ fn throw_cs_grenade(
     );
     diag::debug!(
         Sim,
-        "cs grenade: client {} threw {} at {speed:.0} u/s (pitch {pitch:.1}) {}",
+        "cs grenade: client {} threw {} at {speed:.0} u/s (pitch {pitch:.1}, strength \
+         {strength:.2}, launch velocity {velocity:.0?}) {}",
         id.0,
         grenade.name,
         if thrown { "" } else { "— not launched" }
@@ -1830,6 +2012,31 @@ pub fn spread_direction_on_plane(
     }
 }
 
+fn unit_draw(rng: &mut MatchRng) -> f32 {
+    rng.next_u32() as f32 / u32::MAX as f32
+}
+
+/// A CS:GO bullet (`FireBullet`): the aim plus the shot's inaccuracy offset (`shot_draw`, shared
+/// by its pellets) and this pellet's spread offset, along the aim's right and up.
+fn csgo_bullet_direction(
+    angles: [f32; 3],
+    inaccuracy: f32,
+    spread: f32,
+    shot_draw: [f32; 2],
+    rng: &mut MatchRng,
+) -> [f32; 3] {
+    let (forward, right, up) = math_iw4::angle_vectors(angles);
+    let rolls = [shot_draw[0], shot_draw[1], unit_draw(rng), unit_draw(rng)];
+    let (x, y) = weapon_iw4::csgo::bullet_offset(inaccuracy, spread, rolls);
+    let dir: [f32; 3] = core::array::from_fn(|i| forward[i] + x * right[i] + y * up[i]);
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+    if len > 0.0 {
+        dir.map(|v| v / len)
+    } else {
+        forward
+    }
+}
+
 fn cs_bullet_direction(angles: [f32; 3], spread: f32, rng: &mut MatchRng) -> [f32; 3] {
     let (forward, right, up) = math_iw4::angle_vectors(angles);
     let unit = |draw: u32| draw as f32 / u32::MAX as f32;
@@ -1864,6 +2071,12 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
             1
         };
         let pellet_count = (facts.pellet_count() * barrels).clamp(1, u16::MAX as i32) as u16;
+        // CS:GO: one inaccuracy draw (radius, angle) for the whole shot, before its pellets'.
+        let csgo_draw = matches!(
+            shot.cs_spread,
+            Some(weapon_iw4::csgo::ShotSpread::Csgo { .. })
+        )
+        .then(|| [unit_draw(&mut rng), unit_draw(&mut rng)]);
         for pellet in 0..pellet_count {
             out.push(Emission {
                 combat_seed: shot.combat_seed,
@@ -1875,7 +2088,18 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
                 weapon: shot.weapon,
                 origin: shot.origin,
                 direction: match shot.cs_spread {
-                    Some(spread) => cs_bullet_direction(shot.angles, spread, &mut rng),
+                    Some(weapon_iw4::csgo::ShotSpread::Cs16(spread)) => {
+                        cs_bullet_direction(shot.angles, spread, &mut rng)
+                    }
+                    Some(weapon_iw4::csgo::ShotSpread::Csgo { inaccuracy, spread }) => {
+                        csgo_bullet_direction(
+                            shot.angles,
+                            inaccuracy,
+                            spread,
+                            csgo_draw.unwrap_or([0.0; 2]),
+                            &mut rng,
+                        )
+                    }
                     None => spread_pellet_direction(shot.angles, shot.spread_degrees, &mut rng),
                 },
                 max_range: weapon_iw4::cs::cs_weapon(facts.cs_weapon)

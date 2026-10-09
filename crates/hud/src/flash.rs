@@ -104,12 +104,13 @@ pub(crate) fn update_flash_whiteout(
             blend_ms,
         });
     }
-    // Counter-Strike flashbangs: the server sets how long the screen holds white and fades
-    // (`PlayerState::cs_flash_*`); the same white and frozen-frame quads draw it.
+    // Counter-Strike flashbangs: the server sets when the white-out began, how long it lasts
+    // and how white it gets (`PlayerState::cs_flash_*`); the same white and frozen-frame quads
+    // draw it.
     let flash = if movement_iw4::rules::CS_RULES {
         let cs = weapon_iw4::cs::CsFlash {
-            hold_ms: ps.cs_flash_hold_ms,
-            fade_ms: ps.cs_flash_fade_ms,
+            duration_ms: ps.cs_flash_duration_ms,
+            end_ms: ps.cs_flash_end_ms,
             alpha: ps.cs_flash_alpha,
         };
         (ps.cs_flash_alpha > 0)

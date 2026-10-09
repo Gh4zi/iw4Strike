@@ -236,6 +236,44 @@ fn waits_for_ground(world: &FrameWorld, facts: &EquipmentRuntimeFacts, weapon: u
         || world.weapon_script_name(weapon) == AIRDROP_MARKER_WEAPON
 }
 
+/// How long past its fuse a CS smoke grenade that touched the ground but never came to rest
+/// (wedged, still bouncing) waits before it pops anyway.
+const CS_SMOKE_REST_GRACE_MS: i32 = 2000;
+
+/// Whether a smoke grenade whose fuse is up must wait: MW2's until it has touched the ground,
+/// a CS one (CS:GO's `Think_Detonate`) until it has come to rest.
+fn smoke_still_waiting(world: &FrameWorld, projectile: &ProjectileState, time: i32) -> bool {
+    if !is_cs_grenade(world, projectile.weapon) {
+        return !projectile.grounded;
+    }
+    let grace_over = projectile.grounded
+        && time
+            >= projectile.spawn_time_ms
+                + weapon_iw4::cs::CS_GRENADE_FUSE_MS
+                + CS_SMOKE_REST_GRACE_MS;
+    projectile.pos.tr_type != TR_STATIONARY && !grace_over
+}
+
+/// A CS smoke grenade's projectile.
+fn is_cs_smoke(world: &FrameWorld, weapon: u32) -> bool {
+    movement_iw4::rules::CS_RULES && {
+        let name = crate::script_player::weapon_name(world, weapon);
+        weapon_iw4::cs::CS_GRENADES
+            .iter()
+            .any(|g| g.name == "smokegrenade" && name.eq_ignore_ascii_case(g.projectile))
+    }
+}
+
+/// A CS grenade's projectile (flies, bounces and rests by CS:GO's rules, not MW2's).
+fn is_cs_grenade(world: &FrameWorld, weapon: u32) -> bool {
+    movement_iw4::rules::CS_RULES && {
+        let name = crate::script_player::weapon_name(world, weapon);
+        weapon_iw4::cs::CS_GRENADES
+            .iter()
+            .any(|g| name.eq_ignore_ascii_case(g.projectile))
+    }
+}
+
 fn grenade_deadlines(
     facts: &EquipmentRuntimeFacts,
     kind: GrenadeLaunchKind,
@@ -337,14 +375,9 @@ pub(crate) fn spawn_grenade_projectile_with_velocity(
         init_grenade_apos(direction, time_ms, pitch_rate, roll_rate)
     };
     let mut pos = init_grenade_pos(origin, velocity, time_ms);
-    // A thrown CS grenade flies at half gravity (`pev->gravity` 0.5), like CS.
-    if movement_iw4::rules::CS_RULES
-        && matches!(kind, GrenadeLaunchKind::Thrown { .. })
-        && weapon_iw4::cs::CS_GRENADES.iter().any(|g| {
-            crate::script_player::weapon_name(world, weapon).eq_ignore_ascii_case(g.projectile)
-        })
-    {
-        pos.tr_type = entity_iw4::TR_GRAVITY_HALF;
+    // A thrown CS grenade flies at CS:GO's grenade gravity (0.4).
+    if matches!(kind, GrenadeLaunchKind::Thrown { .. }) && is_cs_grenade(world, weapon) {
+        pos.tr_type = entity_iw4::TR_GRAVITY_CS_GRENADE;
     }
     let speed = vec3_length(velocity);
     let launch_time = time_ms + fire_grenade_no_draw_ms(speed);
@@ -688,6 +721,10 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
             .is_none_or(|deadline| deadline > projectile.cleanup_at_ms || !projectile.live)
     {
         let _ = world.remove_projectile_by_number(entnum);
+        if !projectile.live && is_cs_smoke(world, projectile.weapon) {
+            // A spent CS smoke grenade gives its entity back the way a detonation does.
+            world.note_dying_missile(tick, projectile);
+        }
         return;
     }
     let facts = required_projectile_facts(world, projectile.weapon);
@@ -935,9 +972,17 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
         contact_time = prev.saturating_add(((eval_time - prev) as f32 * fraction) as i32);
     }
     let mut fuse_due = grenade_fuse_due(time, projectile.detonate_at_ms, projectile.live);
-    if fuse_due && !projectile.grounded && waits_for_ground(world, &facts, projectile.weapon) {
+    if fuse_due
+        && waits_for_ground(world, &facts, projectile.weapon)
+        && smoke_still_waiting(world, &projectile, time)
+    {
         fuse_due = false;
-        projectile.detonate_at_ms = Some(time.saturating_add(crate::MATCH_TICK_MS as i32));
+        let recheck = if is_cs_grenade(world, projectile.weapon) {
+            weapon_iw4::cs::CS_SMOKE_RECHECK_MS
+        } else {
+            crate::MATCH_TICK_MS as i32
+        };
+        projectile.detonate_at_ms = Some(time.saturating_add(recheck));
     }
     let cleanup_due = time >= projectile.cleanup_at_ms;
     let contact_before_fuse = hit.is_some()
@@ -1146,7 +1191,16 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
                         });
                     } else {
                         direct_hits.push((projectile, client));
-                        bounce_missile(world, tick, &mut projectile, end, normal, fraction, 0);
+                        bounce_missile(
+                            world,
+                            tick,
+                            &mut projectile,
+                            end,
+                            normal,
+                            fraction,
+                            0,
+                            true,
+                        );
                         impacts.push(ProjectileImpact {
                             id: projectile.id,
                             owner: projectile.owner,
@@ -1222,7 +1276,16 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
                             splash: false,
                         });
                     } else {
-                        bounce_missile(world, tick, &mut projectile, end, normal, fraction, 0);
+                        bounce_missile(
+                            world,
+                            tick,
+                            &mut projectile,
+                            end,
+                            normal,
+                            fraction,
+                            0,
+                            false,
+                        );
                         impacts.push(ProjectileImpact {
                             id: projectile.id,
                             owner: projectile.owner,
@@ -1286,6 +1349,7 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
                             normal,
                             fraction,
                             surf_type,
+                            false,
                         );
                         impacts.push(ProjectileImpact {
                             id: projectile.id,
@@ -1362,10 +1426,25 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
         detonated.push(info);
     }
 
+    // A CS smoke grenade lies in its smoke, spent, until it is removed; it stays the entity that
+    // carries its explosion event instead of a dying copy.
+    let lingers = detonated
+        .first()
+        .is_some_and(|info| info.splash && is_cs_smoke(world, info.projectile.weapon));
     if detonated.is_empty() {
         projectile.velocity = projectile.velocity_at(time);
         if let Some(row) = world.projectile_mut_by_number(entnum) {
             *row = projectile;
+        }
+    } else if lingers {
+        let info = &detonated[0];
+        let mut spent = info.projectile;
+        spent.live = false;
+        stick_missile(tick, &mut spent, info.origin);
+        spent.detonate_at_ms = None;
+        spent.cleanup_at_ms = time.saturating_add(weapon_iw4::cs::CS_SMOKE_GRENADE_LINGER_MS);
+        if let Some(row) = world.projectile_mut_by_number(entnum) {
+            *row = spent;
         }
     } else {
         let _ = world.remove_projectile_by_number(entnum);
@@ -1387,7 +1466,7 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
     }
     world.record_projectile_impacts(tick, &impacts);
     for info in &detonated {
-        if info.splash {
+        if info.splash && !lingers {
             world.note_dying_missile(tick, info.projectile);
         }
     }
@@ -1450,20 +1529,16 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
             ..Default::default()
         };
         world.push_entity_event(tick, EventAudience::All, event_kind, event);
-        if movement_iw4::rules::CS_RULES
-            && event_kind == entity_iw4::EntityEventKind::GRENADE_EXPLODE
+        if event_kind == entity_iw4::EntityEventKind::GRENADE_EXPLODE
             && world.publishes_snapshot()
-            && weapon_iw4::cs::CS_GRENADES.iter().any(|g| {
-                g.name == "smokegrenade"
-                    && crate::script_player::weapon_name(world, info.projectile.weapon)
-                        .eq_ignore_ascii_case(g.projectile)
-            })
+            && is_cs_smoke(world, info.projectile.weapon)
         {
-            // The grenade is gone by then and clients drop events for entities they no longer
-            // have; the cloud is placed by `origin`, so the thrower carries the event.
+            // Clients drop events for entities they no longer have, and the cloud is placed by
+            // `origin`, so the thrower carries the event; it is marked so it makes no sound.
             world.cs_smokes.push(CsSmoke {
                 event: crate::EntityEventPayload {
                     number: info.projectile.owner.0 as i32,
+                    event_parm: weapon_iw4::cs::CS_SMOKE_REFIRE_PARM,
                     ..event
                 },
                 at: Tick(tick.0 + crate::ticks_for_ms(CS_SMOKE_REFIRE_MS)),
@@ -1810,6 +1885,7 @@ fn apply_missile_land_angles(
     .apos;
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bounce_missile(
     world: &mut FrameWorld,
     tick: Tick,
@@ -1818,6 +1894,7 @@ fn bounce_missile(
     normal: [f32; 3],
     fraction: f32,
     surf_type: u8,
+    off_player: bool,
 ) {
     let time = level_time_ms(tick);
     let prev = time.saturating_sub(crate::MATCH_TICK_MS as i32);
@@ -1825,14 +1902,33 @@ fn bounce_missile(
     projectile.grounded |= normal[2] > 0.7;
     projectile.velocity = projectile.velocity_at(hit_time);
     let incoming = projectile.velocity;
-    let facts = required_projectile_facts(world, projectile.weapon);
-    bounce_velocity(projectile, normal, &facts, surf_type);
+    let mut rests = false;
+    if is_cs_grenade(world, projectile.weapon) {
+        (projectile.velocity, rests) = weapon_iw4::cs::grenade_bounce(incoming, normal, off_player);
+    } else {
+        let facts = required_projectile_facts(world, projectile.weapon);
+        bounce_velocity(projectile, normal, &facts, surf_type);
+    }
     let outgoing = projectile.velocity;
     projectile.origin = origin;
     projectile.pos.tr_base = origin;
     projectile.pos.tr_time = time;
     projectile.pos.tr_delta = projectile.velocity;
     apply_missile_land_angles(world, tick, projectile, normal, fraction);
+    if rests {
+        diag::debug!(
+            Sim,
+            "cs grenade: {} came to rest {} ms after the throw",
+            projectile.entnum,
+            time - projectile.spawn_time_ms
+        );
+        // Down on the floor (CS:GO lays it flat): it stays put until it goes off.
+        stick_missile(
+            tick,
+            projectile,
+            core::array::from_fn(|i| origin[i] + normal[i] * 0.25),
+        );
+    }
     let delta = vec3_length([
         outgoing[0] - incoming[0],
         outgoing[1] - incoming[1],
