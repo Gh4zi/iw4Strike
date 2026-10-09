@@ -45,6 +45,18 @@ fn report_rows() -> usize {
         .unwrap_or(REPORT_ROWS)
 }
 
+/// `IW4L_PROFILE_SPIKE_MS=<ms>` logs every single run longer than that, as it ends: which system
+/// a hitch was, and when.
+fn spike_ns() -> Option<u64> {
+    static SPIKE: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *SPIKE.get_or_init(|| {
+        std::env::var("IW4L_PROFILE_SPIKE_MS")
+            .ok()
+            .and_then(|ms| ms.trim().parse::<f64>().ok())
+            .map(|ms| (ms * 1e6) as u64)
+    })
+}
+
 /// Per span: total ns, runs, longest run ns.
 static TOTALS: Mutex<Option<HashMap<String, (u64, u64, u64)>>> = Mutex::new(None);
 
@@ -116,6 +128,17 @@ where
             return;
         };
         let ns = entered.0.elapsed().as_nanos() as u64;
+        if spike_ns().is_some_and(|spike| ns > spike) {
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let at = START.get_or_init(Instant::now).elapsed().as_secs_f64();
+            diag::info!(
+                Launch,
+                "system spike: {:>8.3} ms at {at:>8.3}s  {}{}",
+                ns as f64 / 1e6,
+                name.0,
+                thread_suffix()
+            );
+        }
         let Ok(mut totals) = TOTALS.lock() else {
             return;
         };
