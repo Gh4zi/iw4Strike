@@ -25,6 +25,7 @@ pub struct WorldModelLightingCache {
     pub handle: u16,
 
     body_handles: HashMap<ModelLightingOwner, u16>,
+    slot_owner: Vec<Option<ModelLightingOwner>>,
     rover: u32,
     alloc_fail: bool,
 
@@ -60,6 +61,7 @@ impl WorldModelLightingCache {
         Self {
             handle: 0,
             body_handles: HashMap::new(),
+            slot_owner: vec![None; limit],
             rover: 0,
             alloc_fail: false,
             mod_frame_count: 0,
@@ -98,6 +100,14 @@ impl WorldModelLightingCache {
         self.frame_failed = 0;
     }
 
+    fn viewer_fallback(&self, key: ModelLightingOwner) -> u32 {
+        if key == ModelLightingOwner::Eye {
+            0
+        } else {
+            u32::from(self.handle)
+        }
+    }
+
     pub(crate) fn handle_for(&self, key: ModelLightingOwner) -> u16 {
         self.body_handles.get(&key).copied().unwrap_or(0)
     }
@@ -121,6 +131,11 @@ impl WorldModelLightingCache {
         let dims = atlas.dims;
         let base = dims.smodel_entry_limit;
         let current = self.body_handles.get(&key).copied().unwrap_or(0);
+        // Rewriting a held slot in place relies on its tile write reaching the GPU
+        // after every earlier frame's draws.
+        let owned = lighting_iw4::model_lighting_cache_slot(base, current)
+            .and_then(|slot| self.slot_owner.get(slot as usize))
+            .is_some_and(|owner| *owner == Some(key));
         let i = dyn_pixel_free_bits_index(self.mod_frame_count, 0);
         let p = dyn_pixel_free_bits_index(self.mod_frame_count, 1);
         let pp = dyn_pixel_free_bits_index(self.mod_frame_count, 2);
@@ -145,7 +160,7 @@ impl WorldModelLightingCache {
                 &pixel_free_bits[p],
                 &mut curr,
             ) {
-                Ok(mut glob) => Some(glob.alloc(current, origin, allow_moved_reuse)),
+                Ok(mut glob) => Some(glob.alloc(current, origin, allow_moved_reuse || owned)),
                 Err(_) => None,
             }
         };
@@ -164,6 +179,9 @@ impl WorldModelLightingCache {
             ModelLightingCacheAlloc::Assigned { handle, slot } => {
                 self.frame_assigned = self.frame_assigned.saturating_add(1);
                 self.body_handles.insert(key, handle);
+                if let Some(owner) = self.slot_owner.get_mut(slot as usize) {
+                    *owner = Some(key);
+                }
                 (handle, true, Some(slot))
             }
             ModelLightingCacheAlloc::Failed => {
@@ -171,13 +189,16 @@ impl WorldModelLightingCache {
                 if !self.warned_fail {
                     diag::info!(
                         World,
-                        "model light cache alloc failed (warn {}) — remote body skipped",
-                        ModelLightingCacheGlob::warn_index_on_fail()
+                        "model light cache full (warn {}): {key:?} lit from the viewer's sample this frame \
+                         ({} assigned, {} reused so far)",
+                        ModelLightingCacheGlob::warn_index_on_fail(),
+                        self.frame_assigned,
+                        self.frame_reused
                     );
                     self.warned_fail = true;
                 }
                 self.body_handles.remove(&key);
-                return 0;
+                return self.viewer_fallback(key);
             }
         };
 
@@ -243,6 +264,9 @@ impl WorldModelLightingCache {
                 Err(_) => {
                     if let Some(packed) = self.packed_lighting.get_mut(slot as usize) {
                         *packed = None;
+                    }
+                    if let Some(owner) = self.slot_owner.get_mut(slot as usize) {
+                        *owner = None;
                     }
                     self.body_handles.remove(&key);
                     return 0;
