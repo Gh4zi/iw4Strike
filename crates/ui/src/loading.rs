@@ -110,6 +110,10 @@ const STATUS_SLOTS: usize = 6;
 /// The table is redrawn about ten times a second; the letters keep their own
 /// per-frame animation.
 const STATUS_TABLE_PERIOD: Duration = Duration::from_millis(100);
+
+/// The longest a listen host's screen waits, once the load is complete, for the first authority
+/// tick (see `update_loading_screen`).
+const LISTEN_START_HOLD: Duration = Duration::from_secs(3);
 const LOADING_CLEAR: Color = Color::srgb(0.08, 0.09, 0.12);
 const STATUS_TOTAL: Color = Color::srgb(0.92, 0.93, 0.95);
 const STATUS_FAILED: Color = Color::srgb(1.0, 0.35, 0.25);
@@ -378,6 +382,10 @@ pub(crate) fn update_loading_screen(
     list: Query<(Entity, Option<&Children>), With<LoadingStatusList>>,
     mut cells: Query<(&LoadingStatusCell, &mut Text, &mut TextColor), Without<LoadingLetter>>,
     roots: Query<Entity, Or<(With<LoadingRoot>, With<LoadingCamera>)>>,
+    authority: (
+        Option<Res<frame::RuntimeRole>>,
+        Option<Res<net::AuthorityClock>>,
+    ),
 ) {
     let Some(screen) = screen.as_deref_mut() else {
         return;
@@ -401,7 +409,14 @@ pub(crate) fn update_loading_screen(
         };
     }
 
-    if screen.is_complete() {
+    // A listen host's first authority tick runs the game mode's start-up script (Terminal's took
+    // 150 ms on the main thread's join); the screen stays up until that tick is behind it, so the
+    // stall is not the first thing seen. A joining client has no local authority to wait for.
+    let (role, clock) = authority;
+    let authority_starting = role.is_some_and(|role| *role == frame::RuntimeRole::Listen)
+        && clock.is_some_and(|clock| clock.tick < 2)
+        && screen.since_complete() < LISTEN_START_HOLD;
+    if screen.is_complete() && !authority_starting {
         dismiss_loading_overlay(&mut commands, roots.iter(), std::iter::empty(), true);
         diag::info!(Ui, "loading: screen dismissed");
         return;
