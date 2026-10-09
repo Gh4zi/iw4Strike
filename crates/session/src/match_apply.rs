@@ -557,6 +557,18 @@ pub fn apply_prepared_match(
                 })
                 .collect();
             sim.world_objects_mut().install_glass_panes(panes);
+            sim.set_glass_names(
+                glass
+                    .names
+                    .iter()
+                    .map(|(name, pieces)| {
+                        (
+                            name.clone(),
+                            pieces.iter().copied().map(u32::from).collect(),
+                        )
+                    })
+                    .collect(),
+            );
         }
         sim.world_objects_mut()
             .set_map_round_epoch(load_key.match_key.match_epoch);
