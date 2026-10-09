@@ -20,7 +20,8 @@ pub enum GameFolder {
 impl GameFolder {
     /// How many there are: the length of the arrays indexed by [`index`](Self::index).
     pub const COUNT: usize = 4;
-    /// In the order the game folders window lists them, which is the order they are used in.
+    /// In the order the game folders window lists them, which is the order they are used in, and
+    /// [`index`](Self::index) order (arrays built by mapping over this are indexed by it).
     pub const ALL: [Self; Self::COUNT] = [Self::Mw2, Self::Css, Self::Cz, Self::Cs16];
 
     #[must_use]
@@ -28,8 +29,8 @@ impl GameFolder {
         match self {
             Self::Mw2 => 0,
             Self::Css => 1,
-            Self::Cs16 => 2,
-            Self::Cz => 3,
+            Self::Cz => 2,
+            Self::Cs16 => 3,
         }
     }
 
@@ -412,21 +413,29 @@ mod tests {
         let paths = [
             "C:/MW2".into(),
             String::new(),
-            "D:/Half-Life/cstrike".into(),
             "D:/Half-Life/czero".into(),
+            "D:/Half-Life/cstrike".into(),
         ];
-        write_saved(&file, &paths, [true, false, true, false]).unwrap();
+        write_saved(&file, &paths, [true, false, false, true]).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
             text,
             "fov=80\ngame_path_mw2=C:/MW2\ngame_path_css=\nuse_css=0\ngame_path_cz=D:/Half-Life/czero\nuse_cz=0\ngame_path_cs16=D:/Half-Life/cstrike\nuse_cs16=1\nbind G drop\n"
         );
         assert_eq!(read_saved(&file), Some(paths));
-        assert_eq!(read_used(&file), [true, false, true, false]);
+        assert_eq!(read_used(&file), [true, false, false, true]);
         // Older builds saved a turned-off game as `none`.
         std::fs::write(&file, "game_path_css=none\n").unwrap();
         assert_eq!(read_used(&file), [true, false, true, true]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn listed_in_index_order() {
+        // The game folders window saves `ALL.map(..)`, which `write_saved` reads by index.
+        for (at, folder) in GameFolder::ALL.into_iter().enumerate() {
+            assert_eq!(folder.index(), at, "{folder:?}");
+        }
     }
 
     #[test]

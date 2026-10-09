@@ -78,7 +78,7 @@ pub struct GameSettings {
     pub pad_deadzone_left: f32,
     pub pad_deadzone_right: f32,
 
-    /// Game folders from the game folders window (`game_path_mw2/css/cs16/cz`, in
+    /// Game folders from the game folders window (`game_path_mw2/css/cz/cs16`, in
     /// `asset_transport::GameFolder::index` order), kept as read so a
     /// save writes them back; `None` until that window first saved them.
     pub game_paths: Option<[String; 4]>,
