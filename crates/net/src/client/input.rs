@@ -65,6 +65,8 @@ pub struct ClientActionInput {
     pub pad_sensitivity: f32,
     pub pad_acceleration: bool,
     pub pad_ads_sensitivity: f32,
+    /// Already applied to `pad_look`.
+    pub pad_invert: bool,
     pub pad_turn_rate: [f32; 2],
     /// Pitch and yaw, degrees.
     pub pad_look_delta: [f32; 2],
@@ -110,6 +112,7 @@ impl Default for ClientActionInput {
             pad_sensitivity: 1.0,
             pad_acceleration: true,
             pad_ads_sensitivity: 1.0,
+            pad_invert: false,
             pad_turn_rate: [0.0; 2],
             pad_look_delta: [0.0; 2],
             pad_aim_assist: 0,
@@ -228,8 +231,19 @@ pub fn remote_control_axes(input: &ClientActionInput, mouse_x: f32, mouse_y: f32
         input.mouse_accel,
         input.fov_scale,
     );
+    let further = |a: f32, b: f32| if a.abs() >= b.abs() { a } else { b };
+    let move_up = if input.pad_invert {
+        -input.pad_move[0]
+    } else {
+        input.pad_move[0]
+    };
+    let stick_up = further(input.pad_look[1], move_up);
+    let stick_right = further(input.pad_look[0], input.pad_move[1]);
     let axis = |v: f32| (v.clamp(-1.0, 1.0) * 127.0).round() as i8 as u8;
-    [axis(-input.m_pitch * my), axis(input.m_yaw * mx)]
+    [
+        axis(-input.m_pitch * my + stick_up),
+        axis(input.m_yaw * mx + stick_right),
+    ]
 }
 
 pub fn idle_usercmd(server_time: i32) -> UserCmd {

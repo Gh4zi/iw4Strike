@@ -881,6 +881,8 @@ pub fn sample_client_input(
             let mouse = (actions.mouse_x, actions.mouse_y);
             actions.mouse_x = 0.0;
             actions.mouse_y = 0.0;
+            // remote_control_axes still reads pad_look and pad_move.
+            actions.pad_look_delta = [0.0; 2];
             mouse
         });
     let look_state = ps
