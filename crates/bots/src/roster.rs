@@ -5,6 +5,8 @@ use crate::controller::HostController;
 
 pub const MAX_HOST_BOTS: u32 = 20;
 
+const MAX_CLIENT_SLOTS: u32 = playerstate_iw4::PLAYER_CORPSE_ENTITY_BASE as u32;
+
 #[derive(Resource, Debug, Default)]
 pub struct BotAddQueue(pub Vec<BotAddRequest>);
 
@@ -226,16 +228,12 @@ impl BotRoster {
     }
 
     fn claim_id(&mut self, taken: &[ClientId]) -> Option<ClientId> {
-        // Only `bots + taken` ids are spoken for, so one candidate more than
-        // that always turns up a free one.
-        let candidates = self
-            .bots
-            .len()
-            .saturating_add(taken.len())
-            .saturating_add(1);
-        for _ in 0..candidates {
+        for _ in 1..MAX_CLIENT_SLOTS {
+            if !(1..MAX_CLIENT_SLOTS).contains(&self.next_client) {
+                self.next_client = 1;
+            }
             let id = ClientId(self.next_client);
-            self.next_client = self.next_client.wrapping_add(1).max(1);
+            self.next_client += 1;
             if !taken.contains(&id) && !self.is_bot(id) {
                 return Some(id);
             }
