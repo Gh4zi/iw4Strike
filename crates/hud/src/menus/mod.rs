@@ -116,6 +116,7 @@ pub(crate) struct MenuInputs<'w, 's> {
     party: Res<'w, frame::UiPartyState>,
     frontend_strings: Option<Res<'w, asset_game::LocalizeCatalog>>,
     cs_buy: Option<Res<'w, crate::cs_buymenu::CsBuyMenu>>,
+    clipboard: Option<ResMut<'w, Clipboard>>,
 }
 
 #[derive(Default)]
@@ -328,9 +329,27 @@ pub(crate) fn update_script_menus(
         pressed.end |= keys.just_pressed(KeyCode::End);
         pressed.backspace |= keys.just_pressed(KeyCode::Backspace);
         pressed.delete |= keys.just_pressed(KeyCode::Delete);
+        // Ctrl+V pastes into a text field (a crosshair code, a name).
+        let control = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        if control
+            && keys.just_pressed(KeyCode::KeyV)
+            && runner.menus.editing.is_some()
+            && let Some(clipboard) = input.clipboard.as_mut()
+            && let Some(Ok(text)) = clipboard.fetch_text().poll_result()
+        {
+            pressed.text.push(text);
+        }
     }
+    // A Ctrl shortcut (Ctrl+V) types nothing; Ctrl+Alt is AltGr, which does.
+    let shortcut = input
+        .keys
+        .any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight])
+        && !input
+            .keys
+            .any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
     for event in input.keyboard.read() {
         if pointer
+            && !shortcut
             && event.state.is_pressed()
             && let Some(text) = &event.text
         {

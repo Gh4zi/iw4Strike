@@ -54,7 +54,6 @@ pub use overhead_names::{
     OverheadPosedHead, OverheadPosedModelFrame, OverheadPosedPlayerFrame,
     OverheadPosedPlayerFramePublished,
 };
-pub use cs_crosshair::{dynamic_crosshair, set_dynamic_crosshair};
 pub use plugin::HudPlugin;
 pub use presentation_scale::{
     HorizontalAlign, PlacedRect, PresentationScale, ScaleClass, VIRTUAL_HEIGHT, VIRTUAL_WIDTH,

@@ -1,9 +1,9 @@
-//! Counter-Strike crosshair for CS rules: four bars at the screen centre, CS 1.6 green. The gap
-//! rests at the weapon's value, doubles in the air, halves crouched, grows by half running, opens
-//! by the weapon's delta per shot (to 15) and eases back, as CS 1.6's dynamic crosshair does.
-//! `cl_dynamiccrosshair 0` holds it at rest. Snipers show none: scoped, the scope overlay draws.
-
-use std::sync::atomic::{AtomicBool, Ordering};
+//! Counter-Strike crosshair for CS rules: four bars at the screen centre, CS 1.6 green by
+//! default. A dynamic crosshair's gap rests at the weapon's value, doubles in the air, halves
+//! crouched, grows by half running, opens by the weapon's delta per shot (to 15) and eases back,
+//! as CS 1.6's does; a static one holds still. Size, gap, thickness, colour, dot, T and outline
+//! are the player's (`frame::Crosshair`, CS:GO's `cl_crosshair*`). Snipers show none: scoped, the
+//! scope overlay draws.
 
 use assets::PreparedWeapons;
 use bevy::prelude::*;
@@ -16,29 +16,21 @@ use weapon_iw4::cs::{CS_KNIFE_CROSSHAIR, CsCrosshair, CsSpread};
 use crate::presentation_scale::PresentationScale;
 use crate::ui_write::adopt_display;
 
-static DYNAMIC: AtomicBool = AtomicBool::new(true);
-
-/// Whether the gap follows movement and shots (`cl_dynamiccrosshair`).
-pub fn dynamic_crosshair() -> bool {
-    DYNAMIC.load(Ordering::Relaxed)
-}
-
-pub fn set_dynamic_crosshair(on: bool) {
-    DYNAMIC.store(on, Ordering::Relaxed);
-}
-
-const COLOR: Color = Color::srgb(50.0 / 255.0, 250.0 / 255.0, 50.0 / 255.0);
 /// Widest the shots open the gap.
 const MAX_GAP: f32 = 15.0;
 /// Horizontal speed above which the gap grows by half.
 const RUN_SPEED: f32 = 140.0;
 /// CS 1.6 shrinks the gap once per client frame; this is the rate those steps are counted at.
 const SHRINK_STEPS_PER_SECOND: f32 = 100.0;
-/// HUD units: CS 1.6 sizes its crosshair in a 640x480 screen.
+/// HUD units: CS sizes its crosshair in a 640x480 screen.
 const VIRTUAL_HEIGHT: f32 = 480.0;
 
+/// A bar (0 left, 1 right, 2 top, 3 bottom) or the centre dot (4).
 #[derive(Component, Clone, Copy)]
 pub(crate) struct CsCrosshairBar(u8);
+
+const TOP: u8 = 2;
+const DOT: u8 = 4;
 
 #[derive(Resource, Default)]
 pub(crate) struct CsCrosshairState {
@@ -47,7 +39,7 @@ pub(crate) struct CsCrosshairState {
 }
 
 pub(crate) fn spawn_cs_crosshair(root: &mut ChildSpawnerCommands) {
-    for bar in 0..4 {
+    for bar in 0..=DOT {
         root.spawn((
             CsCrosshairBar(bar),
             Node {
@@ -55,7 +47,8 @@ pub(crate) fn spawn_cs_crosshair(root: &mut ChildSpawnerCommands) {
                 display: Display::None,
                 ..default()
             },
-            BackgroundColor(COLOR),
+            BackgroundColor(Color::NONE),
+            Outline::new(Val::Px(0.0), Val::ZERO, Color::NONE),
         ));
     }
 }
@@ -84,8 +77,19 @@ pub(crate) fn cs_crosshair_for(
     })
 }
 
-fn hide(bars: &mut Query<(&CsCrosshairBar, &mut Node)>) {
-    for (_, mut node) in bars.iter_mut() {
+type CrosshairParts<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static CsCrosshairBar,
+        &'static mut Node,
+        &'static mut BackgroundColor,
+        &'static mut Outline,
+    ),
+>;
+
+fn hide(parts: &mut CrosshairParts) {
+    for (_, mut node, _, _) in parts.iter_mut() {
         adopt_display(&mut node, Display::None);
     }
 }
@@ -98,15 +102,16 @@ pub(crate) fn update_cs_crosshair(
     weapons: Option<Res<PreparedWeapons>>,
     view: Res<ViewSubject>,
     time: Res<Time>,
+    settings: Res<frame::GameSettings>,
     mut state: ResMut<CsCrosshairState>,
-    mut bars: Query<(&CsCrosshairBar, &mut Node)>,
+    mut parts: CrosshairParts,
 ) {
     if !surface.is_ready() || view.in_killcam() {
-        hide(&mut bars);
+        hide(&mut parts);
         return;
     }
     let (Some(ps), Some(weapons)) = (presented.player(local.0), weapons.as_ref()) else {
-        hide(&mut bars);
+        hide(&mut parts);
         return;
     };
     let crosshair = match cs_crosshair_for(ps, weapons) {
@@ -116,13 +121,14 @@ pub(crate) fn update_cs_crosshair(
             crosshair
         }
         _ => {
-            hide(&mut bars);
+            hide(&mut parts);
             return;
         }
     };
+    let player = settings.crosshair;
 
     let mut rest = crosshair.gap;
-    if dynamic_crosshair() {
+    if player.dynamic {
         if ps.ground_entity_num == ENTITYNUM_NONE {
             rest *= 2.0;
         } else if ps.pm_flags & pm_flags::CROUCH != 0 {
@@ -139,23 +145,51 @@ pub(crate) fn update_cs_crosshair(
     }
     state.last_fire_ms = ps.cs_last_fire_ms;
     state.gap = state.gap.max(rest);
-    if !dynamic_crosshair() {
+    if !player.dynamic {
         state.gap = rest;
     }
 
     let scale = PresentationScale::from_window(surface.width(), surface.height());
     let unit = scale.height() / VIRTUAL_HEIGHT;
-    let gap = (state.gap * unit).round();
-    let length = ((5.0 + (state.gap - rest) * 0.5) * unit).round().max(1.0);
-    let thickness = unit.round().max(1.0);
+    // A dynamic gap starts at the weapon's and the shots lengthen the bars, as CS 1.6's do; a
+    // static one starts at `STATIC_GAP`. The player's gap moves either.
+    let (gap, spread) = if player.dynamic {
+        (state.gap + player.gap, (state.gap - rest) * 0.5)
+    } else {
+        (frame::Crosshair::STATIC_GAP + player.gap, 0.0)
+    };
+    let gap = (gap * unit).round();
+    let length = ((player.size + spread) * unit).round().max(0.0);
+    let thickness = (player.thickness * unit).round().max(1.0);
     let cx = (scale.width() * 0.5).round();
     let cy = (scale.height() * 0.5).round();
     let half = (thickness * 0.5).floor();
-    for (bar, mut node) in bars.iter_mut() {
-        let (left, top, width, height) = match bar.0 {
+    let [r, g, b, a] = player.color;
+    let color = BackgroundColor(Color::srgba_u8(r, g, b, a));
+    let outline = if player.outline && player.outline_thickness > 0.0 {
+        Outline::new(
+            Val::Px(player.outline_thickness.round().max(1.0)),
+            Val::ZERO,
+            Color::srgba_u8(0, 0, 0, a),
+        )
+    } else {
+        Outline::new(Val::Px(0.0), Val::ZERO, Color::NONE)
+    };
+    for (part, mut node, mut background, mut edge) in parts.iter_mut() {
+        let shown = match part.0 {
+            DOT => player.dot,
+            TOP => !player.t_style && length >= 1.0,
+            _ => length >= 1.0,
+        };
+        if !shown {
+            adopt_display(&mut node, Display::None);
+            continue;
+        }
+        let (left, top, width, height) = match part.0 {
             0 => (cx - gap - length, cy - half, length, thickness),
             1 => (cx + gap, cy - half, length, thickness),
-            2 => (cx - half, cy - gap - length, thickness, length),
+            TOP => (cx - half, cy - gap - length, thickness, length),
+            DOT => (cx - half, cy - half, thickness, thickness),
             _ => (cx - half, cy + gap, thickness, length),
         };
         adopt_display(&mut node, Display::Flex);
@@ -163,5 +197,7 @@ pub(crate) fn update_cs_crosshair(
         node.top = Val::Px(top);
         node.width = Val::Px(width);
         node.height = Val::Px(height);
+        background.set_if_neq(color);
+        edge.set_if_neq(outline);
     }
 }

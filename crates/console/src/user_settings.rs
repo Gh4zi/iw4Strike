@@ -367,6 +367,11 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("pad_deadzone_left={:.2}", settings.pad_deadzone_left),
         format!("pad_deadzone_right={:.2}", settings.pad_deadzone_right),
     ];
+    lines.extend(
+        frame::crosshair::CVARS
+            .iter()
+            .filter_map(|(name, _)| Some(format!("{name}={}", settings.crosshair.cvar(name)?))),
+    );
     if let Some(paths) = &settings.game_paths {
         for folder in asset_transport::GameFolder::ALL {
             lines.push(format!("{}={}", folder.key(), paths[folder.index()]));
@@ -516,6 +521,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "pad_vibration" => parse_into(value, &mut settings.pad_vibration),
             "pad_deadzone_left" => parse_into(value, &mut settings.pad_deadzone_left),
             "pad_deadzone_right" => parse_into(value, &mut settings.pad_deadzone_right),
+            key if key.starts_with("cl_crosshair") => {
+                if let Err(error) = settings.crosshair.set_cvar(key, value) {
+                    warn!("ignored setting: {error}");
+                }
+            }
             _ => warn!("ignored unknown setting `{key}`"),
         }
     }
@@ -559,6 +569,19 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
     }
 }
 
+/// The options menu's crosshair rows and the `cl_crosshair*` variable each sets.
+const MENU_CROSSHAIR: [(&str, &str); 8] = [
+    ("ui_crosshair_style", "cl_crosshairstyle"),
+    ("ui_crosshair_size", "cl_crosshairsize"),
+    ("ui_crosshair_gap", "cl_crosshairgap"),
+    ("ui_crosshair_thickness", "cl_crosshairthickness"),
+    ("ui_crosshair_color", "cl_crosshaircolor"),
+    ("ui_crosshair_dot", "cl_crosshairdot"),
+    ("ui_crosshair_outline", "cl_crosshair_drawoutline"),
+    ("ui_crosshair_t", "cl_crosshair_t"),
+];
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn native_menu_settings(
     mut events: MessageReader<crate::ConsoleCommand>,
     mut settings: ResMut<frame::GameSettings>,
@@ -567,6 +590,7 @@ pub(crate) fn native_menu_settings(
     mut dof: ResMut<render_frontend::assemble::drawsurf::dof::DofDvars>,
     mut glow: ResMut<render_frontend::assemble::drawsurf::dof::GlowDvars>,
     mut test_rumble: MessageWriter<frame::TestControllerRumble>,
+    mut code_status: Local<Option<(String, frame::Crosshair)>>,
 ) {
     for command in events.read() {
         if !matches!(command.name.as_str(), "set" | "seta") {
@@ -650,10 +674,63 @@ pub(crate) fn native_menu_settings(
             "ui_pad_vibration" => settings.pad_vibration = value == "1",
             "ui_pad_deadzone_left" => parse_into(value, &mut settings.pad_deadzone_left),
             "ui_pad_deadzone_right" => parse_into(value, &mut settings.pad_deadzone_right),
-            _ => continue,
+            "ui_crosshair_code" => {
+                if value.trim().is_empty() {
+                    continue;
+                }
+                *code_status = match frame::crosshair::decode_share_code(value) {
+                    Ok(crosshair) => {
+                        settings.crosshair = crosshair;
+                        settings.crosshair.sanitize();
+                        Some(("Crosshair code imported".to_owned(), settings.crosshair))
+                    }
+                    Err(error) => {
+                        let mut chars = error.chars();
+                        let first = chars.next().map(|c| c.to_ascii_uppercase());
+                        let error = first.into_iter().chain(chars).collect();
+                        Some((error, settings.crosshair))
+                    }
+                };
+            }
+            name => {
+                let Some((_, cvar)) = MENU_CROSSHAIR.iter().find(|(dvar, _)| *dvar == name) else {
+                    continue;
+                };
+                if let Err(error) = settings.crosshair.set_cvar(cvar, value) {
+                    warn!("menu setting: {error}");
+                }
+            }
         }
         settings.sanitize();
         settings.touch();
+    }
+    // The code field starts empty; the line under it says how the last code went until the
+    // crosshair changes another way, and how to paste one before that.
+    if code_status
+        .as_ref()
+        .is_some_and(|(_, applied)| *applied != settings.crosshair)
+    {
+        *code_status = None;
+    }
+    dvars.set("ui_crosshair_code", "");
+    dvars.set(
+        "ui_crosshair_code_status",
+        code_status.as_ref().map_or_else(
+            || "Select the line above, Ctrl+V your code, press Enter to import".to_owned(),
+            |(status, _)| status.clone(),
+        ),
+    );
+    for (dvar, cvar) in MENU_CROSSHAIR {
+        let value = if cvar == "cl_crosshaircolor"
+            && settings.crosshair.color_preset() == frame::Crosshair::CUSTOM_COLOR
+        {
+            Some("Custom".to_owned())
+        } else {
+            settings.crosshair.cvar(cvar)
+        };
+        if let Some(value) = value {
+            dvars.set(dvar, value);
+        }
     }
     if settings.is_changed() {
         shadows.enabled = Some(settings.shadows != frame::GameSettings::SHADOWS_OFF);

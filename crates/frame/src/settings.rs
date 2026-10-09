@@ -56,6 +56,8 @@ pub struct GameSettings {
     /// thread record while the GPU finishes the last frame (more fps); 1 adds no queue when the GPU
     /// is the bottleneck. Read when the window is made, so a change applies after a restart.
     pub max_frames_ahead: u8,
+    /// The CS crosshair (`cl_crosshair*`).
+    pub crosshair: crate::Crosshair,
     pub sensitivity: f32,
     pub invert_mouse: bool,
     pub player_name: String,
@@ -102,6 +104,7 @@ impl Default for GameSettings {
             depth_of_field: true,
             bloom: true,
             max_frames_ahead: Self::MAX_FRAMES_AHEAD_DEFAULT,
+            crosshair: crate::Crosshair::default(),
             sensitivity: 5.0,
             invert_mouse: false,
             player_name: "Player".to_owned(),
@@ -176,6 +179,7 @@ impl GameSettings {
         self.sensitivity = self.sensitivity.clamp(0.1, 30.0);
         self.max_frames_ahead = self.max_frames_ahead.clamp(1, 2);
         self.shadows = self.shadows.min(Self::SHADOWS_ALL);
+        self.crosshair.sanitize();
         if self.pad_layout != Self::PAD_LAYOUT_CUSTOM {
             self.pad_layout = self.pad_layout.min(4);
         }

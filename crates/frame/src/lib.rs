@@ -1,6 +1,7 @@
 mod screen_effects;
 pub use screen_effects::{ScreenEffectsDvars, ScreenEffectsPublished, ScreenEffectsView};
 pub mod class_presets;
+pub mod crosshair;
 pub mod pad;
 pub mod retire;
 pub mod schedule;
@@ -11,6 +12,7 @@ pub mod settings;
 pub mod ui;
 
 pub use class_presets::{ClassPreset, pick_showcase, showcase_classes};
+pub use crosshair::Crosshair;
 pub use pad::{ActivePad, InputDevices, PromptStyle, TestControllerRumble};
 pub use retire::Retiring;
 pub use schedule::{

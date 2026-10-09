@@ -99,12 +99,10 @@ pub(crate) fn route_movement_commands(
                 _ => "usage: mv_stamina [scale]".to_owned(),
             },
             "cl_dynamiccrosshair" => match cmd.args.as_slice() {
-                [] => format!(
-                    "cl_dynamiccrosshair = {}",
-                    u8::from(hud::dynamic_crosshair())
-                ),
+                [] => format!("cl_dynamiccrosshair = {}", u8::from(game.crosshair.dynamic)),
                 [arg] if arg == "0" || arg == "1" => {
-                    hud::set_dynamic_crosshair(arg == "1");
+                    game.crosshair.dynamic = arg == "1";
+                    game.touch();
                     format!("cl_dynamiccrosshair = {arg}")
                 }
                 _ => "usage: cl_dynamiccrosshair [0|1]".to_owned(),

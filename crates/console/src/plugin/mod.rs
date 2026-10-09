@@ -203,6 +203,7 @@ impl Plugin for ConsolePlugin {
                         (
                             crate::debug_sm::route_sm_commands,
                             crate::debug_movement::route_movement_commands,
+                            crate::crosshair::route_crosshair_commands,
                             crate::debug_movement::sync_movement_mode,
                         ),
                         crate::debug_lod::route_lod_ramp_commands,
@@ -766,6 +767,7 @@ fn setup_console(
     crate::debug_smc::register_smc_enable_commands(&mut registry);
     crate::debug_sm::register_sm_commands(&mut registry);
     crate::debug_movement::register_movement_commands(&mut registry);
+    crate::crosshair::register_crosshair_commands(&mut registry);
     crate::debug_lod::register_lod_ramp_commands(&mut registry);
     crate::debug_cg_gun::register_cg_gun_commands(&mut registry);
     crate::debug_cl_yawspeed::register_cl_yawspeed_command(&mut registry);
