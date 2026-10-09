@@ -17,7 +17,10 @@ impl Default for NativeRegistry {
             }
             let defined = match &args[0] {
                 Value::Undefined => false,
-                Value::Object(id) => world.resource::<Runtime>().live(id),
+                Value::Object(id) => {
+                    let runtime = world.resource::<Runtime>();
+                    runtime.live(id) && !runtime.pending_deletes.contains(id)
+                }
                 _ => true,
             };
             Ok(Value::Int(i32::from(defined)))
