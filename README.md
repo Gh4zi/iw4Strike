@@ -678,7 +678,7 @@ read to get the behaviour and numbers right. None of their source code is includ
 | **[hlsdk-portable](https://github.com/FWGS/hlsdk-portable)** | GoldSrc player movement (`pm_shared`) and the Half-Life model format (`studio.h`), used by the CS 1.6 movement mode and the CS 1.6 model fallback. |
 | **[CSMovementRust](https://github.com/EduardoCalvoUribe/CSMovementRust)** | CS:GO movement numbers and its technical reference: stamina as a penalty, crouch fatigue, CS:GO ground acceleration and speed clamp, the duck-reset jump, the anti-bhop cap, ladder speed (`mv_mode csgo`). |
 | **[Source SDK 2013](https://github.com/ValveSoftware/source-sdk-2013)** | Source engine movement (`gamemovement.cpp`) and the public headers for Source model files, used to load Counter-Strike: Source models. Blood on walls behind a hit player (`TraceBleed`). |
-| **Counter-Strike: Source SDK** (Valve's CS:S community source release) | How CS:S layers a player's animations (`cs_playeranimstate.cpp`), used for the third-person stances. |
+| **[css-community](https://github.com/DeadZoneLuna/css-community)** (Valve's Counter-Strike: Source SDK release) | How CS:S layers a player's animations (`cs_playeranimstate.cpp`), used for the third-person stances. |
 | **[ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat)** (MIT) | Counter-Strike 2's file formats: the resource container, KV3, models, textures, materials, skeletons and animation clips, and how CS2's materials pack their maps. |
 | **[meshoptimizer](https://github.com/zeux/meshoptimizer)** (MIT) | The vertex and index buffer encodings CS2's models are compressed with. |
 
