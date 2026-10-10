@@ -19,8 +19,10 @@ pub use dobj::{
 };
 pub use dobj_runtime::{DObjAnimRuntime, DObjReuseKey, model_token, reuse_matches};
 pub use hold_stance::{
-    ArmJoints, ArmStance, HoldKind, HoldStance, apply_hold_stance, hold_stance,
-    install_hold_stances, torso_frame,
+    ArmJoints, ArmStance, HoldAction, HoldClip, HoldKind, HoldPose, HoldStance, TorsoJoints,
+    apply_hold_stance, hand_anatomy, hold_pose_from_anims, hold_stance, hold_weapon_direction,
+    mw2_right_hand,
+    install_hold_clips, sample_hold, torso_frame,
 };
 pub use retained::{
     BoneCollision, CollSurfCollision, CollTri, CollisionBone, DObjPoseRequest, MaterializeError,

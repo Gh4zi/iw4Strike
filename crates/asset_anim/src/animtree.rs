@@ -29,6 +29,30 @@ pub struct PlayerAnimSources {
     leaf_binds: Option<PlayerAnimLeafBinds>,
 }
 
+/// Counter-Strike's grenade stance in MW2's player animation script. A body takes MW2's grenade
+/// animations only for a throw (CS grenades are carried upright otherwise); there CS stands up:
+/// the grenade idles are MW2's upright pistol ones, and a throw standing still plays on the
+/// torso over them instead of crouching the whole body. Missing lines are left alone.
+const CS_PLAYERANIM_PATCHES: [(&str, &str); 3] = [
+    ("both pb_stand_grenade_pullpin", "both pb_stand_alert_pistol"),
+    ("both pb_crouch_grenade_pullpin", "both pb_crouch_alert_pistol"),
+    (
+        "both pb_stand_grenade_throw blendtime 10",
+        "torso pt_stand_grenade_throw blendtime 10",
+    ),
+];
+
+fn cs_playeranim_patches(script: &[u8]) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(script) else {
+        return script.to_vec();
+    };
+    let mut text = text.to_owned();
+    for (from, to) in CS_PLAYERANIM_PATCHES {
+        text = text.replace(from, to);
+    }
+    text.into_bytes()
+}
+
 impl PlayerAnimSources {
     pub fn capture(&mut self, name: &str, data: &[u8], zlib_compressed: bool) {
         let (target, path) = match name {
@@ -50,6 +74,9 @@ impl PlayerAnimSources {
         };
         if bytes.last() == Some(&0) {
             bytes.pop();
+        }
+        if path == PLAYERANIM_SCRIPT_PATH {
+            bytes = cs_playeranim_patches(&bytes);
         }
         *target = Some(bytes);
     }

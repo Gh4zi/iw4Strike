@@ -74,6 +74,12 @@ pub struct Sequence {
     /// `blend_size.0` × `blend_size.1` grid row by row (an aim matrix is 3 × 3); one for most.
     pub blends: Vec<usize>,
     pub blend_size: (usize, usize),
+    /// How much the sequence moves each bone (0 leaves it to whatever plays under it, 1 takes
+    /// it over), by bone index.
+    pub weights: Vec<f32>,
+    /// Sequences played over this one wherever it plays (`StudioModel::sequences` indices), in
+    /// order: CS:S's player poses carry their aim and hand-position layers this way.
+    pub autolayers: Vec<usize>,
     frames: Vec<BoneFrame>,
 }
 
@@ -629,6 +635,9 @@ fn decode_animation(r: &R<'_>, desc: usize, defaults: &[BoneDefaults]) -> Result
     })
 }
 
+/// `mstudioautolayer_t`'s size.
+const AUTOLAYER_LEN: usize = 24;
+
 fn parse_sequences(
     r: &R<'_>,
     defaults: &[BoneDefaults],
@@ -658,6 +667,17 @@ fn parse_sequences(
         let blends = (0..blend_size.0 * blend_size.1)
             .map(|i| Ok(usize::try_from(r.i16(anim_slot + i * 2)?).unwrap_or(0)))
             .collect::<Result<Vec<_>, String>>()?;
+        let autolayer_base = r.rel(at, 152)?;
+        // Only CS:S's player animations use these; a model without them still loads.
+        let autolayers = (0..r.usize(at + 148).unwrap_or(0).min(16))
+            .map(|l| Ok(usize::try_from(r.i16(autolayer_base + l * AUTOLAYER_LEN)?).unwrap_or(0)))
+            .collect::<Result<Vec<_>, String>>()
+            .unwrap_or_else(|_| Vec::new());
+        let weight_base = r.rel(at, 156)?;
+        let weights = (0..defaults.len())
+            .map(|b| r.f32(weight_base + b * 4))
+            .collect::<Result<Vec<_>, String>>()
+            .unwrap_or_else(|_| Vec::new());
         let events = (0..event_count)
             .map(|e| {
                 let ev = event_base + e * EVENT_LEN;
@@ -686,6 +706,8 @@ fn parse_sequences(
             events,
             blends,
             blend_size,
+            weights,
+            autolayers,
             frames,
         });
     }

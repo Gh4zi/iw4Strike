@@ -4,10 +4,9 @@ use crate::anim::remote_body::{
     RemoteSkinModels, RemoteSkinPoseHashes, SkinAfterPose, WorldGunGap, advance_remote_tree,
     bind_remote_skin_models, clone_corpse_tree_from_victim, commit_assembled_body,
     ensure_remote_dobj, hash_skin_matrices, occupy_lod_byte, occupy_remote_kit_dobj, packed_anim,
-    pose_remote_dobj, push_cached_surfaces, radii, remote_hold_kind, remote_player_controller,
-    select_remote_lods,
-    select_remote_models, skin_after_pose, skin_slot_need, skip_frozen_corpse_dobj,
-    take_unique_geom, validate_remote_tracks, zero_anim,
+    pose_remote_dobj, push_cached_surfaces, radii, remote_hold_pose, remote_player_controller,
+    select_remote_lods, select_remote_models, skin_after_pose, skin_slot_need,
+    skip_frozen_corpse_dobj, take_unique_geom, validate_remote_tracks, zero_anim,
 };
 use crate::anim::scene_submission::{AnimDObjSceneSkels, AnimDObjSceneSubmission, AnimSceneSubmit};
 use crate::anim::xmodel_pose::{build_skin_layout, skin_packed_into, stream_lod_surface_rigid};
@@ -846,16 +845,11 @@ impl<'a> RemotePoseFrame<'a> {
                 .expect("composed");
             validate_remote_tracks(dobj, clips.as_ref(), body, &model_set.body_name)?;
 
+            let hold = remote_hold_pose(weapons, tree, &anim_runtime, weapon, legs, torso);
             let world = pose_remote_dobj(
                 dobj,
                 anim_runtime,
-                remote_player_controller(
-                    is_corpse,
-                    view_pitch_deg,
-                    prone,
-                    crouch,
-                    remote_hold_kind(weapons, tree, weapon, legs, torso),
-                ),
+                remote_player_controller(is_corpse, view_pitch_deg, prone, crouch, hold),
             )?;
             let skin = publish_remote_dobj(
                 dobj,
@@ -867,17 +861,28 @@ impl<'a> RemotePoseFrame<'a> {
                 bolts,
                 dobj_poses,
             )?;
-            if !is_corpse
-                && let Some(bone) = kit.cs_weapon_tag.and_then(|tag| world.get(tag))
-            {
+            if !is_corpse && let Some(bone) = kit.cs_weapon_tag.and_then(|tag| world.get(tag)) {
                 // The MW2 twin's muzzle on the tag lines the CS model up.
                 let muzzle = kit.bolt_bones[0]
                     .and_then(|flash| world.get(usize::from(flash)))
                     .map(|flash| bone.inverse() * *flash);
+                let knife =
+                    hold.filter(|pose| pose.action.idle() == xmodel_runtime::HoldAction::KnifeIdle);
+                let in_palm = hold.is_some_and(|pose| xmodel_runtime::sample_hold(pose).is_some());
+                let point = knife
+                    .and_then(xmodel_runtime::sample_hold)
+                    .and_then(|stance| xmodel_runtime::hold_weapon_direction(dobj, &world, &stance))
+                    .map(|dir| transform.rotation * dir);
                 held.push(crate::occupancy::cs_world_model::CsHeldWeaponTag {
                     weapon,
                     world_from_tag: transform.to_matrix() * *bone,
                     muzzle,
+                    point,
+                    in_palm,
+                    hand: in_palm
+                        .then(|| xmodel_runtime::mw2_right_hand(dobj, &world))
+                        .flatten()
+                        .map(|hand| transform.to_matrix() * hand),
                 });
             }
             if !is_corpse {

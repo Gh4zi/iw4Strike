@@ -555,8 +555,8 @@ pub struct PlayerControllerInput {
     pub prone: bool,
     pub crouch: bool,
     pub lean_frac: f32,
-    /// Hold a CS knife's or grenade's stance (see [`crate::apply_hold_stance`]).
-    pub hold: Option<crate::HoldKind>,
+    /// Put the arms in a CS knife's or grenade's stance (see [`crate::apply_hold_stance`]).
+    pub hold: Option<crate::HoldPose>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -598,7 +598,7 @@ pub fn apply_player_controller(
     if tag_origin {
         set_local_tag(locals, 0, plan.tag_origin_offset, plan.tag_origin_angles);
     }
-    if let Some(stance) = input.hold.and_then(crate::hold_stance) {
+    if let Some(stance) = input.hold.and_then(crate::sample_hold) {
         crate::apply_hold_stance(dobj, locals, &stance);
     }
     PlayerControllerResult {

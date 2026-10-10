@@ -33,6 +33,16 @@ pub struct CsHeldWeaponTag {
     pub world_from_tag: Mat4,
     /// The MW2 twin's muzzle (`tag_flash`, x along the barrel) in the tag's frame.
     pub muzzle: Option<Mat4>,
+    /// Where the body's Counter-Strike stance points the weapon (world space), for a knife held
+    /// with one (see `xmodel_runtime::hold_weapon_direction`).
+    pub point: Option<Vec3>,
+    /// The body holds the weapon in a Counter-Strike stance, which puts the tag in the palm
+    /// (`xmodel_runtime::apply_hold_stance`): a knife's or grenade's grip goes on the tag itself.
+    pub in_palm: bool,
+    /// The right hand holding it in a Counter-Strike stance (world space): its anatomy at the
+    /// wrist (`xmodel_runtime::mw2_right_hand`). A knife or grenade rides on it as on its game's
+    /// hand bone.
+    pub hand: Option<Mat4>,
 }
 
 /// Every posed body's weapon hand, refilled each frame by remote body posing.
@@ -276,7 +286,7 @@ fn build_world_model(
     loaded: mdl_source::LoadedModel,
     placement: Placement,
     images: &mut Assets<Image>,
-) -> Result<(CsViewmodelModel, Option<Vec3>), String> {
+) -> Result<(CsViewmodelModel, Option<Vec3>, Option<HandMount>), String> {
     let studio = &loaded.model;
     let mut skin = Vec::new();
     studio.pose(0, 0.0, &mut skin);
@@ -288,15 +298,24 @@ fn build_world_model(
             .position(|b| b.name.eq_ignore_ascii_case(bone))
     };
     // Guns hang off their weapon bone; the knife and grenades off the right hand.
+    let mut mount = None;
     let to_tag = if placement != Placement::Hand {
         Affine3A::IDENTITY
     } else {
         let (anchor, carry) = match find("ValveBiped.weapon_bone") {
             Some(bone) => (bone, Affine3A::IDENTITY),
-            None => (
-                find("ValveBiped.Bip01_R_Hand").ok_or("no weapon bone or right hand")?,
-                hand_to_weapon_bone(pack).ok_or("no CS:S player model for the hand")?,
-            ),
+            None => {
+                let carry = hand_to_weapon_bone(pack).ok_or("no CS:S player model for the hand")?;
+                // Riding on the hand bone, as CS:S bone-merges it.
+                mount = css_anatomy_from_hand(pack).map(|anatomy_from_hand| HandMount {
+                    hand_from_tag: Mat4::from(weapon_bone_to_tag() * carry).inverse(),
+                    anatomy_from_hand,
+                });
+                (
+                    find("ValveBiped.Bip01_R_Hand").ok_or("no weapon bone or right hand")?,
+                    carry,
+                )
+            }
         };
         let anchor_frame = skin[anchor] * affine(&studio.bones[anchor].pose_to_bone).inverse();
         weapon_bone_to_tag() * carry * anchor_frame.inverse()
@@ -381,6 +400,7 @@ fn build_world_model(
             draws,
         },
         muzzle,
+        mount,
     ))
 }
 
@@ -459,7 +479,7 @@ fn build_goldsrc_world_model(
     studio: &mdl_goldsrc::StudioModel,
     placement: Placement,
     images: &mut Assets<Image>,
-) -> Result<(CsViewmodelModel, Option<Vec3>), String> {
+) -> Result<(CsViewmodelModel, Option<Vec3>, Option<HandMount>), String> {
     let mut pose = Vec::new();
     studio.pose(0, 0.0, &mut pose);
     let bone = |index: u8| {
@@ -488,17 +508,26 @@ fn build_goldsrc_world_model(
             .collect::<Vec<_>>()
     };
     let mut muzzle = None;
+    let mut mount = None;
     if placement == Placement::Hand {
-        let hand = studio
+        let hand_bone = studio
             .bones
             .iter()
             .position(|b| b.name.eq_ignore_ascii_case("Bip01 R Hand"))
             .and_then(|index| pose.get(index))
             .ok_or("no right hand bone")?;
-        let hand = Vec3::new(hand[0][3], hand[1][3], hand[2][3]);
+        let hand = Vec3::new(hand_bone[0][3], hand_bone[1][3], hand_bone[2][3]);
         let (forward, up) = held_axes(&positions(&vertices), hand).ok_or("no vertices")?;
         // Columns are the tag's axes (forward, left, up) in the model; transposed, model to tag.
         let turn = Mat3::from_cols(forward, up.cross(forward), up).transpose();
+        // Riding on the hand bone, as GoldSrc merges its bones with the player's.
+        let hand_rotation = Mat3::from_mat4(Mat4::from(affine(hand_bone)));
+        mount = goldsrc_dirs()
+            .and_then(goldsrc_anatomy_from_hand)
+            .map(|anatomy_from_hand| HandMount {
+                hand_from_tag: Mat4::from_mat3(hand_rotation.transpose() * turn.transpose()),
+                anatomy_from_hand,
+            });
         for v in &mut vertices {
             v.position = (turn * (Vec3::from(v.position) - hand)).to_array();
             v.normal = (turn * Vec3::from(v.normal)).to_array();
@@ -546,6 +575,7 @@ fn build_goldsrc_world_model(
             draws,
         },
         muzzle,
+        mount,
     ))
 }
 
@@ -562,6 +592,78 @@ struct WorldModel {
     bounds: (Vec3, Vec3),
     /// The muzzle (`muzzle_flash` attachment) in the tag frame; guns only.
     muzzle: Option<Vec3>,
+    /// How it rides on its game's right hand bone, for a model held in a hand.
+    hand: Option<HandMount>,
+}
+
+/// How a CS model held in a hand rides on its game's right hand bone, as that game bone-merges
+/// it: the tag frame its vertices are baked in to the hand bone's frame, and the hand bone in
+/// the hand's anatomy (`xmodel_runtime::hand_anatomy`, which MW2's hand shares).
+#[derive(Clone, Copy, Debug)]
+struct HandMount {
+    hand_from_tag: Mat4,
+    anatomy_from_hand: Mat3,
+}
+
+/// A rig's right hand bone in its hand's anatomy, from the hand bone's model-space transform and
+/// where its middle finger's and thumb's first joints are.
+fn anatomy_from_hand(hand: Mat4, middle: Vec3, thumb: Vec3) -> Option<Mat3> {
+    let wrist = hand.w_axis.truncate();
+    let anatomy = xmodel_runtime::hand_anatomy(wrist, middle, thumb)?;
+    let bone = Mat3::from_mat4(hand);
+    let bone = Mat3::from_cols(
+        bone.x_axis.normalize(),
+        bone.y_axis.normalize(),
+        bone.z_axis.normalize(),
+    );
+    Some(anatomy.transpose() * bone)
+}
+
+/// CS:S's right hand bone in its hand's anatomy, read from a CS:S player model's bind pose once.
+fn css_anatomy_from_hand(pack: &mdl_source::Vpk) -> Option<Mat3> {
+    static HAND: OnceLock<Option<Mat3>> = OnceLock::new();
+    *HAND.get_or_init(|| {
+        let player = mdl_source::load_model(pack, "models/player/ct_urban.mdl").ok()?;
+        let bind = |name: &str| {
+            let bone = player
+                .model
+                .bones
+                .iter()
+                .find(|b| b.name.eq_ignore_ascii_case(name))?;
+            Some(Mat4::from(affine(&bone.pose_to_bone).inverse()))
+        };
+        let joint = |name: &str| bind(name).map(|m| m.w_axis.truncate());
+        anatomy_from_hand(
+            bind("ValveBiped.Bip01_R_Hand")?,
+            joint("ValveBiped.Bip01_R_Finger2")?,
+            joint("ValveBiped.Bip01_R_Finger0")?,
+        )
+    })
+}
+
+/// GoldSrc's (CS 1.6's, Condition Zero's) right hand bone in its hand's anatomy, read from a
+/// player model once.
+fn goldsrc_anatomy_from_hand(dirs: &asset_transport::GoldSrcDirs) -> Option<Mat3> {
+    static HAND: OnceLock<Option<Mat3>> = OnceLock::new();
+    *HAND.get_or_init(|| {
+        let bytes = dirs.read("models/player/gign/gign.mdl")?;
+        let player = mdl_goldsrc::StudioModel::parse(&bytes).ok()?;
+        let mut pose = Vec::new();
+        player.pose(0, 0.0, &mut pose);
+        let bone = |name: &str| {
+            let index = player
+                .bones
+                .iter()
+                .position(|b| b.name.eq_ignore_ascii_case(name))?;
+            Some(Mat4::from(affine(pose.get(index)?)))
+        };
+        let joint = |name: &str| bone(name).map(|m| m.w_axis.truncate());
+        anatomy_from_hand(
+            bone("Bip01 R Hand")?,
+            joint("Bip01 R Finger1")?,
+            joint("Bip01 R Finger0")?,
+        )
+    })
 }
 
 /// Loaded world models by name (`None` when one failed to load), and where each weapon's model
@@ -607,6 +709,36 @@ fn tag_from_model(model: &WorldModel, mw2_muzzle: Option<Mat4>) -> Mat4 {
         }
     };
     mw2 * Mat4::from_translation(PISTOL_GRIP_FROM_MUZZLE - grip)
+}
+
+/// Where a muzzle-less weapon is held, in its model's frame: the back quarter of a knife (its
+/// handle), the middle of a grenade.
+fn grip_of(model: &WorldModel) -> Vec3 {
+    let (lo, hi) = model.bounds;
+    let centre = (lo + hi) * 0.5;
+    let long = hi.x - lo.x > 2.0 * (hi.z - lo.z).max(hi.y - lo.y);
+    if long {
+        Vec3::new(lo.x + (hi.x - lo.x) * 0.22, centre.y, centre.z)
+    } else {
+        centre
+    }
+}
+
+/// A held knife turned about its grip so its blade (the model's +x, as [`tag_from_model`] lays
+/// it) points along `point`, as the body's Counter-Strike stance holds it.
+fn point_along(world_from_model: Mat4, model: &WorldModel, point: Vec3) -> Mat4 {
+    let grip = world_from_model.transform_point3(grip_of(model));
+    let blade = world_from_model
+        .transform_vector3(Vec3::X)
+        .normalize_or_zero();
+    let (Some(point), true) = (point.try_normalize(), blade != Vec3::ZERO) else {
+        return world_from_model;
+    };
+    let turn = Quat::from_rotation_arc(blade, point);
+    Mat4::from_translation(grip)
+        * Mat4::from_quat(turn)
+        * Mat4::from_translation(-grip)
+        * world_from_model
 }
 
 impl CsWorldModels {
@@ -661,7 +793,7 @@ impl CsWorldModels {
             Decoded::GoldSrc(studio) => build_goldsrc_world_model(name, &studio, placement, images),
         });
         let model = match built {
-            Ok((model, muzzle)) => {
+            Ok((model, muzzle, hand)) => {
                 diag::info!(
                     World,
                     "cs world model {key}: {} triangles",
@@ -673,6 +805,7 @@ impl CsWorldModels {
                     gpu: Arc::new(model),
                     bounds,
                     muzzle,
+                    hand,
                 })
             }
             Err(error) => {
@@ -733,13 +866,30 @@ pub fn update_cs_world_models(
         let Some(model) = models.get(&name, Placement::Hand, &mut images) else {
             continue;
         };
-        let tag_from_model = *models
-            .offsets
-            .entry(tag.weapon)
-            .or_insert_with(|| tag_from_model(&model, tag.muzzle));
+        let mounted = model
+            .hand
+            .zip(tag.hand)
+            .filter(|_| tag.in_palm && model.muzzle.is_none());
+        let mut world_from_model = if let Some((mount, hand)) = mounted {
+            // On the hand as on the CS game's hand bone: the knife or grenade sits in the grip
+            // the CS model was made for.
+            hand * Mat4::from_mat3(mount.anatomy_from_hand) * mount.hand_from_tag
+        } else if tag.in_palm && model.muzzle.is_none() {
+            tag.world_from_tag * Mat4::from_translation(-grip_of(&model))
+        } else {
+            // Only bodies holding it MW2's way: the twin's muzzle sits where MW2 put it.
+            let tag_from_model = *models
+                .offsets
+                .entry(tag.weapon)
+                .or_insert_with(|| tag_from_model(&model, tag.muzzle));
+            tag.world_from_tag * tag_from_model
+        };
+        if let Some(point) = tag.point.filter(|_| model.muzzle.is_none() && mounted.is_none()) {
+            world_from_model = point_along(world_from_model, &model, point);
+        }
         frame.instances.push(CsWorldModelInstance {
             model: model.gpu,
-            world_from_model: (tag.world_from_tag * tag_from_model).to_cols_array_2d(),
+            world_from_model: world_from_model.to_cols_array_2d(),
             ambient: [0.6; 3],
             sun_dir: [0.0; 3],
             sun: [0.0; 3],

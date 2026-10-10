@@ -109,7 +109,7 @@ pub use placement::{
 };
 pub use player_anim_type::{
     PLAYER_ANIM_TYPE_COUNT, PLAYER_ANIM_TYPE_GRENADE, PLAYER_ANIM_TYPE_NAMES,
-    PLAYER_ANIM_TYPE_THROWINGKNIFE,
+    PLAYER_ANIM_TYPE_PISTOL, PLAYER_ANIM_TYPE_THROWINGKNIFE,
 };
 pub use reload::{
     DualMagTimes, ReloadDelayedOutcome, reload_clip, reload_weaponstate_may_credit,

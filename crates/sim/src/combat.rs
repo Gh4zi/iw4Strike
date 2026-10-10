@@ -1736,7 +1736,13 @@ fn cs_knife_frame(
         ps.cs_knife =
             anim | (met << cs_knife::HIT_SHIFT) | ((swing & 0xff_ffff) << cs_knife::SWING_SHIFT);
     }
-    apply_player_anim_event(world, id, ANIM_ET_KNIFE_MELEE);
+    // The body slashes with MW2's knife melee and stabs with its charge, whose animation (the
+    // second melee) every client turns into CS's stab.
+    let body = match attack {
+        KnifeAttack::Slash => ANIM_ET_KNIFE_MELEE,
+        KnifeAttack::Stab => ANIM_ET_KNIFE_MELEE_CHARGE,
+    };
+    apply_player_anim_event(world, id, body);
     if !world.publishes_snapshot() {
         return;
     }

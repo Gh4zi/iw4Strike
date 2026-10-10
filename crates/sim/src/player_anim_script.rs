@@ -57,17 +57,25 @@ impl AnimConditions {
     }
 }
 
-/// The animation type a body holds its weapon with. A CS grenade is carried upright (as MW2
-/// holds a throwing knife), pin pulled or not, and takes MW2's grenade animations only while a
-/// throw is under way: the hunched pin-pull pose would otherwise move the hitboxes of anyone
-/// just holding one.
+/// The animation type a body holds its weapon with. A CS knife or grenade is carried upright,
+/// pin pulled or not, and a grenade takes MW2's grenade animations only while a throw is under
+/// way: the hunched pin-pull pose would otherwise move the hitboxes of anyone just holding one.
+/// With a Counter-Strike stance for the arms installed (`xmodel_runtime::hold_stance`), the body
+/// moves as MW2 moves with a pistol (upright standing, walking, running and crouched) and the
+/// stance takes the arms; without one, as MW2 holds a throwing knife.
 fn held_anim_type(ps: &PlayerState, facts: &WeaponCombatFacts) -> i32 {
-    if weapon_iw4::cs::cs_grenade(facts.cs_weapon).is_none() {
+    let kind = if weapon_iw4::cs::is_knife(facts.cs_weapon) {
+        xmodel_runtime::HoldKind::Knife
+    } else if weapon_iw4::cs::cs_grenade(facts.cs_weapon).is_some() {
+        xmodel_runtime::HoldKind::Grenade
+    } else {
         return facts.player_anim_type;
-    }
+    };
     let throwing = ps.cs_grenade == playerstate_iw4::cs_grenade::THROWN && ps.cs_next_attack2_ms != 0;
-    if throwing {
+    if kind == xmodel_runtime::HoldKind::Grenade && throwing {
         weapon_iw4::PLAYER_ANIM_TYPE_GRENADE
+    } else if xmodel_runtime::hold_stance(kind).is_some() {
+        weapon_iw4::PLAYER_ANIM_TYPE_PISTOL
     } else {
         weapon_iw4::PLAYER_ANIM_TYPE_THROWINGKNIFE
     }

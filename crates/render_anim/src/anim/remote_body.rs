@@ -1092,7 +1092,7 @@ pub fn remote_player_controller(
     view_pitch_deg: f32,
     prone: bool,
     crouch: bool,
-    hold: Option<xmodel_runtime::HoldKind>,
+    hold: Option<xmodel_runtime::HoldPose>,
 ) -> Option<xmodel_runtime::PlayerControllerInput> {
     if is_corpse {
         None
@@ -1107,17 +1107,17 @@ pub fn remote_player_controller(
     }
 }
 
-/// The CS stance a body holds (as the server poses it, from what the client sees): a CS knife's
-/// or grenade's, unless an event animation has the arms. An event plays on the torso alone (a
-/// slash, a draw: the torso's animation then differs from the legs'), or on the whole body for
-/// a grenade thrown standing still.
-pub fn remote_hold_kind(
+/// Where a body's arms are when it holds a CS knife or grenade, worked out as the server works
+/// it out: CS's stance or move for the MW2 animations the body plays (legs, and the torso's own
+/// when one plays), with how far through each it is.
+pub fn remote_hold_pose(
     weapons: Option<&assets::PreparedWeapons>,
     tree: &asset_anim::CompiledAnimTreeDefinition,
+    runtime: &xmodel_runtime::XAnimTreeRuntime,
     weapon: u32,
     legs: PlayerAnimValue,
     torso: PlayerAnimValue,
-) -> Option<xmodel_runtime::HoldKind> {
+) -> Option<xmodel_runtime::HoldPose> {
     let script = weapons?.0.script_name_of(weapon);
     let index = weapon_iw4::cs::cs_weapon_index_for(&script)?;
     let kind = if weapon_iw4::cs::is_knife(index) {
@@ -1127,14 +1127,17 @@ pub fn remote_hold_kind(
     } else {
         return None;
     };
-    let (legs, torso) = (legs.effective_index(), torso.effective_index());
-    if torso != 0 && torso != legs {
-        return None;
-    }
-    let throwing = tree
-        .node(legs)
-        .is_some_and(|node| node.name.contains("throw"));
-    (!throwing).then_some(kind)
+    let name = |node: u16| tree.node(node).map_or("", |n| n.name.as_str());
+    let time = |node: u16| {
+        runtime
+            .states()
+            .get(usize::from(node))
+            .map_or(0.0, |state| state.time)
+    };
+    let (legs_node, torso_node) = (legs.effective_index(), torso.effective_index());
+    let torso = (torso_node != 0 && torso_node != legs_node)
+        .then(|| (name(torso_node), time(torso_node), torso.restart_toggle()));
+    xmodel_runtime::hold_pose_from_anims(kind, (name(legs_node), time(legs_node)), torso)
 }
 
 pub fn remote_dobj_model_base(

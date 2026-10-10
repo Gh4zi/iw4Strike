@@ -33,6 +33,122 @@ fn main() {
         );
         return;
     }
+    if let Some(seq) = filter.strip_prefix("seq:") {
+        // seq:<sequence index>: its flags, autolayers, IK rules and IK locks.
+        let seq: usize = seq.parse().expect("sequence index");
+        let i32_at = |at: usize| i32::from_le_bytes(mdl[at..at + 4].try_into().unwrap());
+        let i16_at = |at: usize| i16::from_le_bytes(mdl[at..at + 2].try_into().unwrap());
+        let f32_at = |at: usize| f32::from_le_bytes(mdl[at..at + 4].try_into().unwrap());
+        let at = i32_at(192) as usize + seq * 212;
+        println!(
+            "seq {seq} {} flags {:#x} autolayers {} ikrules {} iklocks {}",
+            model.sequences[seq].label,
+            i32_at(at + 12),
+            i32_at(at + 148),
+            i32_at(at + 144),
+            i32_at(at + 164)
+        );
+        for l in 0..i32_at(at + 148) as usize {
+            let la = at + i32_at(at + 152) as usize + l * 24;
+            let other = i16_at(la) as usize;
+            println!(
+                "  autolayer seq {other} {} pose {} flags {:#x} start {} peak {} tail {} end {}",
+                model.sequences.get(other).map_or("?", |s| s.label.as_str()),
+                i16_at(la + 2),
+                i32_at(la + 4),
+                f32_at(la + 8),
+                f32_at(la + 12),
+                f32_at(la + 16),
+                f32_at(la + 20)
+            );
+        }
+        for l in 0..i32_at(at + 164) as usize {
+            let la = at + i32_at(at + 168) as usize + l * 32;
+            println!(
+                "  iklock chain {} pos {} q {} flags {:#x}",
+                i32_at(la),
+                f32_at(la + 4),
+                f32_at(la + 8),
+                i32_at(la + 12)
+            );
+        }
+        let anim = i16_at(at + i32_at(at + 60) as usize) as usize;
+        let desc = i32_at(184) as usize + anim * 100;
+        println!(
+            "  anim {anim} flags {:#x} ikrules {}",
+            i32_at(desc + 12),
+            i32_at(desc + 60)
+        );
+        let cstr = |at: usize| {
+            let end = mdl[at..].iter().position(|&c| c == 0).unwrap_or(0);
+            String::from_utf8_lossy(&mdl[at..at + end]).into_owned()
+        };
+        let bone_name = |b: i32| {
+            usize::try_from(b)
+                .ok()
+                .and_then(|b| model.bones.get(b))
+                .map_or("-".to_string(), |b| b.name.clone())
+        };
+        for r in 0..i32_at(desc + 60) as usize {
+            let ra = desc + i32_at(desc + 64) as usize + r * 152;
+            let attachment = i32_at(ra + 120);
+            println!(
+                "  ikrule chain {} type {} bone {} slot {} pos [{:.1} {:.1} {:.1}] start {} peak {} tail {} end {} attachment {}",
+                i32_at(ra + 8),
+                i32_at(ra + 4),
+                bone_name(i32_at(ra + 12)),
+                i32_at(ra + 16),
+                f32_at(ra + 32),
+                f32_at(ra + 36),
+                f32_at(ra + 40),
+                f32_at(ra + 76),
+                f32_at(ra + 80),
+                f32_at(ra + 84),
+                f32_at(ra + 88),
+                if attachment != 0 {
+                    cstr(ra + attachment as usize)
+                } else {
+                    String::new()
+                }
+            );
+        }
+        for c in 0..i32_at(284) as usize {
+            let ca = i32_at(288) as usize + c * 16;
+            let links = i32_at(ca + 8) as usize;
+            let names: Vec<String> = (0..links)
+                .map(|l| {
+                    let la = ca + i32_at(ca + 12) as usize + l * 28;
+                    format!(
+                        "{} knee [{:.2} {:.2} {:.2}]",
+                        bone_name(i32_at(la)),
+                        f32_at(la + 4),
+                        f32_at(la + 8),
+                        f32_at(la + 12)
+                    )
+                })
+                .collect();
+            println!(
+                "  ikchain {c} {}: {}",
+                cstr(ca + i32_at(ca) as usize),
+                names.join(", ")
+            );
+        }
+        return;
+    }
+    if let Some(label) = filter.strip_prefix("weights:") {
+        // weights:<sequence>: the bones the sequence moves and how much.
+        let seq = model
+            .sequences
+            .iter()
+            .find(|s| s.label == label)
+            .expect("sequence");
+        let anim = model.animations.get(seq.blends[0]).expect("animation");
+        println!("{label}: delta {} frames {}", anim.delta, anim.num_frames);
+        for (bone, w) in model.bones.iter().zip(&seq.weights) {
+            println!("  {:40} {w:.2}", bone.name);
+        }
+        return;
+    }
     if let Some(spec) = filter.strip_prefix("layer:") {
         // layer:<base sequence>+<delta sequence>: the base's first frame with the delta
         // sequence's centre blend composed on, as CS:S layers its aim matrix.

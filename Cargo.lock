@@ -457,6 +457,7 @@ dependencies = [
  "glam",
  "libc",
  "lighting_iw4",
+ "mdl_goldsrc",
  "mdl_source",
  "mdl_source2",
  "movement_iw4",

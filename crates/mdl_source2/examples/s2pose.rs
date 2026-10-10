@@ -41,7 +41,7 @@ fn main() {
         "arm_lower_R",
         "hand_R",
         "finger_middle_0_R",
-        "finger_thumb_0_R",
+        "finger_thumb_0_R", "wpnPivot", "wpn", "wpnHand_R", "wpnHand_L", "wpnTip", "wpnEnd",
     ] {
         if let Some(b) = skeleton.bone(name) {
             let m = world[b].0;

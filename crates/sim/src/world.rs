@@ -1422,9 +1422,10 @@ impl SimState {
         self.combat_facts_for(weapon)
     }
 
-    /// The CS stance `ps`'s body holds: a CS knife's or grenade's, unless an event animation
-    /// (a slash, a draw, a throw) has its arms.
-    fn cs_hold_kind(&self, ps: &PlayerState) -> Option<xmodel_runtime::HoldKind> {
+    /// Where `id`'s arms are when it holds a CS knife or grenade: CS's stance or move for the
+    /// MW2 animations its body plays (see `xmodel_runtime::hold_pose_from_anims`), as every
+    /// client works it out from the same animations.
+    fn cs_hold_pose(&self, id: ClientId, ps: &PlayerState) -> Option<xmodel_runtime::HoldPose> {
         let facts = self.combat_facts_for(playerstate_iw4::get_viewmodel_weapon_index(ps))?;
         let kind = if weapon_iw4::cs::is_knife(facts.cs_weapon) {
             xmodel_runtime::HoldKind::Knife
@@ -1433,8 +1434,18 @@ impl SimState {
         } else {
             return None;
         };
-        let throwing = ps.cs_grenade == playerstate_iw4::cs_grenade::THROWN;
-        (ps.torso_timer <= 0 && !throwing).then_some(kind)
+        let slot = self.player_anim_trees.get(&id.0)?;
+        let names = &self.content.data.player_anim_node_names;
+        let name = |node: u16| names.get(usize::from(node)).map_or("", String::as_str);
+        let time = |node: u16| {
+            slot.runtime
+                .states()
+                .get(usize::from(node))
+                .map_or(0.0, |state| state.time)
+        };
+        let torso = (slot.torso != 0 && slot.torso != slot.leaf)
+            .then(|| (name(slot.torso), time(slot.torso), slot.torso_restart));
+        xmodel_runtime::hold_pose_from_anims(kind, (name(slot.leaf), time(slot.leaf)), torso)
     }
 
     pub(crate) fn combat_facts_for(&self, weapon: u32) -> Option<WeaponCombatFacts> {
@@ -2430,7 +2441,7 @@ impl SimState {
             ));
         }
         let (request, _, _, _, _, _, _) = self.player_dobj_request(id, ps);
-        let input = player_controller_input(ps, self.cs_hold_kind(ps));
+        let input = player_controller_input(ps, self.cs_hold_pose(id, ps));
         let controller = move |dobj: &xmodel_runtime::DObj,
                                _: &anim_iw4::PartBits,
                                locals: &mut [anim_iw4::Local]| {
@@ -3744,7 +3755,7 @@ impl SimState {
         let Some(ps) = ps else {
             return HitvolControllerCensus::none();
         };
-        let input = player_controller_input(ps, self.cs_hold_kind(ps));
+        let input = player_controller_input(ps, self.cs_hold_pose(client, ps));
         let tags = self.collision_kit(client).body.as_ref().map_or(0, |cap| {
             xmodel_runtime::PLAYER_CONTROLLER_TAGS
                 .iter()
@@ -3879,7 +3890,7 @@ impl HitvolControllerCensus {
 
 fn player_controller_input(
     ps: &PlayerState,
-    hold: Option<xmodel_runtime::HoldKind>,
+    hold: Option<xmodel_runtime::HoldPose>,
 ) -> xmodel_runtime::PlayerControllerInput {
     xmodel_runtime::PlayerControllerInput {
         view_pitch_deg: ps.viewangles[0],
