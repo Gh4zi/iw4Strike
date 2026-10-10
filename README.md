@@ -515,36 +515,74 @@ Known issues with CS2 on:
 - [ ] No camera shake from the hidden MW2 weapon animations when you swap or reload a CS gun
   (`cl_camera_anim 1` brings it back)
 
-**Counter-Strike 2 (experimental)**, in order. See
+**Counter-Strike 2 roadmap** (experimental), in this order. See
 [Counter-Strike 2 (experimental)](#counter-strike-2-experimental) for what works today.
-- [x] CS2 read from your install (`game/csgo/pak01_dir.vpk`), a fifth game in the game folders
-  window with its own **Use** box
-- [x] Guns in first person: all 24 guns, the knife, grenades and the C4, with CS2's arms and
-  CS2's own animations
-- [x] CS2's materials: normal, roughness and metal, occlusion maps, with the map's reflections
-- [ ] **WIP** Knife and grenades in third person: CS2's stance, on the server's hitboxes too.
-  Standing still is in; running, crouching, the knife slash and the grenade throw are next
-- [ ] **WIP** Volumetric smoke, an option the host or server owner turns on (`smoke_mode cs2`, or
-  `smoke_mode csgo` for CS:GO's particle smoke): smoke that fills the space it pops in, flows
-  around walls and down stairs, takes the light and colour of where it is, and opens up when
-  bullets and HE grenades go through it. Each player picks how finely it is drawn with
-  `smoke_quality high|medium|low`. In the current build, still being tuned: its size, and
-  smoke getting out of small rooms
-- [ ] Guns in third person and lying on the ground (CS2's world models)
-- [ ] CS2 sounds: guns (with the CS2-only ones like the Nova's shell going in), footsteps,
-  grenades, the bomb and the UI
-- [ ] CS2 HUD: health, armor, ammo, money, round timer, kill feed and the bomb and kit icons,
-  drawn with CS2's own icons and fonts
-- [ ] CS2 buy menu over the existing buy rules, then the CS2 scoreboard and round-end panel
-- [ ] The inspect key, with CS2's inspect animations
-- [ ] The rest of CS2's arsenal: P2000, Tec-9, CZ75-Auto, R8 Revolver, M4A4, MP7, PP-Bizon,
-  MAG-7, Sawed-Off and Negev, then the decoy and the Zeus x27
-- [ ] Molotov and incendiary fire that spreads, burns and is put out by a smoke
-- [ ] The T-side knife, and CS2's loadout choices (M4A4 or M4A1-S, P2000 or USP-S, CZ75-Auto)
-- [ ] CS2's own movement and shooting presets (`mv_mode cs2`, `shooting_mode cs2`)
-- [ ] CS2 player models (agents)
-- [ ] CS2 as its own game mode, playable with CS2 alone (no CS:S needed), shared with CS:GO
-  players
+
+1. **CS2 guns** (in your hands: CS2's model, arms and animations)
+   - [x] AK-47
+   - [x] M4A1-S
+   - [ ] M4A4
+   - [x] Galil AR
+   - [x] FAMAS
+   - [x] SG 553
+   - [x] AUG
+   - [x] AWP
+   - [x] SSG 08
+   - [x] G3SG1
+   - [x] SCAR-20
+   - [x] MAC-10
+   - [x] MP9
+   - [x] MP5-SD
+   - [x] UMP-45
+   - [x] P90
+   - [ ] MP7
+   - [ ] PP-Bizon
+   - [x] Nova
+   - [x] XM1014
+   - [ ] MAG-7
+   - [ ] Sawed-Off
+   - [x] M249
+   - [ ] Negev
+   - [x] Glock-18
+   - [x] USP-S
+   - [ ] P2000
+   - [x] P250
+   - [x] Five-SeveN
+   - [ ] Tec-9
+   - [ ] CZ75-Auto
+   - [x] Dual Berettas
+   - [x] Desert Eagle
+   - [ ] R8 Revolver
+   - [x] Knife (CT)
+   - [ ] Knife (T)
+   - [x] HE grenade
+   - [x] Flashbang
+   - [x] Smoke grenade
+   - [x] C4
+   - [x] CS2's materials on all of them (normal, roughness and metal, occlusion, the map's
+     reflections)
+   - [ ] **WIP** Knife and grenades in third person (CS2's stance, on the hitboxes too):
+     standing still is in; running, crouching, slashing and throwing are next
+   - [ ] Guns in third person and lying on the ground
+   - [ ] The inspect key
+2. **CS2 sounds**: guns (with the CS2-only ones like the Nova's shell going in), footsteps,
+   grenades, the bomb and the UI
+3. **CS2 HUD**: health, armor, ammo, money, round timer, kill feed, bomb and kit icons, with
+   CS2's own icons and fonts
+4. **CS2 buy system**: the CS2 buy menu over the existing buy rules, CS2's loadout choices
+   (M4A4 or M4A1-S, P2000 or USP-S, CZ75-Auto), the scoreboard and round-end panel
+5. **Molotov and incendiary**: fire that spreads, burns and is put out by a smoke
+6. **Decoy and Zeus x27**
+7. **Volumetric smoke** (**WIP**, in the current build): an option the host or server owner
+   turns on (`smoke_mode cs2`, or `smoke_mode csgo` for CS:GO's particle smoke). Smoke that
+   fills the space it pops in, flows around walls and down stairs, takes the light and colour
+   of where it is, and opens up when bullets and HE grenades go through it; each player picks
+   how finely it is drawn (`smoke_quality high|medium|low`). Still being tuned: its size, and
+   smoke getting out of small rooms
+8. **CS2 movement and shooting** presets (`mv_mode cs2`, `shooting_mode cs2`)
+9. **CS2 player models** (agents)
+10. **CS2 as its own game mode**, playable with CS2 alone (no CS:S needed), shared with CS:GO
+    players
 
 **Counter-Strike: Global Offensive** (not implemented yet; comes after CS2 is finished)
 - [ ] CS:GO read from your CS:GO (Legacy) install: its guns in first and third person, sounds,
@@ -587,15 +625,14 @@ Known issues with CS2 on:
 - The map ambient sound plays about 9 dB quieter than MW2's by default (MW2's looping emitters
   stack up to only a few dB under a rifle); tune it with `snd_ambient_volume`. Very loud
   gunfire can still clip.
-- Linux (first player reports): the game runs (on Wayland), but sound is broken and launch
-  time varies a lot from one start to the next. Being looked into; logs from a slow and a fast
-  start help.
-- Without CS2 installed, third-person knives and grenades are held with MW2's upright pose, and
-  running or crouching with them still uses MW2's animations.
+- Linux: performance problems (stutters, launch time that varies a lot from one start to the
+  next) and broken audio.
+- Third person, on every version: the knife and grenades don't look right yet. They take CS2's
+  stance only standing still with CS2 installed, MW2's upright pose without it, and running,
+  crouching, slashing and throwing use MW2's animations.
 - Deaths play MW2's death animations, not ragdolls, and bodies stay on the ground until MW2's
   corpse pool reuses them (see Physics in Planned).
 - No blood marks on the player who was hit yet (blood on the walls behind them is in).
-- Some players report micro stutters.
 
 ---
 
