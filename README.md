@@ -433,8 +433,8 @@ everything is as before.
 | Guns in first person: all 24 guns, the knife, HE, flash and smoke grenades and the C4, with CS2's arms | ✅ In |
 | CS2's own first-person animations: draw, idle, shoot, reload, silencer on and off, shotguns reloading shell by shell, pistols' slide locked back when empty | ✅ In |
 | CS2's materials: colour, normal, roughness and metal, occlusion maps, with the map's reflections on the metal | ✅ In |
-| Third-person knife and grenade stance (on the server's hitboxes too) | ✅ In |
-| Volumetric smoke (`smoke_mode cs2`, set by the host) | 🟡 In, still being tuned |
+| Knife and grenades in third person: CS2's stance (on the server's hitboxes too) | 🟡 WIP: standing still only; running, crouching, the slash and the throw are still MW2's, and the knife can point a little off in the hand |
+| Volumetric smoke (`smoke_mode cs2`, set by the host) | 🟡 WIP: in the current build, still being tuned |
 | Guns in third person and on the ground | ❌ Still CS:S models |
 | Sounds | ❌ Still CS:S sounds; CS2-only ones (the Nova's shell going in, the M4A1-S bolt) are silent |
 | HUD | ❌ Still the CS:S (or CS 1.6) HUD |
@@ -493,12 +493,11 @@ Known issues with CS2 on:
   - [ ] Sparks off the helmet on a headshot against a helmet, like CS:GO
   - [ ] Blood on the knife's hits on walls and floors too
   - [ ] Blood marks on the player who was hit, cleared when they respawn
-- [x] Third person like CS: the knife and grenades held with CS2's own stance (read from your
-  CS2 install, the same on the server's hitboxes and on screen; MW2's upright one-handed pose
-  without CS2); the hunched grenade pose only while a throw is under way, so holding one
-  doesn't move your hitboxes
-- [ ] CS2's stance while running and crouching, and CS2's knife slash and grenade throw in
-  third person
+- [ ] **WIP** Knife and grenades in third person like CS: held with CS2's own stance (read from
+  your CS2 install, the same on the server's hitboxes and on screen; MW2's upright one-handed
+  pose without CS2), and the hunched grenade pose only while a throw is under way, so holding
+  one doesn't move your hitboxes. Standing still is in; running, crouching, the knife slash and
+  the grenade throw are next
 - [ ] No camera shake from the hidden MW2 weapon animations when you swap or reload a CS gun
   (`cl_camera_anim 1` brings it back)
 
@@ -509,13 +508,14 @@ Known issues with CS2 on:
 - [x] Guns in first person: all 24 guns, the knife, grenades and the C4, with CS2's arms and
   CS2's own animations
 - [x] CS2's materials: normal, roughness and metal, occlusion maps, with the map's reflections
-- [x] The third-person knife and grenade stance, on the server's hitboxes too
-- [ ] Volumetric smoke, an option the host or server owner turns on (`smoke_mode cs2`, or
+- [ ] **WIP** Knife and grenades in third person: CS2's stance, on the server's hitboxes too.
+  Standing still is in; running, crouching, the knife slash and the grenade throw are next
+- [ ] **WIP** Volumetric smoke, an option the host or server owner turns on (`smoke_mode cs2`, or
   `smoke_mode csgo` for CS:GO's particle smoke): smoke that fills the space it pops in, flows
   around walls and down stairs, takes the light and colour of where it is, and opens up when
   bullets and HE grenades go through it. Each player picks how finely it is drawn with
-  `smoke_quality high|medium|low`. In the current build, still being tuned (its size, and
-  smoke getting out of small rooms)
+  `smoke_quality high|medium|low`. In the current build, still being tuned: its size, and
+  smoke getting out of small rooms
 - [ ] Guns in third person and lying on the ground (CS2's world models)
 - [ ] CS2 sounds: guns (with the CS2-only ones like the Nova's shell going in), footsteps,
   grenades, the bomb and the UI
