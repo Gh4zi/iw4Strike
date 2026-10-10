@@ -981,6 +981,16 @@ pub(crate) fn dispatch_triggers(world: &mut World) {
                 raised.push((*usable, *player));
             }
         }
+        // A player's bounds are the same against every trigger this tick.
+        let touchers: Vec<(u32, u64, ([f32; 3], [f32; 3]))> = players
+            .iter()
+            .map(|(client, object, _)| (*client, *object, toucher(&mut runtime, &frame, *object)))
+            .collect();
+        let pressed_touchers: Vec<(u32, u64, ([f32; 3], [f32; 3]))> = touchers
+            .iter()
+            .filter(|(client, ..)| pressed.iter().any(|(pressed, _)| pressed == client))
+            .copied()
+            .collect();
         let triggers: Vec<(u64, Fires)> = runtime
             .entities
             .iter()
@@ -991,19 +1001,15 @@ pub(crate) fn dispatch_triggers(world: &mut World) {
             let Some(volume) = volume(&mut runtime, &frame, trigger) else {
                 continue;
             };
-            let candidates: Vec<(u32, u64)> = match kind {
-                Fires::Use => pressed.clone(),
-                Fires::Touch | Fires::Once => players
-                    .iter()
-                    .map(|(client, object, _)| (*client, *object))
-                    .collect(),
+            let candidates = match kind {
+                Fires::Use => &pressed_touchers,
+                Fires::Touch | Fires::Once => &touchers,
             };
             let look_at = kind == Fires::Use && runtime.require_look_at.contains(&trigger);
-            for (client, player) in candidates {
+            for &(client, player, (mins, maxs)) in candidates {
                 if !eligible(&runtime, &frame, trigger, client, kind == Fires::Use) {
                     continue;
                 }
-                let (mins, maxs) = toucher(&mut runtime, &frame, player);
                 if !volume.touches(mins, maxs) || look_at && !looks_into(&frame, client, &volume) {
                     continue;
                 }

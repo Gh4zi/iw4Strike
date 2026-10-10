@@ -298,7 +298,7 @@ fn sync_spawned_scene_models(
         .iter()
         .map(|(_, marker, _)| marker.source)
         .collect();
-    for (owner, state) in &snapshot.meta.entity_dobjs {
+    for (owner, state) in snapshot.meta.entity_dobjs.iter() {
         let Some(id) = owner.script_model() else {
             continue;
         };
@@ -343,7 +343,7 @@ fn apply_presented_script_model_dobjs(
         sim::AuthorityModelOwner,
         &xmodel_runtime::DObjSemanticState,
     > = std::collections::BTreeMap::new();
-    for (owner, state) in &snapshot.meta.entity_dobjs {
+    for (owner, state) in snapshot.meta.entity_dobjs.iter() {
         by_owner.entry(*owner).or_insert(state);
     }
     for (mut owner, mut visibility) in &mut owners {

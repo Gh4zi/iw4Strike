@@ -117,10 +117,15 @@ pub struct SnapshotMeta {
 
     pub area_entities: Option<crate::AreaEntityWorldSnapshot>,
 
-    pub entity_dobjs: Vec<(
-        crate::AuthorityModelOwner,
-        xmodel_runtime::DObjSemanticState,
-    )>,
+    /// Shared, not copied, by every clone of the snapshot: the listen fanout and the clip ring
+    /// each take a full copy per tick, and these rows hold the heap-allocated model and anim
+    /// names. Writers go through `Arc::make_mut`.
+    pub entity_dobjs: std::sync::Arc<
+        Vec<(
+            crate::AuthorityModelOwner,
+            xmodel_runtime::DObjSemanticState,
+        )>,
+    >,
 
     pub entities: Vec<entity_iw4::EntityState>,
 

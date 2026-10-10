@@ -1010,7 +1010,7 @@ pub fn decode_snapshot_meta(
         input,
         baseline
             .as_mut()
-            .map(|b| std::mem::take(&mut b.entity_dobjs)),
+            .map(|b| std::sync::Arc::unwrap_or_clone(std::mem::take(&mut b.entity_dobjs))),
         decode_entity_dobj,
     )?;
     let corpses = decode_corpse_pool(input)?;
@@ -1067,7 +1067,7 @@ pub fn decode_snapshot_meta(
             world_objects,
             area_entities,
             objectives,
-            entity_dobjs,
+            entity_dobjs: std::sync::Arc::new(entity_dobjs),
             entities,
             script_movers,
             entity_kernel,

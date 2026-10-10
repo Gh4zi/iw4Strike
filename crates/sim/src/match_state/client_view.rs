@@ -149,22 +149,27 @@ impl ScriptBlur {
 
 /// Rendering dvars authored by GSC are delivered to clients without console gates.
 pub fn is_postfx_dvar(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    name.starts_with("r_film")
-        || name.starts_with("r_glow")
-        || name.starts_with("r_dof")
-        || matches!(
-            name.as_str(),
-            "r_blur"
-                | "r_hue"
-                | "r_brightness"
-                | "r_contrast"
-                | "r_saturation"
-                | "r_gamma"
-                | "r_exposure"
-                | "nightvision"
-                | "cg_drawshellshock"
-                | "thermalblurfactorscope"
-                | "thermalblurfactornoscope"
-        )
+    // Case-insensitive without allocating: the server checks every dvar each tick.
+    let prefixed = |prefix: &str| {
+        name.get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+    };
+    prefixed("r_film")
+        || prefixed("r_glow")
+        || prefixed("r_dof")
+        || [
+            "r_blur",
+            "r_hue",
+            "r_brightness",
+            "r_contrast",
+            "r_saturation",
+            "r_gamma",
+            "r_exposure",
+            "nightvision",
+            "cg_drawshellshock",
+            "thermalblurfactorscope",
+            "thermalblurfactornoscope",
+        ]
+        .iter()
+        .any(|exact| name.eq_ignore_ascii_case(exact))
 }

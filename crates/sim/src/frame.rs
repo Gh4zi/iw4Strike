@@ -597,8 +597,10 @@ pub(crate) fn visit_projectiles(world: &World, mut visit: impl FnMut(&Projectile
 
 pub(crate) fn visit_script_movers(world: &World, mut visit: impl FnMut(&ScriptMoverGentity)) {
     for number in script_mover_numbers_sorted(world) {
-        if let Some(mover) = script_mover_by_number(world, number) {
-            visit(&mover);
+        if let Some(row) =
+            entity_by_number(world, number).and_then(|e| world.get::<ScriptMoverRow>(e))
+        {
+            visit(&row.0);
         }
     }
 }

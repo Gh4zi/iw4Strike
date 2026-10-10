@@ -5,6 +5,7 @@ use crate::frame::FrameWorld;
 use crate::gentity::ScriptMoverGentity;
 use crate::script::{Arc, BTreeMap, Runtime, Value};
 use bevy_ecs::prelude::World;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Shown {
@@ -50,10 +51,13 @@ fn vector(runtime: &mut Runtime, id: u64, name: &str) -> [f32; 3] {
     }
 }
 
-fn model_field(runtime: &mut Runtime, id: u64) -> Option<Arc<str>> {
-    match runtime.object_field(id, "model") {
-        Value::String(model) if !model.is_empty() && !model.starts_with('*') => Some(model.into()),
-        _ => None,
+/// `vector` for a field symbol resolved once by the caller, on an object's
+/// already-fetched field table: the per-tick passes over every presence use
+/// this instead of re-resolving names per entity.
+fn vector_value(values: Option<&BTreeMap<u32, Value>>, field: u32) -> [f32; 3] {
+    match values.and_then(|values| values.get(&field)) {
+        Some(Value::Vector(v)) => *v,
+        _ => [0.0; 3],
     }
 }
 
@@ -112,17 +116,21 @@ pub(crate) fn settled(world: &mut World) -> FrameWorld<'_> {
 /// mover mid-tick would break its tick-to-tick velocity.
 pub(crate) fn settle_collision(world: &mut World) {
     let mut runtime = world.resource_mut::<Runtime>();
-    let placed: Vec<(u64, ScriptModelId, bool, bool)> = runtime
+    // Resolving a field name needs the loaded program; without presences there is nothing to do.
+    if !runtime.entities.values().any(|e| e.presence.is_some()) {
+        return;
+    }
+    let [origin_field, angles_field] = [runtime.symbol("origin"), runtime.symbol("angles")];
+    let runtime = &*runtime;
+    let wanted: BTreeMap<ScriptModelId, ([f32; 3], [f32; 3], bool, bool)> = runtime
         .entities
         .iter()
-        .filter_map(|(id, e)| Some((*id, e.presence?, e.hidden, e.solid)))
-        .collect();
-    let wanted: BTreeMap<ScriptModelId, ([f32; 3], [f32; 3], bool, bool)> = placed
-        .into_iter()
-        .map(|(object, presence, hidden, solid)| {
-            let origin = vector(&mut runtime, object, "origin");
-            let angles = vector(&mut runtime, object, "angles");
-            (presence, (origin, angles, hidden, solid))
+        .filter_map(|(object, e)| {
+            let presence = e.presence?;
+            let values = runtime.objects.get(object);
+            let origin = vector_value(values, origin_field);
+            let angles = vector_value(values, angles_field);
+            Some((presence, (origin, angles, e.hidden, e.solid)))
         })
         .collect();
     let mut frame = FrameWorld::from_world(world);
@@ -176,11 +184,17 @@ fn present(world: &mut World, now: i32) {
         return;
     }
     let mut frame = FrameWorld::from_world(world);
-    let movers: BTreeMap<ScriptModelId, ScriptMoverGentity> =
-        crate::frame::collect_script_movers(frame.ecs())
-            .into_iter()
-            .map(|mover| (mover.id, mover))
-            .collect();
+    let needed: BTreeSet<ScriptModelId> = retired
+        .iter()
+        .map(|(id, _)| *id)
+        .chain(wanted.iter().map(|want| want.presence))
+        .collect();
+    let mut movers = BTreeMap::<ScriptModelId, ScriptMoverGentity>::new();
+    frame.visit_script_movers(|mover| {
+        if needed.contains(&mover.id) {
+            movers.insert(mover.id, *mover);
+        }
+    });
     for (id, spawned) in retired {
         let Some(mover) = movers.get(&id) else {
             continue;
@@ -345,30 +359,38 @@ fn resolve_link_tags(world: &mut World) {
 
 fn collect_wanted(world: &mut World) -> Vec<Wanted> {
     let mut runtime = world.resource_mut::<Runtime>();
-    let ids: Vec<(u64, ScriptModelId, bool, u64, bool)> = runtime
-        .entities
-        .iter()
-        .filter_map(|(id, e)| e.presence.map(|p| (*id, p, e.hidden, e.shown_to, e.solid)))
-        .collect();
-    let mut wanted = Vec::with_capacity(ids.len());
-    for (object, presence, hidden, shown_to, solid) in ids {
-        let origin = vector(&mut runtime, object, "origin");
-        let angles = vector(&mut runtime, object, "angles");
-        let model = model_field(&mut runtime, object);
-        let entity = runtime.entities.get_mut(&object).unwrap();
-        let part_ops = std::mem::take(&mut entity.part_ops);
-        let anim_op = entity.anim_op.take();
-        let attachments = entity.attachments.clone();
-        let collision_only = matches!(entity.kind, EntityKind::Missile(_));
-        let unchanged = part_ops.is_empty()
-            && anim_op.is_none()
+    if !runtime.entities.values().any(|e| e.presence.is_some()) {
+        return Vec::new();
+    }
+    let [origin_field, angles_field, model_field] = [
+        runtime.symbol("origin"),
+        runtime.symbol("angles"),
+        runtime.symbol("model"),
+    ];
+    let runtime = &mut *runtime;
+    let mut wanted = Vec::new();
+    for (&object, entity) in &mut runtime.entities {
+        let Some(presence) = entity.presence else {
+            continue;
+        };
+        let values = runtime.objects.get(&object);
+        let origin = vector_value(values, origin_field);
+        let angles = vector_value(values, angles_field);
+        let model = match values.and_then(|values| values.get(&model_field)) {
+            Some(Value::String(model)) if !model.is_empty() && !model.starts_with('*') => {
+                Some(model)
+            }
+            _ => None,
+        };
+        let unchanged = entity.part_ops.is_empty()
+            && entity.anim_op.is_none()
             && runtime.shown.get(&object).is_some_and(|shown| {
                 !shown.moving
-                    && shown.hidden == hidden
-                    && shown.shown_to == shown_to
-                    && shown.solid == solid
-                    && shown.model == model
-                    && shown.attachments == attachments
+                    && shown.hidden == entity.hidden
+                    && shown.shown_to == entity.shown_to
+                    && shown.solid == entity.solid
+                    && shown.model.as_deref() == model.map(|model| &**model)
+                    && shown.attachments == entity.attachments
                     && near(shown.origin, origin)
                     && near_angles(shown.angles, angles)
             });
@@ -376,18 +398,18 @@ fn collect_wanted(world: &mut World) -> Vec<Wanted> {
             continue;
         }
         wanted.push(Wanted {
-            collision_only,
+            collision_only: matches!(entity.kind, EntityKind::Missile(_)),
             object,
             presence,
             origin,
             angles,
-            model,
-            attachments,
-            hidden,
-            shown_to,
-            solid,
-            part_ops,
-            anim_op,
+            model: model.cloned().map(Into::into),
+            attachments: entity.attachments.clone(),
+            hidden: entity.hidden,
+            shown_to: entity.shown_to,
+            solid: entity.solid,
+            part_ops: std::mem::take(&mut entity.part_ops),
+            anim_op: entity.anim_op.take(),
         });
     }
     wanted

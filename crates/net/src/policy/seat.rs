@@ -200,7 +200,7 @@ fn reveal_shown_movers(out: &mut Snapshot, viewer: ClientId) {
             continue;
         }
         if mover.shown_to & bit == 0 {
-            meta.entity_dobjs
+            std::sync::Arc::make_mut(&mut meta.entity_dobjs)
                 .retain(|(owner, _)| owner.script_model() != Some(mover.id));
             continue;
         }

@@ -3171,23 +3171,24 @@ impl SimState {
                     .area_entity_world
                     .as_ref()
                     .map(crate::AreaEntityWorldSnapshot::capture),
-                entity_dobjs: self
-                    .entity_collision_capabilities
-                    .iter()
-                    .filter(|capabilities| {
-                        !capabilities.hidden
-                            || capabilities
-                                .owner
-                                .script_model()
-                                .is_some_and(|id| shown_hidden.contains(&id))
-                    })
-                    .filter_map(|capabilities| {
-                        capabilities
-                            .dobj
-                            .as_ref()
-                            .map(|dobj| (capabilities.owner, dobj.semantic_state.clone()))
-                    })
-                    .collect(),
+                entity_dobjs: std::sync::Arc::new(
+                    self.entity_collision_capabilities
+                        .iter()
+                        .filter(|capabilities| {
+                            !capabilities.hidden
+                                || capabilities
+                                    .owner
+                                    .script_model()
+                                    .is_some_and(|id| shown_hidden.contains(&id))
+                        })
+                        .filter_map(|capabilities| {
+                            capabilities
+                                .dobj
+                                .as_ref()
+                                .map(|dobj| (capabilities.owner, dobj.semantic_state.clone()))
+                        })
+                        .collect(),
+                ),
                 entities,
                 script_movers,
                 entity_kernel: self.entity_kernel.to_snapshot(),
