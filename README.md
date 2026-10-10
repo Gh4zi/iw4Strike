@@ -138,6 +138,7 @@ welcome, even small fixes.**
 |---|---|
 | **Call of Duty: Modern Warfare 2** (2009, Steam) | Maps and engine data |
 | **Counter-Strike: Source** (Steam) | Weapon models, sounds and HUD fonts |
+| **Counter-Strike 2** (Steam, optional, experimental) | CS2's guns in your hands and CS2's knife and grenade stance (see [Counter-Strike 2](#counter-strike-2-experimental)) |
 | **Windows or Linux** | Steam games are found automatically on both. On Linux, install MW2 through Steam Play (Proton); iw4Strike only reads its files |
 | **Rust** ([rustup](https://rustup.rs)) | To build the game |
 | **Visual Studio Build Tools** (Windows) | Pick the *Desktop development with C++* workload |
@@ -169,6 +170,7 @@ shows what was found:
 | | |
 |---|---|
 | **Call of Duty: Modern Warfare 2** (required) | The folder with the `zone` folder inside |
+| **Counter-Strike 2** (optional, experimental) | CS2's guns in first person; found in your Steam library |
 | **Counter-Strike: Source** (recommended) | Weapon models, sounds and HUD |
 | **Counter-Strike: Condition Zero** (optional) | Its own guns and sounds; CS 1.6 fills in the rest |
 | **Counter-Strike 1.6** (optional) | Your `Half-Life` folder. Never searched for |
@@ -335,6 +337,9 @@ Your movement mode is saved, so you only set it once.
 | `shooting_mode csgo` / `cs16` | CS:GO shooting (default) or CS 1.6's recoil; saved, and the host's setting applies to its server |
 | `viewmodel_fov <54-90>` | Gun position: bigger moves the gun further away (default `68`) |
 | `cl_righthand 1` / `0` | Gun in the right hand (default) or the left |
+| `cl_camera_anim 0` / `1` | Let the MW2 weapon animations move your view with a CS gun in hand (default `0`: no head shake on swaps and reloads) |
+| `smoke_mode cs2` / `csgo` | The server's smoke: CS2's volumetric smoke or CS:GO's particle smoke (experimental, set by the host) |
+| `smoke_quality high` / `medium` / `low` | How finely you draw CS2 smoke, against what it costs |
 | `cl_wpn_sway 0` / `1` | Turn gun bob and sway off or on |
 | `cl_dynamiccrosshair 0` / `1` | Static crosshair, or one that opens when you move and shoot |
 | `cl_crosshairsize`, `cl_crosshairgap`, `cl_crosshairthickness`, `cl_crosshaircolor`, ... | CS:GO's crosshair settings (also on **Options > Multiplayer Options**) |
@@ -415,6 +420,35 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 
 ---
 
+## Counter-Strike 2 (experimental)
+
+iw4Strike can read Counter-Strike 2 straight from your CS2 install
+(`game/csgo/pak01_dir.vpk`): no converting, nothing copied. It's **experimental**: only part of
+CS2 is in so far, and the rest still comes from Counter-Strike: Source (or CZ / CS 1.6). Turn it
+on or off with CS2's **Use** box in the game folders window (**Manage Game Paths**); with it off,
+everything is as before.
+
+| | Status |
+|---|---|
+| Guns in first person: all 24 guns, the knife, HE, flash and smoke grenades and the C4, with CS2's arms | ✅ In |
+| CS2's own first-person animations: draw, idle, shoot, reload, silencer on and off, shotguns reloading shell by shell, pistols' slide locked back when empty | ✅ In |
+| CS2's materials: colour, normal, roughness and metal, occlusion maps, with the map's reflections on the metal | ✅ In |
+| Third-person knife and grenade stance (on the server's hitboxes too) | ✅ In |
+| Guns in third person and on the ground | ❌ Still CS:S models |
+| Sounds | ❌ Still CS:S sounds; CS2-only ones (the Nova's shell going in, the M4A1-S bolt) are silent |
+| HUD | ❌ Still the CS:S (or CS 1.6) HUD |
+| Buy menu | ❌ Still the CS:S and CS 1.6 menus |
+| Inspecting the gun (inspect key) | ❌ The animations are read, no key yet |
+| The rest of CS2's arsenal (P2000, Tec-9, CZ75-Auto, R8, M4A4, MP7, PP-Bizon, MAG-7, Sawed-Off, Negev, molotov, incendiary, decoy, Zeus) | ❌ Not yet |
+| The T-side knife, knife and glove skins, player models (agents) | ❌ Not yet |
+
+Known issues with CS2 on:
+- The first time each gun is drawn it can take a moment to appear (CS2's models and textures are
+  read when first needed).
+- In third person, the knife can point a little off in the hand.
+
+---
+
 ## Roadmap
 
 **Done**
@@ -445,7 +479,48 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - [x] 4:3 resolutions with exclusive fullscreen for stretched 4:3
 - [x] Better FPS: the server's game logic on its own thread, smaller network snapshots
 
+**In progress (next release)**
+- [ ] Counter-Strike 2, experimental: CS2's guns in first person are in; third person, sounds,
+  HUD, buy menu and the rest of the arsenal are next. See
+  [Counter-Strike 2 (experimental)](#counter-strike-2-experimental) for what's in and what isn't
+- [ ] CS2-style volumetric smoke, an option the host or server owner turns on
+  (`smoke_mode cs2`, or `smoke_mode csgo` for CS:GO's particle smoke): smoke that fills the
+  space it pops in, flows around walls and down stairs, takes the light and colour of where it
+  is, and opens up when bullets and HE grenades go through it. Each player picks how finely it
+  is drawn with `smoke_quality high|medium|low`
+- [ ] Blood and hit feedback like CS:GO:
+  - [x] A blood spray where a bullet hits a player (MW2's, bigger for a kill or a headshot)
+  - [x] Blood splattered on the walls and floor behind a player a bullet hits, as CS:GO does it
+    (`TraceBleed`): one to four splats up to 172 units behind, scattered more for harder hits,
+    shotgun pellets included
+  - [ ] Blood sprays sized by damage like CS:GO's (light, medium, heavy, headshot), smaller
+    through armor
+  - [ ] Sparks off the helmet on a headshot against a helmet, like CS:GO
+  - [ ] Blood on the knife's hits on walls and floors too
+  - [ ] Blood marks on the player who was hit, cleared when they respawn
+- [x] Third person like CS: the knife and grenades held with CS2's own stance (read from your
+  CS2 install, the same on the server's hitboxes and on screen; MW2's upright one-handed pose
+  without CS2); the hunched grenade pose only while a throw is under way, so holding one
+  doesn't move your hitboxes
+- [ ] CS2's stance while running and crouching, and CS2's knife slash and grenade throw in
+  third person
+- [ ] No camera shake from the hidden MW2 weapon animations when you swap or reload a CS gun
+  (`cl_camera_anim 1` brings it back)
+
 **Planned**
+- [ ] Physics like CS:GO:
+  - [ ] A physics engine in the game (Rapier, written in Rust)
+  - [ ] Ragdoll deaths instead of MW2's death animations: MW2 bodies as jointed ragdolls, with
+    joint limits and weights taken from CS:GO's player ragdoll, falling and settling on stairs,
+    ledges and props
+  - [ ] Shots and explosions push the body as it falls, like CS:GO (harder for headshots and HE
+    grenades)
+  - [ ] Bodies removed after a set time (`corpse_time`), as CS:GO's fade out
+  - [ ] Dropped guns that tumble and settle with physics
+- [ ] Mount CS:GO and CS2 together: CS:GO's and CS2's weapons, sounds, HUD and buy menu read
+  from your installs, as their own game modes, and lobbies where CS 1.6, CS:S, CS:CZ, CS:GO and
+  CS2 players play together, each seeing their own game's look
+- [ ] Console: `exec` and `autoexec.cfg`, and `lastinv` (quick switch to the last weapon)
 - [ ] Bots that play Defusal: carry, plant and defuse the bomb themselves
 - [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
   player moves the same way
@@ -467,8 +542,15 @@ Demos and clips are saved in the `iw4l-artifacts` folder.
 - The map ambient sound plays about 9 dB quieter than MW2's by default (MW2's looping emitters
   stack up to only a few dB under a rifle); tune it with `snd_ambient_volume`. Very loud
   gunfire can still clip.
-- The Linux build is new: GitHub builds it, but it hasn't been played on a Linux PC yet.
-  Please report what doesn't work.
+- Linux (first player reports): the game runs (on Wayland), but sound is broken and launch
+  time varies a lot from one start to the next. Being looked into; logs from a slow and a fast
+  start help.
+- Without CS2 installed, third-person knives and grenades are held with MW2's upright pose, and
+  running or crouching with them still uses MW2's animations.
+- Deaths play MW2's death animations, not ragdolls, and bodies stay on the ground until MW2's
+  corpse pool reuses them (see Physics in Planned).
+- No blood marks on the player who was hit yet (blood on the walls behind them is in).
+- Some players report micro stutters.
 
 ---
 
@@ -513,12 +595,15 @@ read to get the behaviour and numbers right. None of their source code is includ
 | **[ReGameDLL_CS](https://github.com/s1lentq/ReGameDLL_CS)** | Counter-Strike 1.6 rules: weapon stats (`wpn_*.cpp`, `weapons.h`), damage, range and hitgroups, spread and recoil, kevlar and helmet, knife, grenades, flashbang blinding (`RadiusFlash`), AWP zoom, dropping and picking up weapons, CS 1.6 movement numbers and fall damage. |
 | **[hlsdk-portable](https://github.com/FWGS/hlsdk-portable)** | GoldSrc player movement (`pm_shared`) and the Half-Life model format (`studio.h`), used by the CS 1.6 movement mode and the CS 1.6 model fallback. |
 | **[CSMovementRust](https://github.com/EduardoCalvoUribe/CSMovementRust)** | CS:GO movement numbers and its technical reference: stamina as a penalty, crouch fatigue, CS:GO ground acceleration and speed clamp, the duck-reset jump, the anti-bhop cap, ladder speed (`mv_mode csgo`). |
-| **[Source SDK 2013](https://github.com/ValveSoftware/source-sdk-2013)** | Source engine movement (`gamemovement.cpp`) and the public headers for Source model files, used to load Counter-Strike: Source models. |
+| **[Source SDK 2013](https://github.com/ValveSoftware/source-sdk-2013)** | Source engine movement (`gamemovement.cpp`) and the public headers for Source model files, used to load Counter-Strike: Source models. Blood on walls behind a hit player (`TraceBleed`). |
+| **Counter-Strike: Source SDK** (Valve's CS:S community source release) | How CS:S layers a player's animations (`cs_playeranimstate.cpp`), used for the third-person stances. |
+| **[ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat)** (MIT) | Counter-Strike 2's file formats: the resource container, KV3, models, textures, materials, skeletons and animation clips, and how CS2's materials pack their maps. |
+| **[meshoptimizer](https://github.com/zeux/meshoptimizer)** (MIT) | The vertex and index buffer encodings CS2's models are compressed with. |
 
 ### Games
 
-- Call of Duty: Modern Warfare 2 belongs to Activision. Counter-Strike and
-  Counter-Strike: Source belong to Valve. iw4Strike isn't affiliated with any of them.
+- Call of Duty: Modern Warfare 2 belongs to Activision. Counter-Strike, Counter-Strike: Source
+  and Counter-Strike 2 belong to Valve. iw4Strike isn't affiliated with any of them.
   You need your own copies of the games, and their files are read from your install,
   never copied.
 
