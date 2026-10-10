@@ -436,7 +436,8 @@ everything is as before.
 - **Once CS2 is finished:** CS2 alone is enough to play the CS2 / CS:GO game mode, with other
   CS2 and CS:GO players. To join lobbies with CS:S, CZ or CS 1.6 players, you still need one of
   those games installed too.
-- **Once CS:GO is in (after CS2):** the same for CS:GO. CS:GO alone plays the CS2 / CS:GO game
+- **CS:GO isn't implemented yet.** It comes after CS2 is finished. Once it's in, the same goes
+  for CS:GO: CS:GO alone plays the CS2 / CS:GO game
   mode with CS2 and CS:GO players; lobbies with CS:S, CZ or CS 1.6 players need one of those
   installed too.
 
@@ -455,7 +456,8 @@ everything is as before.
 | The rest of CS2's arsenal (P2000, Tec-9, CZ75-Auto, R8, M4A4, MP7, PP-Bizon, MAG-7, Sawed-Off, Negev, molotov, incendiary, decoy, Zeus) | ❌ Not yet |
 | The T-side knife, knife and glove skins, player models (agents) | ❌ Not yet |
 
-What comes next, in order, is in the [Roadmap](#roadmap). CS:GO comes after CS2 is finished.
+What comes next, in order, is in the [Roadmap](#roadmap). CS:GO isn't implemented yet: it comes
+after CS2 is finished.
 
 Known issues with CS2 on:
 - The first time each gun is drawn it can take a moment to appear (CS2's models and textures are
@@ -544,7 +546,7 @@ Known issues with CS2 on:
 - [ ] CS2 as its own game mode, playable with CS2 alone (no CS:S needed), shared with CS:GO
   players
 
-**Counter-Strike: Global Offensive** (after CS2 is finished)
+**Counter-Strike: Global Offensive** (not implemented yet; comes after CS2 is finished)
 - [ ] CS:GO read from your CS:GO (Legacy) install: its guns in first and third person, sounds,
   HUD and buy menu, playable with CS:GO alone (no CS:S needed); lobbies with CS:S, CZ or CS 1.6
   players need one of those installed too
