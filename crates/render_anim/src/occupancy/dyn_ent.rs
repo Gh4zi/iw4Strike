@@ -117,6 +117,8 @@ struct DynEntPoseProduct {
 
 struct DynEntPosedAsset {
     key: asset_world::MapXModelAssetKey,
+    /// `key` as the name every owner of this asset carries (one allocation, not one per prop).
+    name: std::sync::Arc<str>,
     camera_lod: Option<u8>,
     surfaces: Vec<PosedModelSurface>,
     authored: Vec<Option<assets::MaterialIndex>>,
@@ -125,7 +127,7 @@ struct DynEntPosedAsset {
 struct DynEntPosedOwner {
     entity: Entity,
     asset_index: usize,
-    model: String,
+    model: std::sync::Arc<str>,
     world_from_local: Mat4,
     lighting_origin: [f32; 3],
     camera_hidden: bool,
@@ -572,16 +574,18 @@ fn pose_dyn_ents(
             let index = product.assets.len();
             product.assets.push(DynEntPosedAsset {
                 key: inst.current_model.clone(),
+                name: inst.current_model.0.as_str().into(),
                 camera_lod,
                 surfaces,
                 authored,
             });
             index
         };
+        let model = std::sync::Arc::clone(&product.assets[asset_index].name);
         product.owners.push(DynEntPosedOwner {
             entity,
             asset_index,
-            model: inst.current_model.0.clone(),
+            model,
             world_from_local: transform.to_matrix(),
             lighting_origin: inst.lighting_origin,
             camera_hidden,
@@ -634,32 +638,35 @@ fn append_dynent_draws(
 
     for row in &product.owners {
         let posed = &product.assets[row.asset_index];
-        let surfaces_idx = if let Some(asset) = plan.asset(&posed.key, posed.camera_lod) {
-            asset.surfaces.clone()
-        } else if let Some(surfaces) = packed_assets[row.asset_index].as_ref() {
-            surfaces.clone()
-        } else {
-            let materials: Vec<Option<SmodelPassMaterial>> = posed
-                .surfaces
-                .iter()
-                .zip(posed.authored.iter().copied())
-                .map(|(_surface, authored)| {
-                    model_materials.authored(&tess_catalog, authored?).cloned()
-                })
-                .collect();
-            if materials.iter().all(Option::is_none) {
-                continue;
-            }
-            let surfaces = append_dynent_asset(
-                &mut plan,
-                posed.key.clone(),
-                posed.camera_lod,
-                &posed.surfaces,
-                &materials,
-            );
-            packed_assets[row.asset_index] = Some(surfaces.clone());
-            surfaces
-        };
+        // Resolved once per posed asset per frame; every later prop of the asset borrows it (an
+        // asset with no authored material resolves to no surfaces, and its props draw nothing).
+        if packed_assets[row.asset_index].is_none() {
+            let surfaces = if let Some(asset) = plan.asset(&posed.key, posed.camera_lod) {
+                asset.surfaces.clone()
+            } else {
+                let materials: Vec<Option<SmodelPassMaterial>> = posed
+                    .surfaces
+                    .iter()
+                    .zip(posed.authored.iter().copied())
+                    .map(|(_surface, authored)| {
+                        model_materials.authored(&tess_catalog, authored?).cloned()
+                    })
+                    .collect();
+                if materials.iter().all(Option::is_none) {
+                    Vec::new()
+                } else {
+                    append_dynent_asset(
+                        &mut plan,
+                        posed.key.clone(),
+                        posed.camera_lod,
+                        &posed.surfaces,
+                        &materials,
+                    )
+                }
+            };
+            packed_assets[row.asset_index] = Some(surfaces);
+        }
+        let surfaces_idx = packed_assets[row.asset_index].as_deref().unwrap_or(&[]);
         if surfaces_idx.is_empty() {
             continue;
         }
@@ -682,9 +689,9 @@ fn append_dynent_draws(
         drawn = drawn.saturating_add(1);
         owners.push(DynEntOwnerDraw {
             object_id,
-            model: row.model.clone(),
+            model: std::sync::Arc::clone(&row.model),
         });
-        for (surface, material) in surfaces_idx {
+        for &(surface, material) in surfaces_idx {
             draws.push(XModelSurfaceDraw {
                 surface,
                 material,

@@ -33,6 +33,9 @@ struct WalkCtx<'a> {
     order: &'a mut Vec<crate::EntityRef>,
     dispatch: &'a mut Vec<(i32, EntityRunKind)>,
     dispatch_machines: bool,
+    /// The collision rows' owner keys, copied once per walk: each script mover finds its rows
+    /// by searching this instead of the rows themselves (every probe of those missed the cache).
+    owners: Vec<crate::AuthorityModelOwner>,
 }
 
 fn walk_thinks(
@@ -50,6 +53,11 @@ fn walk_thinks(
             order: &mut order,
             dispatch: &mut dispatch,
             dispatch_machines,
+            owners: world
+                .entity_collision_capabilities()
+                .iter()
+                .map(|row| row.owner)
+                .collect(),
         };
         let mut number = crate::GENTITY_RESERVED_COUNT;
         while number < world.entity_kernel().high_water() {
@@ -96,7 +104,7 @@ fn run_think(world: &mut FrameWorld, number: i32, ctx: &mut WalkCtx<'_>) {
             }
         }
         EntityRunKind::ScriptMover | EntityRunKind::PrimaryLight => {
-            think_script_mover(world, ctx.tick, entity);
+            think_script_mover(world, ctx.tick, entity, &ctx.owners);
         }
         EntityRunKind::TempEvent => {}
         EntityRunKind::General => {
@@ -132,7 +140,12 @@ fn think_scheduled_or_refuse(world: &mut FrameWorld, entity: crate::EntityRef) {
     }
 }
 
-fn think_script_mover(world: &mut FrameWorld, tick: Tick, entity: crate::EntityRef) {
+fn think_script_mover(
+    world: &mut FrameWorld,
+    tick: Tick,
+    entity: crate::EntityRef,
+    owners: &[crate::AuthorityModelOwner],
+) {
     let time_ms = crate::corpse::level_time_ms(tick);
     let Ok(view) = world.entity_kernel().resolve(entity) else {
         return;
@@ -147,10 +160,18 @@ fn think_script_mover(world: &mut FrameWorld, tick: Tick, entity: crate::EntityR
         return;
     };
     let apos = apos_from_entity_state(&mover.state);
-    for capabilities in world.entity_collision_capabilities_mut() {
-        if capabilities.owner.script_model() != Some(mover.id) {
-            continue;
-        }
+    // The rows stay sorted by owner (install sorts them, inserts binary-search), so a mover's
+    // rows are one run: a search, not a scan of every row for every mover on every step.
+    let owner = crate::AuthorityModelOwner::ScriptModel(mover.id);
+    let rows = world.entity_collision_capabilities();
+    let range = if owners.len() == rows.len() {
+        let start = owners.partition_point(|have| *have < owner);
+        start..start + owners[start..].partition_point(|have| *have == owner)
+    } else {
+        let start = rows.partition_point(|row| row.owner < owner);
+        start..start + rows[start..].partition_point(|row| row.owner == owner)
+    };
+    for capabilities in &mut world.entity_collision_capabilities_mut()[range] {
         if let Some(dobj) = capabilities.dobj.as_mut() {
             dobj.apply_trajectory_apos_at(apos, at_time);
         }

@@ -344,6 +344,11 @@ pub enum MapXModelSceneAsset {
 pub struct MapXModelSceneCatalog {
     assets: BTreeMap<MapXModelAssetKey, MapXModelSceneAsset>,
 
+    /// `assets` again, hashed, for `get`: every dyn ent and script model looks its model up
+    /// every frame, and each lookup was a walk of string compares down the tree. Only load-time
+    /// methods change `assets`, and each of them keeps this in step.
+    lookup: bevy::platform::collections::HashMap<MapXModelAssetKey, MapXModelSceneAsset>,
+
     order: Vec<MapXModelAssetKey>,
 
     zones: Vec<ZoneOwner>,
@@ -371,11 +376,19 @@ pub struct MapXModelMaterialCensus {
 
 impl MapXModelSceneCatalog {
     pub fn get(&self, key: &MapXModelAssetKey) -> Option<&MapXModelSceneAsset> {
-        self.assets.get(key)
+        self.lookup.get(key)
     }
 
     pub fn get_name(&self, name: &str) -> Option<&MapXModelSceneAsset> {
-        self.assets.get(name)
+        self.lookup.get(name)
+    }
+
+    fn reindex(&mut self) {
+        self.lookup = self
+            .assets
+            .iter()
+            .map(|(key, asset)| (key.clone(), asset.clone()))
+            .collect();
     }
 
     pub fn resolve_surface_materials(
@@ -437,6 +450,7 @@ impl MapXModelSceneCatalog {
         if !self.assets.contains_key(&key) {
             self.order.push(key.clone());
             self.zones.push(self.capture_zone);
+            self.lookup.insert(key.clone(), asset.clone());
         }
         self.assets.entry(key).or_insert(asset);
     }
@@ -458,6 +472,7 @@ impl MapXModelSceneCatalog {
                 });
             }
         }
+        self.reindex();
     }
 
     pub fn absorb_captured(&mut self, mut earlier: Self) {
@@ -485,10 +500,12 @@ impl MapXModelSceneCatalog {
                 }
             }
         }
+        self.reindex();
     }
 
     pub fn retain_names(&mut self, names: &std::collections::BTreeSet<String>) {
         self.assets.retain(|key, _| names.contains(&key.0));
+        self.lookup.retain(|key, _| names.contains(&key.0));
         self.surface_materials
             .retain(|key, _| names.contains(&key.0));
         let mut at = 0;
@@ -528,6 +545,7 @@ impl MapXModelSceneCatalog {
                 self.zones.push(zone);
             }
         }
+        self.lookup.insert(key.clone(), asset.clone());
         self.assets.insert(key, asset);
         true
     }

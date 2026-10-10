@@ -729,14 +729,22 @@ fn adopt_player_rows(world: &mut World, players: &[(ClientId, PlayerState)]) {
 }
 
 fn despawn_unwanted_numbered(world: &mut World, wanted: &[i32]) {
-    let stale: Vec<(i32, Entity)> = payload_index(world)
-        .by_number
+    let by_number = &payload_index(world).by_number;
+    // One flag per slot: a `contains` scan per occupied slot was quadratic in the snapshot's
+    // entities, on every adopt.
+    let mut keep = vec![false; by_number.len()];
+    for &number in wanted {
+        if let Some(flag) = usize::try_from(number).ok().and_then(|n| keep.get_mut(n)) {
+            *flag = true;
+        }
+    }
+    let stale: Vec<(i32, Entity)> = by_number
         .iter()
         .enumerate()
         .filter_map(|(n, slot)| {
             let entity = (*slot)?;
             let number = i32::try_from(n).ok()?;
-            if wanted.contains(&number) {
+            if keep[n] {
                 None
             } else {
                 Some((number, entity))

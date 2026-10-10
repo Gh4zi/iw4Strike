@@ -184,7 +184,9 @@ pub struct ItemDrawPlan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DynEntOwnerDraw {
     pub object_id: u16,
-    pub model: String,
+    /// Shared with the posed asset: a map has about a thousand props, and a `String` here was
+    /// an allocation and a free per prop per frame.
+    pub model: std::sync::Arc<str>,
 }
 
 #[derive(Clone, Debug)]

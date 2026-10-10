@@ -136,12 +136,13 @@ fn phase_animated_map_models(world: &mut FrameWorld, tick: Tick, msec: i32) {
     let dt = msec as f32 / 1000.0;
 
     let at_time = i32::try_from(tick.0.saturating_mul(crate::MATCH_TICK_MS)).unwrap_or(i32::MAX);
-    let mut mover_apos = Vec::new();
+    // Keyed by id (first mover wins, as the scan it replaces did): every collision row looks its
+    // mover up, and a linear search made this quadratic in the map's script models.
+    let mut mover_apos = std::collections::BTreeMap::new();
     world.visit_script_movers(|mover| {
-        mover_apos.push((
-            mover.id,
-            crate::gentity::apos_from_entity_state(&mover.state),
-        ));
+        mover_apos
+            .entry(mover.id)
+            .or_insert_with(|| crate::gentity::apos_from_entity_state(&mover.state));
     });
     for capabilities in world.entity_collision_capabilities_mut() {
         let Some(dobj) = capabilities.dobj.as_mut() else {
@@ -151,7 +152,7 @@ fn phase_animated_map_models(world: &mut FrameWorld, tick: Tick, msec: i32) {
             dobj.advance_script_model_play_anim(dt);
         }
         if let Some(id) = capabilities.owner.script_model() {
-            if let Some((_, apos)) = mover_apos.iter().find(|(mover_id, _)| *mover_id == id) {
+            if let Some(apos) = mover_apos.get(&id) {
                 dobj.apply_trajectory_apos_at(*apos, at_time);
                 continue;
             }
