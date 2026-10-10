@@ -10,6 +10,25 @@ pub const PROXY_BUFFER_TICKS: usize = sim::ticks_for_ms(1600) as usize;
 
 pub const PROXY_DELAY_MS: i32 = 100;
 
+/// Frees an evicted snapshot on a thread of its own: the last reference owns a few hundred heap
+/// rows (entity and dobj states, model names), and freeing them on the main thread cost about
+/// a percent of it at 100 snapshots a second. Without that thread the drop happens here.
+fn drop_off_thread(snapshot: Arc<Snapshot>) {
+    static DROPPER: std::sync::OnceLock<Option<std::sync::mpsc::Sender<Arc<Snapshot>>>> =
+        std::sync::OnceLock::new();
+    let sender = DROPPER.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<Arc<Snapshot>>();
+        std::thread::Builder::new()
+            .name("iw4l-snapshot-drop".into())
+            .spawn(move || while receiver.recv().is_ok() {})
+            .ok()
+            .map(|_| sender)
+    });
+    if let Some(Err(error)) = sender.as_ref().map(|sender| sender.send(snapshot)) {
+        drop(error.0);
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProxyMode {
     FixedDelay,
@@ -143,7 +162,9 @@ impl RemoteProxy {
             snap: snapshot,
         });
         while self.buffer.len() > PROXY_BUFFER_TICKS {
-            self.buffer.pop_front();
+            if let Some(old) = self.buffer.pop_front() {
+                drop_off_thread(old.snap);
+            }
         }
     }
 

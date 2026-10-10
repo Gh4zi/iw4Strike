@@ -187,6 +187,9 @@ pub struct AuthorityDObjState {
     pub play_anim: Option<ScriptModelPlayAnim>,
 
     pub apos: Option<entity_iw4::Trajectory>,
+    /// The angles `apply_trajectory_apos_at` last posed with and the matrix that made: movers
+    /// are re-posed every step, and while both still hold the matrix is already the answer.
+    applied_apos: Option<([f32; 3], glam::Mat4)>,
 
     pub(crate) t5_destructible: Option<crate::t5_destructible::State>,
     /// Capabilities for the models this script model can swap to: husks and
@@ -328,6 +331,7 @@ impl AuthorityDObjState {
             materialize_error: None,
             play_anim: None,
             apos: None,
+            applied_apos: None,
             t5_destructible: None,
             swap_capabilities: Vec::new(),
         }
@@ -605,8 +609,15 @@ impl AuthorityDObjState {
         at_time_ms: i32,
     ) -> Option<[f32; 3]> {
         let angles = entity_iw4::evaluate_trajectory(&apos, at_time_ms);
+        if self
+            .applied_apos
+            .is_some_and(|(applied, matrix)| applied == angles && matrix == self.world_from_model)
+        {
+            return Some(angles);
+        }
         let origin = self.world_from_model.w_axis.truncate();
         self.world_from_model = iw_angles_to_mat4(origin, angles);
+        self.applied_apos = Some((angles, self.world_from_model));
         Some(angles)
     }
 
