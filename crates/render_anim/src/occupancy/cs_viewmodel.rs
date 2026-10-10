@@ -1,6 +1,8 @@
 //! Counter-Strike first-person models for the CS guns, read at runtime from the local installs
-//! and drawn by `render_gpu`'s viewmodel pass in place of the MW2 viewmodel: Counter-Strike:
-//! Source models (`v_rif_ak47.mdl`, … from its pack) when CS:S is installed, else CS 1.6 ones.
+//! and drawn by `render_gpu`'s viewmodel pass in place of the MW2 viewmodel: Counter-Strike 2's
+//! guns (with CS2's default arms and the clips of each gun's viewmodel graph) when CS2 is
+//! installed, Counter-Strike: Source models (`v_rif_ak47.mdl`, … from its pack) for the rest
+//! when CS:S is, else CS 1.6 ones.
 //! Animation follows CS: draw on switching to the gun, a shoot sequence per shot, reload when a
 //! reload starts (timed to the gun's reload), idle otherwise; the sounds the animations call for
 //! play as they pass their frames. The view's recoil punch moves the camera, not the gun, so the
@@ -22,11 +24,12 @@ use mdl_goldsrc::Mat3x4;
 use net::{LocalPresentClient, PresentedSnapshot};
 use playerstate_iw4::PlayerState;
 use render_gpu::{
-    CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelModel, CsViewmodelShading,
-    CsViewmodelVertex,
+    CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelMaps, CsViewmodelModel,
+    CsViewmodelShading, CsViewmodelVertex,
 };
 use weapon_iw4::cs::CsWeapon;
 
+use crate::occupancy::cs2_assets::{self, Cs2Decoded};
 use crate::occupancy::third_person::presented_is_third_person;
 
 /// CS 1.6 draws viewmodels with a 90 degree field of view at 4:3: tan(73.74 / 2) vertically.
@@ -40,6 +43,13 @@ const RIGHT_HAND_MIRROR: Mat3x4 = [
     [1.0, 0.0, 0.0, 0.0],
     [0.0, -1.0, 0.0, 0.0],
     [0.0, 0.0, 1.0, 0.0],
+];
+/// CS2's default `viewmodel_offset_x/y/z` (2.5 right, 0 forward, 1.5 down), in view space
+/// (x forward, y left, z up).
+const CS2_VIEWMODEL_OFFSET: Mat3x4 = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, -2.5],
+    [0.0, 0.0, 1.0, -1.5],
 ];
 /// Walk bob: ground speed at which it is full, the step cycle (vertical; lateral is twice as
 /// long), and how much of the cycle rises.
@@ -81,11 +91,23 @@ pub struct CsViewmodelActive(pub bool);
 enum Format {
     GoldSrc,
     Source,
+    /// Counter-Strike 2.
+    Source2,
 }
 
 enum Studio {
     GoldSrc(mdl_goldsrc::StudioModel),
     Source(mdl_source::StudioModel),
+    /// Arms and gun posed together; "sequences" are stretches of the gun's clips.
+    Source2(Box<mdl_source2::viewmodel::Viewmodel>, Vec<Cs2Segment>),
+}
+
+/// A stretch of a CS2 clip played as one sequence: each whole clip, and a shotgun's reload cut at
+/// the intro, per-shell loop and outro markers CS2 puts in its one reload clip.
+struct Cs2Segment {
+    clip: usize,
+    start: f32,
+    end: f32,
 }
 
 impl Studio {
@@ -94,6 +116,14 @@ impl Studio {
         match self {
             Self::GoldSrc(model) => model.pose(sequence, seconds, out),
             Self::Source(model) => model.pose(sequence, seconds, out),
+            Self::Source2(viewmodel, segments) => {
+                let Some(segment) = segments.get(sequence) else {
+                    return;
+                };
+                let seconds = segment.start + seconds.clamp(0.0, segment.end - segment.start);
+                out.clear();
+                out.extend(viewmodel.skin(segment.clip, seconds).iter().map(rows));
+            }
         }
     }
 }
@@ -116,6 +146,16 @@ struct Silenced {
     shoot: Vec<usize>,
     attach: Option<usize>,
     detach: Option<usize>,
+    /// CS2 keeps the silencer on the gun's mesh, on its own bone, and hides that bone while the
+    /// silencer is off: the bone's index and its origin in bind space.
+    hidden_bone: Option<(usize, [f32; 3])>,
+}
+
+/// A CS2 pistol with its slide locked back: the last shot, the empty idle and the empty reload.
+struct Empty {
+    idle: Option<usize>,
+    reload: Option<usize>,
+    shoot: Option<usize>,
 }
 
 struct Roles {
@@ -138,6 +178,7 @@ struct Roles {
     arm: Option<usize>,
     stab: Option<usize>,
     stab_miss: Option<usize>,
+    empty: Option<Empty>,
 }
 
 /// A gun's idle, draw, reload and shoot animations.
@@ -194,6 +235,8 @@ struct ViewWeapon {
     scope_overlay: bool,
     /// Shell-by-shell reload: (start, per shell, finish) seconds (shotguns).
     shell_reload: Option<(f32, f32, f32)>,
+    /// The gun's CS2 model and clips, used when CS2 is installed.
+    cs2: Option<weapon_iw4::cs::Cs2View>,
 }
 
 impl ViewWeapon {
@@ -214,6 +257,7 @@ impl ViewWeapon {
             dual: false,
             scope_overlay: false,
             shell_reload: None,
+            cs2: weapon_iw4::cs::cs2_view(name),
         }
     }
 
@@ -300,8 +344,9 @@ struct Playing {
 
 #[derive(Resource, Default)]
 pub struct CsViewmodels {
-    /// Looked up once, by the startup read: the CS:S pack (opened) and the GoldSrc folders
-    /// (Condition Zero, then CS 1.6).
+    /// Looked up once, by the startup read: CS2's pack and the CS:S pack (opened) and the
+    /// GoldSrc folders (Condition Zero, then CS 1.6).
+    cs2: Option<Option<Arc<mdl_source::Vpk>>>,
     css: Option<Option<Arc<mdl_source::Vpk>>>,
     goldsrc: Option<Option<asset_transport::GoldSrcDirs>>,
     /// The startup read (`warm_up`) while it runs off the main thread.
@@ -319,6 +364,8 @@ pub struct CsViewmodels {
     lagged_forward: Option<[f32; 3]>,
     /// CS:S muzzle flash sprites (`sprites/muzzleflash4`, `effects/muzzleflashx`), looked up once.
     flash_images: Option<Option<[Handle<Image>; 2]>>,
+    /// CS2 textures on the GPU, shared by every gun that draws them (the arms).
+    cs2_images: cs2_assets::Cs2Images,
 }
 
 static NEXT_MODEL_ID: AtomicU64 = AtomicU64::new(1);
@@ -397,6 +444,7 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
             uv: v.uv,
             bones: [v.bone, 0, 0, 0],
             weights: [255, 0, 0, 0],
+            tangent: [0.0; 4],
         })
         .collect();
     let draws = studio
@@ -408,6 +456,7 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
                 image: handles[mesh.texture].clone(),
                 first_vertex: mesh.first_vertex as u32,
                 vertex_count: mesh.vertex_count as u32,
+                maps: None,
                 shading: if flags & mdl_goldsrc::TEXTURE_ADDITIVE != 0 {
                     CsViewmodelShading::Additive
                 } else if flags & mdl_goldsrc::TEXTURE_FULLBRIGHT != 0 {
@@ -481,11 +530,13 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
             .collect(),
         attach: label("add_silencer"),
         detach: label("detach_silencer"),
+        hidden_bone: None,
     });
     let mut roles = Roles {
         slashes,
         stab,
         stab_miss,
+        empty: None,
         pullpin,
         throw,
         arm,
@@ -561,6 +612,7 @@ fn source_model(loaded: mdl_source::LoadedModel, images: &mut Assets<Image>) -> 
             uv: v.uv,
             bones: [v.bones[0], v.bones[1], v.bones[2], 0],
             weights: pack_weights(v.weights),
+            tangent: [0.0; 4],
         })
         .collect();
     let draws = studio
@@ -572,6 +624,7 @@ fn source_model(loaded: mdl_source::LoadedModel, images: &mut Assets<Image>) -> 
                 image: handles.get(mesh.material)?.clone()?,
                 first_vertex: mesh.first_vertex as u32,
                 vertex_count: mesh.vertex_count as u32,
+                maps: None,
                 shading: if material.additive {
                     CsViewmodelShading::Additive
                 } else if material.fullbright {
@@ -623,11 +676,13 @@ fn source_model(loaded: mdl_source::LoadedModel, images: &mut Assets<Image>) -> 
             .collect(),
         attach: Some(attach),
         detach: studio.sequence_for_activity("ACT_VM_DETACH_SILENCER"),
+        hidden_bone: None,
     });
     let roles = Roles {
         slashes,
         stab,
         stab_miss,
+        empty: None,
         pullpin,
         throw,
         arm,
@@ -667,20 +722,293 @@ fn source_model(loaded: mdl_source::LoadedModel, images: &mut Assets<Image>) -> 
     }
 }
 
+/// A CS2 skinning matrix as the viewmodel pass takes it (three rows).
+fn rows(m: &mdl_source2::pose::Mat3x4) -> Mat3x4 {
+    let m = &m.0;
+    [
+        [m[0], m[1], m[2], m[3]],
+        [m[4], m[5], m[6], m[7]],
+        [m[8], m[9], m[10], m[11]],
+    ]
+}
+
+/// A CS2 gun's clips in the roles the player needs, by their names (`idle_ak`, `draw_ak`,
+/// `reload_ak`, `shoot1_ak`; guns sharing CS2's default set play `idle_rifle`...).
+fn cs2_roles(viewmodel: &mdl_source2::viewmodel::Viewmodel) -> Roles {
+    // `idle_ak`, not `idle_slide_back_glock` or `idle_from_activity_m249`.
+    let single = |prefix: &str| viewmodel.find(prefix, |name| !name[prefix.len()..].contains('_'));
+    let every = |prefix: &str, skip: &[&str]| -> Vec<usize> {
+        viewmodel
+            .clips
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.name.starts_with(prefix) && !skip.iter().any(|s| c.name.starts_with(s)))
+            .map(|(i, _)| i)
+            .collect()
+    };
+    // The G3SG1 and M249 name theirs `idle1_…`.
+    let idle = single("idle_").or_else(|| single("idle1_"));
+    let (draw, reload) = (single("draw_"), single("reload_"));
+    // The Dual Berettas shoot left and right in turn.
+    let left = every("shoot_left", &["shoot_leftlast"]);
+    let (shoot, shoot_alt) = if left.is_empty() {
+        (
+            every("shoot", &["shoot_empty", "shoot_left", "shoot_right"]),
+            Vec::new(),
+        )
+    } else {
+        (left, every("shoot_right", &["shoot_rightlast"]))
+    };
+    // A pistol's slide locks back on its last shot.
+    let empty = viewmodel.find("idle_slide_back_", |_| true).map(|idle| Empty {
+        idle: Some(idle),
+        reload: viewmodel.find("reload_empty_", |_| true),
+        shoot: viewmodel.find("shoot_empty_", |_| true),
+    });
+    // CS2 keeps one set of clips for a gun with or without its silencer.
+    let silenced = viewmodel.find("silencer_attach", |_| true).map(|attach| Silenced {
+        idle,
+        draw,
+        reload,
+        shoot: shoot.clone(),
+        attach: Some(attach),
+        detach: viewmodel.find("silencer_detach", |_| true),
+        hidden_bone: viewmodel.weapon.bone("silencer").and_then(|bone| {
+            let bind = viewmodel.weapon.inverse_bind.get(bone).copied().flatten()?;
+            let origin = mdl_source2::pose::Mat3x4(bind).inverse().0;
+            Some((viewmodel.arms.bones.len() + bone, [origin[3], origin[7], origin[11]]))
+        }),
+    });
+    Roles {
+        idle,
+        draw,
+        reload,
+        shoot,
+        silenced,
+        shoot_alt,
+        shell_start: None,
+        shell_finish: None,
+        // The knife's light swings, and its heavy one landing or not.
+        slashes: every("light_miss", &[]),
+        pullpin: viewmodel.find("pullpin_", |_| true),
+        throw: viewmodel.find("throw_overhand_", |_| true),
+        // The C4's whole plant: keypad, then down on the ground.
+        arm: viewmodel.find("plant_", |_| true),
+        stab: viewmodel.find("heavy_hit", |_| true),
+        stab_miss: viewmodel.find("heavy_miss", |_| true),
+        empty,
+    }
+}
+
+/// What the viewmodel pass draws of a CS2 gun: the arms' meshes then the gun's as triangle lists
+/// (the gun's bones numbered after the arms'), one draw per material, the clips as sequences
+/// with the sounds their events call for (CS:S's sound of the same name).
+fn cs2_model(
+    decoded: Cs2Decoded,
+    images: &mut Assets<Image>,
+    cache: &mut cs2_assets::Cs2Images,
+) -> LoadedModel {
+    let Cs2Decoded {
+        viewmodel,
+        materials,
+    } = decoded;
+    let handles: HashMap<String, (Handle<Image>, CsViewmodelShading, Option<CsViewmodelMaps>)> =
+        materials
+            .iter()
+            .map(|(name, material)| {
+                let colour = cache.get(&material.colour, true, images);
+                let maps = match (&material.normal, &material.metal) {
+                    (Some(normal), Some(metal)) if !material.alpha_test => {
+                        let ambient_occlusion = match &material.ambient_occlusion {
+                            Some(ao) => cache.get(ao, false, images),
+                            None => cache.no_occlusion(images),
+                        };
+                        Some(CsViewmodelMaps {
+                            normal: cache.get(normal, false, images),
+                            metal: cache.get(metal, false, images),
+                            ambient_occlusion,
+                        })
+                    }
+                    _ => None,
+                };
+                let shading = match (material.shading, &maps) {
+                    (cs2_assets::Cs2Shading::Weapon, Some(_)) => CsViewmodelShading::PbrWeapon,
+                    (cs2_assets::Cs2Shading::Character, Some(_)) => {
+                        CsViewmodelShading::PbrCharacter
+                    }
+                    _ if material.alpha_test => CsViewmodelShading::Lit,
+                    _ => CsViewmodelShading::Opaque,
+                };
+                let maps = maps.filter(|_| {
+                    matches!(
+                        shading,
+                        CsViewmodelShading::PbrWeapon | CsViewmodelShading::PbrCharacter
+                    )
+                });
+                (name.clone(), (colour, shading, maps))
+            })
+            .collect();
+    let mut vertices: Vec<CsViewmodelVertex> = Vec::new();
+    let mut draws = Vec::new();
+    let mut bone_base = 0usize;
+    for model in [&viewmodel.arms, &viewmodel.weapon] {
+        for mesh in &model.meshes {
+            for draw in &mesh.draws {
+                let (Some(vb), Some(ib), Some((image, shading, maps))) = (
+                    mesh.vertex_buffers.get(draw.vertex_buffer),
+                    mesh.index_buffers.get(draw.index_buffer),
+                    handles.get(&draw.material),
+                ) else {
+                    continue;
+                };
+                let first = vertices.len() as u32;
+                let start = (draw.start_index as usize).min(ib.len());
+                let end = (start + draw.index_count as usize).min(ib.len());
+                for triangle in ib[start..end].as_chunks::<3>().0 {
+                    let corners: Option<Vec<_>> = triangle
+                        .iter()
+                        .map(|&i| vb.get((i64::from(i) + i64::from(draw.base_vertex)) as usize))
+                        .collect();
+                    let Some(corners) = corners else { continue };
+                    vertices.extend(corners.into_iter().map(|v| CsViewmodelVertex {
+                        position: v.position,
+                        normal: v.normal,
+                        uv: v.uv,
+                        bones: v.bones.map(|b| {
+                            (usize::from(b) + bone_base).min(render_gpu::CS_VIEWMODEL_MAX_BONES - 2) as u8
+                        }),
+                        weights: v.weights.map(|w| (w.clamp(0.0, 1.0) * 255.0 + 0.5) as u8),
+                        tangent: v.tangent,
+                    }));
+                }
+                draws.push(CsViewmodelDraw {
+                    image: image.clone(),
+                    first_vertex: first,
+                    vertex_count: vertices.len() as u32 - first,
+                    shading: *shading,
+                    maps: maps.clone(),
+                });
+            }
+        }
+        bone_base += model.bones.len();
+    }
+    let mut segments: Vec<Cs2Segment> = viewmodel
+        .clips
+        .iter()
+        .enumerate()
+        .map(|(clip, named)| Cs2Segment {
+            clip,
+            start: 0.0,
+            end: named.clip.duration,
+        })
+        .collect();
+    let mut roles = cs2_roles(&viewmodel);
+    // A shotgun reloads shell by shell: its one reload clip marks where the per-shell loop and
+    // the closing pump begin.
+    if let Some(reload) = roles.reload {
+        let clip = &viewmodel.clips[reload].clip;
+        let marker = |id: &str| {
+            clip.events
+                .iter()
+                .find(|e| e.kind == "ID" && e.name == id)
+                .map(|e| e.time)
+        };
+        if let (Some(insert), Some(outro)) = (marker("WPN_RELOAD_LOOP"), marker("WPN_RELOAD_OUTRO"))
+            && 0.0 < insert
+            && insert < outro
+            && outro < clip.duration
+        {
+            let first = segments.len();
+            for (start, end) in [(0.0, insert), (insert, outro), (outro, clip.duration)] {
+                segments.push(Cs2Segment { clip: reload, start, end });
+            }
+            roles.shell_start = Some(first);
+            roles.reload = Some(first + 1);
+            roles.shell_finish = Some(first + 2);
+        }
+    }
+    let sequences = segments
+        .iter()
+        .map(|segment| {
+            let clip = &viewmodel.clips[segment.clip].clip;
+            let fps = if clip.frames > 1 && clip.duration > 0.0 {
+                (clip.frames - 1) as f32 / clip.duration
+            } else {
+                30.0
+            };
+            let duration = segment.end - segment.start;
+            let whole = segment.end >= clip.duration;
+            SequenceInfo {
+                fps,
+                num_frames: (duration * fps).round() as usize + 1,
+                duration,
+                sounds: clip
+                    .events
+                    .iter()
+                    .filter(|e| {
+                        e.kind == "Sound"
+                            && e.time >= segment.start
+                            && (e.time < segment.end || whole)
+                    })
+                    .map(|e| {
+                        (
+                            (e.time - segment.start) * fps,
+                            format!(
+                                "{}{}",
+                                asset_audio::CSS_SOUND_PREFIX,
+                                e.name.to_ascii_lowercase()
+                            ),
+                        )
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    let attachment = |name: &str| {
+        viewmodel
+            .weapon_attachment(name)
+            .map(|(bone, frame)| (bone, rows(&frame)))
+    };
+    let (muzzle, eject) = (attachment("muzzle_flash"), attachment("shell_eject"));
+    LoadedModel {
+        format: Format::Source2,
+        gpu: Arc::new(CsViewmodelModel {
+            id: NEXT_MODEL_ID.fetch_add(1, Ordering::Relaxed),
+            vertices,
+            draws,
+        }),
+        studio: Studio::Source2(Box::new(viewmodel), segments),
+        sequences,
+        roles,
+        muzzle,
+        eject,
+        goldsrc_right_handed: false,
+    }
+}
+
 /// A viewmodel read and decoded off the main thread; its textures still go into `Assets`.
 enum DecodedModel {
     Source(mdl_source::LoadedModel),
     GoldSrc(mdl_goldsrc::StudioModel),
+    Source2(Box<Cs2Decoded>),
 }
 
-/// Reads and decodes a viewmodel: from the CS:S pack when there is one, else the GoldSrc folders
-/// (Condition Zero's model when it has one, else CS 1.6's).
+/// Reads and decodes a viewmodel: CS2's model when CS2 is installed and the weapon has one, else
+/// from the CS:S pack when there is one, else the GoldSrc folders (Condition Zero's model when it
+/// has one, else CS 1.6's).
 fn decode_model(
+    cs2: Option<(&mdl_source::Vpk, weapon_iw4::cs::Cs2View)>,
     css: Option<&mdl_source::Vpk>,
     goldsrc: Option<&asset_transport::GoldSrcDirs>,
     view_model: &str,
     css_view_model: &str,
 ) -> Result<DecodedModel, String> {
+    if let Some((vpk, view)) = cs2 {
+        match cs2_assets::decode_viewmodel(vpk, view) {
+            Ok(decoded) => return Ok(DecodedModel::Source2(Box::new(decoded))),
+            Err(error) => diag::warn!(World, "cs viewmodel: CS2 {error}; trying the others"),
+        }
+    }
     if let Some(vpk) = css {
         return mdl_source::load_model(vpk, &format!("models/weapons/{css_view_model}.mdl"))
             .map(DecodedModel::Source)
@@ -710,10 +1038,12 @@ fn finish_model(
     name: &str,
     decoded: Result<DecodedModel, String>,
     images: &mut Assets<Image>,
+    cs2_images: &mut cs2_assets::Cs2Images,
 ) -> Option<Arc<LoadedModel>> {
     let model = match decoded {
         Ok(DecodedModel::Source(loaded)) => source_model(loaded, images),
         Ok(DecodedModel::GoldSrc(studio)) => goldsrc_model(studio, images),
+        Ok(DecodedModel::Source2(decoded)) => cs2_model(*decoded, images, cs2_images),
         Err(error) => {
             diag::warn!(World, "cs viewmodel: {error}; MW2 model stays");
             return None;
@@ -731,6 +1061,7 @@ fn finish_model(
 
 /// What the startup read brings back from off the main thread.
 struct Warmup {
+    cs2: Option<Arc<mdl_source::Vpk>>,
     css: Option<Arc<mdl_source::Vpk>>,
     goldsrc: Option<asset_transport::GoldSrcDirs>,
     models: Vec<(&'static str, Result<DecodedModel, String>)>,
@@ -743,6 +1074,16 @@ struct Warmup {
 /// cold disk for most of a second.
 fn warm_up() -> Warmup {
     use weapon_iw4::cs;
+    let cs2 = asset_transport::find_cs2_pak().and_then(|pak| match mdl_source::Vpk::open(&pak) {
+        Ok(vpk) => {
+            diag::info!(World, "cs viewmodels: Counter-Strike 2 from {}", pak.display());
+            Some(Arc::new(vpk))
+        }
+        Err(error) => {
+            diag::warn!(World, "cs viewmodels: CS2: {error}");
+            None
+        }
+    });
     let css = asset_transport::find_css_pak().and_then(|pak| match mdl_source::Vpk::open(&pak) {
         Ok(vpk) => {
             diag::info!(
@@ -783,7 +1124,9 @@ fn warm_up() -> Warmup {
         .chain(pistols)
         .chain(grenades);
         for (name, view_model, css_view_model) in spawn_set {
+            let cs2_gun = cs2.as_deref().zip(cs::cs2_view(name));
             let decoded = decode_model(
+                cs2_gun,
                 css.as_deref(),
                 goldsrc.as_ref(),
                 view_model,
@@ -800,6 +1143,7 @@ fn warm_up() -> Warmup {
         ])
     });
     Warmup {
+        cs2,
         css,
         goldsrc,
         models,
@@ -827,13 +1171,14 @@ impl CsViewmodels {
         {
             let warm = block_on(task);
             self.warmed_up = true;
+            self.cs2 = Some(warm.cs2);
             self.css = Some(warm.css);
             self.goldsrc = Some(warm.goldsrc);
             self.flash_images = Some(warm.flashes.map(|sprites| {
                 sprites.map(|sprite| images.add(image(sprite.width, sprite.height, sprite.rgba)))
             }));
             for (name, decoded) in warm.models {
-                let model = finish_model(name, decoded, images);
+                let model = finish_model(name, decoded, images, &mut self.cs2_images);
                 self.models.insert(name, model);
             }
         }
@@ -845,7 +1190,7 @@ impl CsViewmodels {
             .collect();
         for name in finished {
             if let Some(task) = self.decoding.remove(name) {
-                let model = finish_model(name, block_on(task), images);
+                let model = finish_model(name, block_on(task), images, &mut self.cs2_images);
                 self.models.insert(name, model);
             }
         }
@@ -864,11 +1209,19 @@ impl CsViewmodels {
                 .map_or(ModelLoad::Unavailable, ModelLoad::Ready);
         }
         if self.warmed_up && !self.decoding.contains_key(weapon.name) {
+            let cs2 = self.cs2.clone().flatten();
             let css = self.css.clone().flatten();
             let goldsrc = self.goldsrc.clone().flatten();
             let (view_model, css_view_model) = (weapon.view_model, weapon.css_view_model);
+            let cs2_view = weapon.cs2;
             let task = AsyncComputeTaskPool::get().spawn(async move {
-                decode_model(css.as_deref(), goldsrc.as_ref(), view_model, css_view_model)
+                decode_model(
+                    cs2.as_deref().zip(cs2_view),
+                    css.as_deref(),
+                    goldsrc.as_ref(),
+                    view_model,
+                    css_view_model,
+                )
             });
             self.decoding.insert(weapon.name, task);
         }
@@ -916,10 +1269,10 @@ fn knife_attack_sound(format: Format, knife: u32) -> &'static str {
         stab,
         format,
     ) {
-        (cs_knife::HIT_PLAYER, true, Format::Source) => "css/weapon_knife.stab",
-        (cs_knife::HIT_PLAYER, false, Format::Source) => "css/weapon_knife.hit",
-        (cs_knife::HIT_WORLD, _, Format::Source) => "css/weapon_knife.hitwall",
-        (_, _, Format::Source) => "css/weapon_knife.slash",
+        (cs_knife::HIT_PLAYER, true, Format::Source | Format::Source2) => "css/weapon_knife.stab",
+        (cs_knife::HIT_PLAYER, false, Format::Source | Format::Source2) => "css/weapon_knife.hit",
+        (cs_knife::HIT_WORLD, _, Format::Source | Format::Source2) => "css/weapon_knife.hitwall",
+        (_, _, Format::Source | Format::Source2) => "css/weapon_knife.slash",
         (cs_knife::HIT_PLAYER, true, Format::GoldSrc) => "cs/weapons/knife_stab",
         (cs_knife::HIT_PLAYER, false, Format::GoldSrc) => "cs/weapons/knife_hit1",
         (cs_knife::HIT_WORLD, _, Format::GoldSrc) => "cs/weapons/knife_hitwall1",
@@ -929,7 +1282,7 @@ fn knife_attack_sound(format: Format, knife: u32) -> &'static str {
 
 fn knife_deploy_sound(format: Format) -> &'static str {
     match format {
-        Format::Source => "css/weapon_knife.deploy",
+        Format::Source | Format::Source2 => "css/weapon_knife.deploy",
         Format::GoldSrc => "cs/weapons/knife_deploy1",
     }
 }
@@ -1151,18 +1504,32 @@ pub fn update_cs_viewmodel(
     let now = time.elapsed_secs_f64();
     let reloading = weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
         .is_ok_and(weapon_iw4::WeaponState::is_reload_family);
+    // Rounds in the clip, read as the HUD's ammo counter reads them: a gun whose clip row is not
+    // in the replicated table (the P250's, the Deagle's) counts from the snapshot.
     let clip = weapons.0.facts_of(weapon_index).map_or(0, |facts| {
         let key = weapon_iw4::clip_table_key(facts.clip_index, weapon_index);
         if weapon_iw4::clip_row_present(&ps.ammoclip, key) {
             weapon_iw4::get_clip_for_hand(&ps.ammoclip, key, 0)
         } else {
-            0
+            presented
+                .snapshot()
+                .and_then(|s| s.meta.for_client(local.0))
+                .map_or(0, |meta| meta.ammo_clip)
         }
     });
     let roles = &model.roles;
     // A gun with a silencer plays its silenced or plain set by the replicated bit.
     let silenced = weapon.silencer_bit != 0 && ps.cs_silencers & weapon.silencer_bit != 0;
     let (idle, draw, gun_reload, shoot) = roles.gun(silenced);
+    // An empty pistol idles and reloads with its slide back, and its last shot leaves it there.
+    let (idle, gun_reload, shoot) = match &roles.empty {
+        Some(empty) if clip == 0 => (
+            empty.idle.or(idle),
+            empty.reload.or(gun_reload),
+            empty.shoot.as_ref().map_or(shoot, core::slice::from_ref),
+        ),
+        _ => (idle, gun_reload, shoot),
+    };
     let start = |playing: &mut Playing, sequence: Option<usize>, rate: f32| {
         playing.sequence = sequence;
         playing.started = now;
@@ -1371,10 +1738,28 @@ pub fn update_cs_viewmodel(
     let sway = sway_placement(&mut state, ps, time.delta_secs());
     let CsViewmodels { bones, .. } = &mut *state;
     model.studio.pose(sequence, seconds, bones);
+    // A CS2 silencer that is off shrinks to a point, except while it goes on or comes off.
+    if let Some(silencer) = &roles.silenced
+        && let Some((bone, origin)) = silencer.hidden_bone
+        && !silenced
+        && silencer.attach != Some(sequence)
+        && silencer.detach != Some(sequence)
+        && let Some(m) = bones.get_mut(bone)
+    {
+        let at = [0, 1, 2].map(|r| {
+            m[r][0] * origin[0] + m[r][1] * origin[1] + m[r][2] * origin[2] + m[r][3]
+        });
+        *m = at.map(|t| [0.0, 0.0, 0.0, t]);
+    }
     let mut place = mdl_goldsrc::concat(&sway, &unpunch(recoil_view(ps)));
+    if model.format == Format::Source2 {
+        place = mdl_goldsrc::concat(&CS2_VIEWMODEL_OFFSET, &place);
+    }
     let right_handed = match model.format {
         Format::Source => weapon.css_right_handed,
         Format::GoldSrc => model.goldsrc_right_handed,
+        // CS2 builds its guns right-handed.
+        Format::Source2 => true,
     };
     // `cl_righthand`: mirrored when the model is built for the other hand.
     if right_handed != settings.right_hand {
@@ -1388,7 +1773,7 @@ pub fn update_cs_viewmodel(
     let (tan_half_fov_y, texture_gamma) = match model.format {
         Format::GoldSrc => (GOLDSRC_TAN_HALF_FOV_Y, 0.8),
         // Source's viewmodel fov is horizontal at 4:3 (widened for wider screens like ours).
-        Format::Source => (
+        Format::Source | Format::Source2 => (
             (settings.viewmodel_fov * 0.5).to_radians().tan() * 0.75,
             1.0,
         ),
@@ -1470,6 +1855,7 @@ fn muzzle_flash_quads(
         uv,
         bones: [bone, 0, 0, 0],
         weights: [255, 0, 0, 0],
+        tangent: [0.0; 4],
     };
     let quad = |corners: [[f32; 3]; 4], out: &mut Vec<CsViewmodelVertex>| {
         let uv = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];

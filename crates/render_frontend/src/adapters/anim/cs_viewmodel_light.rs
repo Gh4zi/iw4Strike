@@ -128,6 +128,7 @@ fn light_cs_viewmodel(
     mut sun_visible: Local<f32>,
     mut frame: ResMut<CsViewmodelFrame>,
     mut sun_cache: Local<SunCache>,
+    image_handles: Option<Res<crate::assemble::drawsurf::RuntimeImageHandles>>,
 ) {
     if frame.model.is_none() {
         return;
@@ -135,6 +136,18 @@ fn light_cs_viewmodel(
     let Some(ps) = presented.viewweapon_player(local.0) else {
         return;
     };
+    // The gun is drawn in the view's frame without the recoil punch; so are its lights.
+    let recoil = weapon_iw4::csgo::view_offset(ps.cs_shooting_mode, ps.cs_punch, ps.cs_view_punch);
+    let (forward, right, up) = math_iw4::angle_vectors([
+        ps.viewangles[0] - recoil[0],
+        ps.viewangles[1] - recoil[1],
+        0.0,
+    ]);
+    let to_view = |d: [f32; 3]| {
+        let dot = |a: [f32; 3]| a[0] * d[0] + a[1] * d[1] + a[2] * d[2];
+        [dot(forward), -dot(right), dot(up)]
+    };
+    frame.view_axes = [forward, right.map(|v| -v), up];
     let Some(grid) = scene.as_ref().and_then(|s| s.light_grid.as_ref()) else {
         return;
     };
@@ -144,6 +157,11 @@ fn light_cs_viewmodel(
         ps.viewangles[1],
         ps.leanf,
     );
+    // The reflection probe MW2 lights its own viewmodel with from here (CS2's metal reflects it).
+    frame.reflection = scene.as_ref().and_then(|scene| {
+        let probe = usize::from(scene.reflection_probe_for_lighting_origin(origin));
+        image_handles.as_ref()?.reflection_probes.get(probe)?.clone()
+    });
     let Ok(sample) = asset_model::sample_light_grid(&grid.view(), origin) else {
         return;
     };
@@ -173,16 +191,7 @@ fn light_cs_viewmodel(
     }
     let step = (SUN_FADE_PER_SECOND * time.delta_secs()).min(1.0);
     *sun_visible += (target - *sun_visible) * step;
-    // The gun is drawn in the view's frame without the recoil punch; so is its sun.
-    let recoil = weapon_iw4::csgo::view_offset(ps.cs_shooting_mode, ps.cs_punch, ps.cs_view_punch);
-    let (forward, right, up) = math_iw4::angle_vectors([
-        ps.viewangles[0] - recoil[0],
-        ps.viewangles[1] - recoil[1],
-        0.0,
-    ]);
-    let d = sun.direction;
-    let dot = |a: [f32; 3]| a[0] * d[0] + a[1] * d[1] + a[2] * d[2];
-    frame.sun_dir = [dot(forward), -dot(right), dot(up)];
+    frame.sun_dir = to_view(sun.direction);
     let strength = *sun_visible * sun.diffuse_color_scale * SUN_SCALE;
     frame.sun = sun.color.map(|c| c * strength);
 }

@@ -33,7 +33,7 @@ use bevy::render::view::{
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::Shader;
 
-use super::cs_viewmodel::{CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex};
+use super::cs_viewmodel::{CsViewmodelModel, CsViewmodelVertex};
 use super::depth_range::{GFX_DEPTH_RANGE_SCENE, reverse_z_viewport_depth};
 use super::scene_depth::{SCENE_DEPTH_FORMAT, SceneDepthTexture};
 
@@ -302,7 +302,7 @@ fn draw_cs_world_models(
                 CsWorldModelPipelineKey {
                     target: extracted_view.target_format,
                     samples: msaa.samples(),
-                    fullbright: draw.shading != CsViewmodelShading::Lit,
+                    fullbright: !draw.shading.is_lit(),
                 },
             );
             if cache.get_render_pipeline(id).is_none() {

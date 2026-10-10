@@ -70,7 +70,32 @@ pub struct Sequence {
     pub looping: bool,
     pub num_frames: usize,
     pub events: Vec<Event>,
+    /// The animations the sequence blends between (`StudioModel::animations` indices), a
+    /// `blend_size.0` × `blend_size.1` grid row by row (an aim matrix is 3 × 3); one for most.
+    pub blends: Vec<usize>,
+    pub blend_size: (usize, usize),
     frames: Vec<BoneFrame>,
+}
+
+/// One decoded animation (`mstudioanimdesc_t`): `[frame][bone]` local transforms. A delta
+/// animation's transforms are offsets to compose onto another pose (identity where it leaves a
+/// bone alone).
+#[derive(Clone, Debug)]
+pub struct Animation {
+    pub fps: f32,
+    pub num_frames: usize,
+    pub delta: bool,
+    frames: Vec<BoneFrame>,
+}
+
+impl Animation {
+    /// Frame `frame`'s local transform for every bone (the last frame past the end).
+    #[must_use]
+    pub fn frame(&self, frame: usize) -> &[BoneFrame] {
+        let bones = self.frames.len() / self.num_frames.max(1);
+        let frame = frame.min(self.num_frames.saturating_sub(1));
+        &self.frames[frame * bones..(frame + 1) * bones]
+    }
 }
 
 impl Sequence {
@@ -125,6 +150,8 @@ pub struct StudioModel {
     pub vertices: Vec<Vertex>,
     pub attachments: Vec<Attachment>,
     pub body_parts: Vec<BodyPart>,
+    /// Every animation the sequences use.
+    pub animations: Vec<Animation>,
 }
 
 struct R<'a>(&'a [u8]);
@@ -194,9 +221,14 @@ impl StudioModel {
         }
         let name = r.cstr(12)?;
         let (bones, defaults) = parse_bones(&r)?;
-        let sequences = parse_sequences(&r, &defaults)?;
+        let (sequences, animations) = parse_sequences(&r, &defaults)?;
         let (materials, material_dirs, skin) = parse_materials(&r)?;
-        let (meshes, vertices) = parse_geometry(&r, &R(vvd), &R(vtx), &skin)?;
+        // An animation-only model (`cs_player_shared.mdl`) comes without its geometry files.
+        let (meshes, vertices) = if vvd.is_empty() && vtx.is_empty() {
+            (Vec::new(), Vec::new())
+        } else {
+            parse_geometry(&r, &R(vvd), &R(vtx), &skin)?
+        };
         let attachments = parse_attachments(&r, &bones).unwrap_or_default();
         let body_parts = parse_body_parts(&r).unwrap_or_default();
         Ok(Self {
@@ -209,7 +241,23 @@ impl StudioModel {
             vertices,
             attachments,
             body_parts,
+            animations,
         })
+    }
+
+    /// Model-space bone matrices for local transforms `locals` (one per bone).
+    #[must_use]
+    pub fn world_from_locals(&self, locals: &[BoneFrame]) -> Vec<Mat3x4> {
+        let mut world: Vec<Mat3x4> = Vec::with_capacity(self.bones.len());
+        for (bone, local) in self.bones.iter().zip(locals) {
+            let local = matrix(local.rotation, local.position);
+            let w = match bone.parent {
+                Some(p) if p < world.len() => concat(&world[p], &local),
+                _ => local,
+            };
+            world.push(w);
+        }
+        world
     }
 
     /// The body part named `name` (case-insensitive) and the index of its model named `model`.
@@ -471,21 +519,28 @@ fn quat64(r: &R<'_>, at: usize) -> Result<[f32; 4], String> {
 }
 
 /// Decode one animation into `[frame][bone]` local transforms.
-fn decode_animation(
-    r: &R<'_>,
-    desc: usize,
-    defaults: &[BoneDefaults],
-) -> Result<(f32, usize, Vec<BoneFrame>), String> {
+fn decode_animation(r: &R<'_>, desc: usize, defaults: &[BoneDefaults]) -> Result<Animation, String> {
     let fps = r.f32(desc + 8)?;
+    // `STUDIO_DELTA`: offsets to another pose; bones it leaves alone stay put.
+    let delta_anim = r.i32(desc + 12)? & 0x4 != 0;
     let num_frames = r.usize(desc + 16)?.max(1);
     let anim_block = r.i32(desc + 52)?;
     let anim_index = r.i32(desc + 56)?;
     let bones = defaults.len();
     let rest: Vec<BoneFrame> = defaults
         .iter()
-        .map(|d| BoneFrame {
-            position: d.pos,
-            rotation: d.quat,
+        .map(|d| {
+            if delta_anim {
+                BoneFrame {
+                    position: [0.0; 3],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                }
+            } else {
+                BoneFrame {
+                    position: d.pos,
+                    rotation: d.quat,
+                }
+            }
         })
         .collect();
     let mut frames = Vec::with_capacity(num_frames * bones);
@@ -494,7 +549,12 @@ fn decode_animation(
         for _ in 0..num_frames {
             frames.extend_from_slice(&rest);
         }
-        return Ok((fps, num_frames, frames));
+        return Ok(Animation {
+            fps,
+            num_frames,
+            delta: delta_anim,
+            frames,
+        });
     }
     let first = r.rel(desc, 56)?;
     for frame in 0..num_frames {
@@ -561,10 +621,18 @@ fn decode_animation(
         }
         frames.extend_from_slice(&pose);
     }
-    Ok((fps, num_frames, frames))
+    Ok(Animation {
+        fps,
+        num_frames,
+        delta: delta_anim,
+        frames,
+    })
 }
 
-fn parse_sequences(r: &R<'_>, defaults: &[BoneDefaults]) -> Result<Vec<Sequence>, String> {
+fn parse_sequences(
+    r: &R<'_>,
+    defaults: &[BoneDefaults],
+) -> Result<(Vec<Sequence>, Vec<Animation>), String> {
     let anim_count = r.usize(180)?;
     let anim_base = r.usize(184)?;
     let mut animations = Vec::with_capacity(anim_count);
@@ -583,6 +651,13 @@ fn parse_sequences(r: &R<'_>, defaults: &[BoneDefaults]) -> Result<Vec<Sequence>
         let event_base = r.rel(at, 28)?;
         let anim_slot = r.rel(at, 60)?;
         let anim = usize::try_from(r.i16(anim_slot)?).unwrap_or(0);
+        let blend_size = (
+            usize::try_from(r.i32(at + 68)?).unwrap_or(1).clamp(1, 16),
+            usize::try_from(r.i32(at + 72)?).unwrap_or(1).clamp(1, 16),
+        );
+        let blends = (0..blend_size.0 * blend_size.1)
+            .map(|i| Ok(usize::try_from(r.i16(anim_slot + i * 2)?).unwrap_or(0)))
+            .collect::<Result<Vec<_>, String>>()?;
         let events = (0..event_count)
             .map(|e| {
                 let ev = event_base + e * EVENT_LEN;
@@ -593,7 +668,12 @@ fn parse_sequences(r: &R<'_>, defaults: &[BoneDefaults]) -> Result<Vec<Sequence>
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let (fps, num_frames, frames) = animations
+        let Animation {
+            fps,
+            num_frames,
+            frames,
+            ..
+        } = animations
             .get(anim)
             .cloned()
             .ok_or_else(|| format!("sequence {label} names animation {anim}"))?;
@@ -604,10 +684,12 @@ fn parse_sequences(r: &R<'_>, defaults: &[BoneDefaults]) -> Result<Vec<Sequence>
             looping: flags & 1 != 0,
             num_frames,
             events,
+            blends,
+            blend_size,
             frames,
         });
     }
-    Ok(sequences)
+    Ok((sequences, animations))
 }
 
 /// Material names, search directories, and the skin family 0 table (mesh material → name).

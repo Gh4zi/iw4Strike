@@ -37,10 +37,18 @@ pub struct GameSettings {
     pub viewmodel_fov: f32,
     /// `cl_righthand`: the CS gun is held in the right hand (false: the left).
     pub right_hand: bool,
+    /// `cl_camera_anim`: with a CS gun in hand, the MW2 weapon animations underneath still move
+    /// the view (their camera bone shakes the head on draws and reloads). Off by default.
+    pub camera_anim: bool,
     /// Movement preset (`mv_mode`): csgo, surf, mmod or cs16.
     pub mv_mode: String,
     /// How CS guns shoot when this game is the server (`shooting_mode`): csgo or cs16.
     pub shooting_mode: String,
+    /// How smoke grenades look when this game is the server (`smoke_mode`): cs2 (volumetric)
+    /// or csgo (particle smoke).
+    pub smoke_mode: String,
+    /// How finely this game draws CS2 smoke (`smoke_quality`, see [`SmokeQuality`]).
+    pub smoke_quality: String,
     /// Map destructibles (cars, barrels) take damage (`sv_destructibles`); off for CS play.
     pub destructibles: bool,
     pub third_person: bool,
@@ -98,10 +106,10 @@ pub struct GameSettings {
     /// Game folders from the game folders window (`game_path_mw2/css/cz/cs16`, in
     /// `asset_transport::GameFolder::index` order), kept as read so a
     /// save writes them back; `None` until that window first saved them.
-    pub game_paths: Option<[String; 4]>,
+    pub game_paths: Option<[String; 5]>,
     /// Whether each game is used (`use_css` / `use_cz` / `use_cs16`, the window's "Use" boxes),
     /// same order, kept as read for the same reason; `None` when the file has no such line.
-    pub game_used: Option<[bool; 4]>,
+    pub game_used: Option<[bool; 5]>,
 
     pub revision: u64,
 }
@@ -116,8 +124,11 @@ impl Default for GameSettings {
             fov: Self::FOV_DEFAULT,
             viewmodel_fov: Self::VIEWMODEL_FOV_DEFAULT,
             right_hand: true,
+            camera_anim: false,
             mv_mode: "csgo".to_owned(),
             shooting_mode: "csgo".to_owned(),
+            smoke_mode: "cs2".to_owned(),
+            smoke_quality: "high".to_owned(),
             destructibles: false,
             third_person: false,
             master_volume: 1.0,
@@ -238,5 +249,29 @@ impl GameSettings {
         if self.player_name.is_empty() {
             self.player_name = "Player".to_owned();
         }
+    }
+}
+
+/// `smoke_quality`: how finely this game draws CS2 smoke, against what it costs. Each player's
+/// own; the smoke covers the same space at every level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SmokeQuality {
+    /// Every pixel: the sharpest billows and edges.
+    #[default]
+    High,
+    /// Half resolution: about a quarter of the cost.
+    Medium,
+    /// Half resolution in coarser steps: the cheapest.
+    Low,
+}
+
+impl SmokeQuality {
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        let name = name.trim();
+        [("high", Self::High), ("medium", Self::Medium), ("low", Self::Low)]
+            .into_iter()
+            .find(|(n, _)| name.eq_ignore_ascii_case(n))
+            .map(|(_, quality)| quality)
     }
 }

@@ -1,6 +1,7 @@
 mod destructible;
 mod dobj;
 mod dobj_runtime;
+mod hold_stance;
 mod player_body;
 mod retained;
 mod semantic;
@@ -17,6 +18,10 @@ pub use dobj::{
     tp_head_attach_tag, tp_weapon_attach_tag, yaw_bone,
 };
 pub use dobj_runtime::{DObjAnimRuntime, DObjReuseKey, model_token, reuse_matches};
+pub use hold_stance::{
+    ArmJoints, ArmStance, HoldKind, HoldStance, apply_hold_stance, hold_stance,
+    install_hold_stances, torso_frame,
+};
 pub use retained::{
     BoneCollision, CollSurfCollision, CollTri, CollisionBone, DObjPoseRequest, MaterializeError,
     ModelMovementBrush, RetainedModelCapability, collision_bone_from_local_box,

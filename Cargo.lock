@@ -454,8 +454,11 @@ dependencies = [
  "fastfile_iw5",
  "fastfile_t5",
  "frame",
+ "glam",
  "libc",
  "lighting_iw4",
+ "mdl_source",
+ "mdl_source2",
  "movement_iw4",
  "png",
  "render_material",
@@ -4033,6 +4036,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
+name = "lz4_flex"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
+
+[[package]]
 name = "mach2"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4084,6 +4093,16 @@ name = "mdl_source"
 version = "0.1.0"
 dependencies = [
  "mdl_goldsrc",
+]
+
+[[package]]
+name = "mdl_source2"
+version = "0.1.0"
+dependencies = [
+ "lz4_flex",
+ "mdl_source",
+ "png",
+ "ruzstd",
 ]
 
 [[package]]
@@ -5327,6 +5346,7 @@ dependencies = [
  "math_iw4",
  "mdl_goldsrc",
  "mdl_source",
+ "mdl_source2",
  "movement_iw4",
  "net",
  "perf",
@@ -5384,6 +5404,7 @@ dependencies = [
  "audio",
  "bevy",
  "bytemuck",
+ "clipmap_iw4",
  "d3d9_sm3",
  "d3d9_state",
  "diag",
@@ -5407,6 +5428,7 @@ dependencies = [
  "render_material",
  "render_scene",
  "sim",
+ "trace_iw4",
  "weapon_iw4",
  "xmodel_runtime",
 ]
@@ -5722,6 +5744,15 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "ruzstd"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
+dependencies = [
+ "twox-hash",
+]
 
 [[package]]
 name = "ryu"
@@ -6690,6 +6721,12 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "typeid"

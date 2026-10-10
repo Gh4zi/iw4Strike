@@ -156,6 +156,49 @@ pub fn steam_css_pak() -> Option<PathBuf> {
     None
 }
 
+/// Environment override naming Counter-Strike 2's `game/csgo` folder.
+pub const CS2_ENV: &str = "IW4L_CS2";
+
+/// `IW4L_CS2` from the environment or `.env`, when set.
+#[must_use]
+pub fn cs2_env_override() -> Option<String> {
+    env_or_dotenv(CS2_ENV).filter(|dir| !dir.trim().is_empty())
+}
+
+/// Counter-Strike 2's main pack (`game/csgo/pak01_dir.vpk`): `IW4L_CS2` (its `game/csgo`
+/// folder) when set, else the folder saved in the game folders window, else
+/// `steamapps/common/Counter-Strike Global Offensive/game/csgo` in any Steam library — unless the
+/// player turned it off in the window.
+#[must_use]
+pub fn find_cs2_pak() -> Option<PathBuf> {
+    if crate::game_paths::turned_off(GameFolder::Cs2) {
+        return None;
+    }
+    let pak_in = |dir: &Path| {
+        crate::game_paths::is_cs2_game_folder(dir).then(|| dir.join(crate::game_paths::CS2_PAK))
+    };
+    if let Some(dir) = cs2_env_override() {
+        return pak_in(Path::new(&dir));
+    }
+    saved(GameFolder::Cs2)
+        .and_then(|dir| pak_in(&dir))
+        .or_else(steam_cs2_pak)
+}
+
+/// Counter-Strike 2's pack in a Steam library (CS2 installs where CS:GO did).
+#[must_use]
+pub fn steam_cs2_pak() -> Option<PathBuf> {
+    steam_libraries().into_iter().find_map(|library| {
+        let dir = library
+            .join("steamapps")
+            .join("common")
+            .join("Counter-Strike Global Offensive")
+            .join("game")
+            .join("csgo");
+        crate::game_paths::is_cs2_game_folder(&dir).then(|| dir.join(crate::game_paths::CS2_PAK))
+    })
+}
+
 /// Environment override naming a Counter-Strike 1.6 `cstrike` folder.
 pub const CSTRIKE_ENV: &str = "IW4L_CSTRIKE";
 

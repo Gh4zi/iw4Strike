@@ -13,7 +13,9 @@ use bevy::core_pipeline::{Core3d, Core3dSystems};
 use bevy::mesh::VertexBufferLayout;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::binding_types::{sampler, texture_2d, uniform_buffer_sized};
+use bevy::render::render_resource::binding_types::{
+    sampler, texture_2d, texture_cube, uniform_buffer_sized,
+};
 use bevy::render::render_resource::{
     BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendComponent,
     BlendFactor, BlendOperation, BlendState, Buffer, BufferDescriptor, BufferInitDescriptor,
@@ -22,7 +24,8 @@ use bevy::render::render_resource::{
     RenderPassDepthStencilAttachment, RenderPipelineDescriptor, SamplerBindingType, ShaderStages,
     SpecializedRenderPipeline, SpecializedRenderPipelines, StoreOp, TextureDescriptor,
     TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-    TextureViewDescriptor, VertexAttribute, VertexFormat, VertexState, VertexStepMode,
+    TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexFormat, VertexState,
+    VertexStepMode,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::texture::GpuImage;
@@ -33,14 +36,15 @@ use bevy::shader::Shader;
 const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/cs_viewmodel.wgsl";
 /// Bones a frame can carry (GoldSrc's `MAXSTUDIOBONES`).
 pub const CS_VIEWMODEL_MAX_BONES: usize = 128;
-const PARAMS_HEADER: u64 = 96;
+const PARAMS_HEADER: u64 = 160;
 const PARAMS_SIZE: u64 = PARAMS_HEADER + CS_VIEWMODEL_MAX_BONES as u64 * 48;
 const DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32Float;
 /// Near plane in view-space units (GoldSrc units).
 const NEAR: f32 = 1.0;
 
-/// One model vertex in bind space, skinned by up to three bones (`bones` bytes 0-2) with
-/// `weights` (bytes 0-2, 255 = 1.0).
+/// One model vertex in bind space, skinned by up to four bones (`bones` bytes) with `weights`
+/// (255 = 1.0; GoldSrc and Source models leave the fourth at 0). `tangent` (w: the bitangent's
+/// sign) orients CS2's normal maps; the others leave it zero.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CsViewmodelVertex {
@@ -49,15 +53,43 @@ pub struct CsViewmodelVertex {
     pub uv: [f32; 2],
     pub bones: [u8; 4],
     pub weights: [u8; 4],
+    pub tangent: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CsViewmodelShading {
     Lit,
+    /// Lit, with the texture's alpha ignored: CS2's colour textures keep masks there, not cutouts.
+    Opaque,
     Fullbright,
     Additive,
     /// Muzzle flash sprites: additive, texture times the vertex normal (used as a tint).
     Flash,
+    /// CS2's guns: colour, normal, roughness and metalness, and occlusion maps
+    /// ([`CsViewmodelDraw::maps`]), lit with reflections; roughness is the metal map's red.
+    PbrWeapon,
+    /// CS2's arms: as [`Self::PbrWeapon`], with roughness in the normal map's blue.
+    PbrCharacter,
+}
+
+impl CsViewmodelShading {
+    /// Lit by the map's light (not drawn at full brightness or added).
+    #[must_use]
+    pub fn is_lit(self) -> bool {
+        matches!(
+            self,
+            Self::Lit | Self::Opaque | Self::PbrWeapon | Self::PbrCharacter
+        )
+    }
+}
+
+/// A CS2 material's maps besides its colour.
+#[derive(Clone, Debug)]
+pub struct CsViewmodelMaps {
+    pub normal: Handle<Image>,
+    /// Roughness (red) and metalness (green).
+    pub metal: Handle<Image>,
+    pub ambient_occlusion: Handle<Image>,
 }
 
 /// Muzzle flash quads for one texture, already in view space: each vertex rides the identity
@@ -74,6 +106,8 @@ pub struct CsViewmodelDraw {
     pub first_vertex: u32,
     pub vertex_count: u32,
     pub shading: CsViewmodelShading,
+    /// The maps of a [`CsViewmodelShading::PbrWeapon`] or `PbrCharacter` draw.
+    pub maps: Option<CsViewmodelMaps>,
 }
 
 /// A model's GPU-side description, built once when the model loads.
@@ -100,6 +134,11 @@ pub struct CsViewmodelFrame {
     /// Direction toward the sun in view space and its colour (zero when the gun is in shadow).
     pub sun_dir: [f32; 3],
     pub sun: [f32; 3],
+    /// The view's axes in the world (forward, left, up): CS2's metal reflects the map's reflection
+    /// probe by world direction, and a brighter sky above than ground below without one.
+    pub view_axes: [[f32; 3]; 3],
+    /// The map's reflection probe (a cube map) for where the gun is, which CS2's metal reflects.
+    pub reflection: Option<Handle<Image>>,
     /// Exponent applied to texture colour: GoldSrc's texture gamma 0.8, 1 for Source.
     pub texture_gamma: f32,
     /// Muzzle flash sprites drawn over the gun this frame.
@@ -118,6 +157,8 @@ struct CsViewmodelPipeline {
     shader: Handle<Shader>,
     layout: BindGroupLayoutDescriptor,
     params: Buffer,
+    /// Bound in place of a reflection probe when the map gives none.
+    no_reflection: TextureView,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -147,9 +188,12 @@ impl SpecializedRenderPipeline for CsViewmodelPipeline {
         );
         let fragment = match key.shading {
             CsViewmodelShading::Lit => "fs_viewmodel",
+            CsViewmodelShading::Opaque => "fs_viewmodel_opaque",
             CsViewmodelShading::Fullbright => "fs_viewmodel_fullbright",
             CsViewmodelShading::Additive => "fs_viewmodel_additive",
             CsViewmodelShading::Flash => "fs_viewmodel_flash",
+            CsViewmodelShading::PbrWeapon => "fs_viewmodel_pbr_weapon",
+            CsViewmodelShading::PbrCharacter => "fs_viewmodel_pbr_character",
         };
         let add = BlendComponent {
             src_factor: BlendFactor::One,
@@ -192,6 +236,11 @@ impl SpecializedRenderPipeline for CsViewmodelPipeline {
                             format: VertexFormat::Unorm8x4,
                             offset: 36,
                             shader_location: 4,
+                        },
+                        VertexAttribute {
+                            format: VertexFormat::Float32x4,
+                            offset: 40,
+                            shader_location: 5,
                         },
                     ],
                 }],
@@ -238,7 +287,27 @@ fn init_pipeline(
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    let no_reflection = device
+        .create_texture(&TextureDescriptor {
+            label: Some("cs_viewmodel_no_reflection"),
+            size: Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 6,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::Cube),
+            ..default()
+        });
     commands.insert_resource(CsViewmodelPipeline {
+        no_reflection,
         shader: asset_server.load(SHADER_PATH),
         layout: BindGroupLayoutDescriptor::new(
             "cs_viewmodel_layout",
@@ -248,6 +317,13 @@ fn init_pipeline(
                     uniform_buffer_sized(false, NonZeroU64::new(PARAMS_SIZE)),
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
+                    // CS2's normal, roughness and metalness, and occlusion maps (the colour
+                    // texture stands in for draws without them).
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    // The map's reflection probe.
+                    texture_cube(TextureSampleType::Float { filterable: true }),
                 ),
             ),
         ),
@@ -318,7 +394,19 @@ fn prepare_cs_viewmodel(
     ] {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
+    let axes = if frame.view_axes == [[0.0; 3]; 3] {
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    } else {
+        frame.view_axes
+    };
     for colour in [frame.ambient, frame.shade, frame.sun_dir, frame.sun] {
+        for v in [colour[0], colour[1], colour[2], 0.0] {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    // The axes, then whether a reflection probe is bound.
+    let reflection = [f32::from(u8::from(frame.reflection.is_some())), 0.0, 0.0];
+    for colour in [axes[0], axes[1], axes[2], reflection] {
         for v in [colour[0], colour[1], colour[2], 0.0] {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
@@ -384,10 +472,30 @@ fn draw_cs_viewmodel(
 
     let format = target.main_texture_format();
     let layout = cache.get_bind_group_layout(&pipeline.layout);
+    let reflection = extracted
+        .0
+        .reflection
+        .as_ref()
+        .and_then(|probe| images.get(probe))
+        .map_or(&pipeline.no_reflection, |probe| &probe.texture_view);
     let mut prepared = Vec::with_capacity(model.draws.len());
     for draw in &model.draws {
         let Some(image) = images.get(&draw.image) else {
             continue;
+        };
+        // A CS2 draw waits for all its maps.
+        let maps = match &draw.maps {
+            Some(maps) => {
+                let (Some(normal), Some(metal), Some(ao)) = (
+                    images.get(&maps.normal),
+                    images.get(&maps.metal),
+                    images.get(&maps.ambient_occlusion),
+                ) else {
+                    continue;
+                };
+                [&normal.texture_view, &metal.texture_view, &ao.texture_view]
+            }
+            None => [&image.texture_view; 3],
         };
         let id = specialized.specialize(
             &cache,
@@ -407,6 +515,10 @@ fn draw_cs_viewmodel(
                 pipeline.params.as_entire_buffer_binding(),
                 &image.texture_view,
                 &image.sampler,
+                maps[0],
+                maps[1],
+                maps[2],
+                reflection,
             )),
         );
         prepared.push((id, bind, draw));
@@ -442,6 +554,10 @@ fn draw_cs_viewmodel(
                     pipeline.params.as_entire_buffer_binding(),
                     &image.texture_view,
                     &image.sampler,
+                    &image.texture_view,
+                    &image.texture_view,
+                    &image.texture_view,
+                    reflection,
                 )),
             );
             Some((bind, start, count))

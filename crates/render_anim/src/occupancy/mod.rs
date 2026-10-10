@@ -1,5 +1,6 @@
 pub mod cs_bomb;
 pub mod cs_scope;
+pub(crate) mod cs2_assets;
 pub mod cs_viewmodel;
 pub mod cs_world_model;
 pub mod dyn_ent;

@@ -137,9 +137,12 @@ pub(crate) fn register_combat_fx_systems(app: &mut App) {
             Update,
             (
                 drain_weapon_fire_fx,
+                tunnel_cs_smokes,
                 drain_bullet_hit_fx,
+                bleed_on_world,
                 drain_pellet_fx,
                 present_tracker_light,
+                super::cs_smoke::update_cs_smokes,
             )
                 .chain()
                 .after(render_anim::occupancy::fpv_present::publish_fpv_dobj_pose)
@@ -151,10 +154,12 @@ pub(crate) fn register_combat_fx_systems(app: &mut App) {
             Update,
             tick_missile_present_state.in_set(ClientSet::Effects),
         )
+        .init_resource::<super::cs_smoke::CsSmokes>()
         .add_observer(queue_weapon_fire_fx)
         .add_observer(eject_brass)
         .add_observer(explosion)
         .add_observer(stop_killcam_explosion_fx)
+        .add_observer(clear_cs_smokes_for_killcam)
         .add_observer(play_fx)
         .add_observer(play_fx_bullet_hit)
         .add_observer(melee_blood);
@@ -2571,10 +2576,25 @@ fn explosion(
     mut sounds: Option<ResMut<Messages<audio::WeaponSound>>>,
     mut cursor: ResMut<FxJournalCursor>,
     mut combat: ResMut<CombatFxDump>,
+    mut smokes: ResMut<super::cs_smoke::CsSmokes>,
     fx_world: FxSceneAccess,
 ) {
     let msec = host.0.msec_now;
     let payload = explosion.event.payload;
+    let cs_grenade = weapons
+        .as_deref()
+        .and_then(|weapons| {
+            weapon_iw4::cs::cs_grenade_for_projectile(&weapons.0.script_name_of(payload.weapon))
+        })
+        .map(|grenade| grenade.name);
+    let smoke = cs_grenade == Some("smokegrenade");
+    // CS2's smoke is the client's own cloud, not MW2's particle smoke.
+    let volumetric = smoke && payload.event_parm == weapon_iw4::cs::CS_SMOKE_VOLUME_PARM;
+    if volumetric {
+        smokes.pop(payload.origin, msec);
+    } else if !smoke && cs_grenade != Some("flashbang") {
+        smokes.blast(payload.origin, msec);
+    }
     let impact_type = weapons
         .as_deref()
         .and_then(|weapons| weapons.0.facts_of(payload.weapon))
@@ -2603,7 +2623,7 @@ fn explosion(
     } else {
         axis_from_hit_normal(payload.direction)
     };
-    if let Some(catalog) = catalog.as_deref() {
+    if let Some(catalog) = catalog.as_deref().filter(|_| !volumetric) {
         elem_infos.0.sync(&catalog.0);
         let mut boom_played = cursor.boom_played;
         let table_ok = try_play_weapon_fx_at_origin(
@@ -2633,17 +2653,11 @@ fn explosion(
         if !table_ok && !slot_ok {
             cursor.explosion_gap = cursor.explosion_gap.saturating_add(1);
         }
-    } else {
+    } else if !volumetric {
         cursor.explosion_gap = cursor.explosion_gap.saturating_add(1);
     }
     // The second firing of a CS smoke's cloud only keeps the cloud going: no sound.
-    let refire = payload.event_parm == weapon_iw4::cs::CS_SMOKE_REFIRE_PARM
-        && weapons
-            .as_deref()
-            .and_then(|weapons| {
-                weapon_iw4::cs::cs_grenade_for_projectile(&weapons.0.script_name_of(payload.weapon))
-            })
-            .is_some_and(|grenade| grenade.name == "smokegrenade");
+    let refire = smoke && payload.event_parm == weapon_iw4::cs::CS_SMOKE_REFIRE_PARM;
     let alias = weapons
         .as_deref()
         .zip(sound_bank.as_deref())
@@ -2912,6 +2926,169 @@ fn play_fx(
                 fx_spawn_def: Some(def_name),
             },
         );
+    }
+}
+
+/// Bullets tunnel through CS2 smoke: every shot segment of this frame, the server's and our own
+/// predicted ones (read before `drain_pellet_fx` takes them).
+fn tunnel_cs_smokes(
+    mut hits: MessageReader<BulletHitFx>,
+    pellets: Res<PendingPelletFx>,
+    host: Res<HostFxSystem>,
+    mut smokes: ResMut<super::cs_smoke::CsSmokes>,
+) {
+    let now = host.0.msec_now;
+    for hit in hits.read() {
+        if hit.0.origin2 != [0.0; 3] {
+            smokes.bullet(hit.0.origin2, hit.0.origin, now);
+        }
+    }
+    for pellet in &pellets.0 {
+        smokes.bullet(pellet.start, pellet.end, now);
+    }
+}
+
+/// The killcam replays its own smokes; the live ones are dropped on the way in and out.
+fn clear_cs_smokes_for_killcam(
+    _transition: On<net::KillcamFxTransition>,
+    mut smokes: ResMut<super::cs_smoke::CsSmokes>,
+) {
+    smokes.clear();
+}
+
+/// Blood splattered on the walls and floor behind a player a bullet hits, as Counter-Strike does
+/// it (`TraceBleed`): one to four traces in the shot's direction, scattered more the harder the
+/// hit, up to 172 units past the wound; each that meets the world leaves MW2's blood splatter.
+const BLEED_DISTANCE: f32 = 172.0;
+const BLEED_SPLAT_FX: &str = "impacts/flesh_hit_splat";
+
+/// How many traces a hit of `damage` makes and how far each strays (CS's damage bands).
+fn bleed_traces(damage: f32) -> (u32, f32) {
+    if damage < 10.0 {
+        (1, 0.1)
+    } else if damage < 25.0 {
+        (2, 0.2)
+    } else {
+        (4, 0.3)
+    }
+}
+
+/// The damage a hit counts as for its blood: the CS gun's per-bullet damage (four times it in the
+/// head), or a rifle's when the weapon is not a CS gun.
+fn bleed_damage(weapons: Option<&PreparedWeapons>, weapon: u32, head: bool) -> f32 {
+    let base = weapons
+        .and_then(|w| weapon_iw4::cs::cs_weapon_index_for(&w.0.script_name_of(weapon)))
+        .and_then(weapon_iw4::cs::cs_weapon)
+        .map_or(30.0, |cs| cs.damage);
+    if head { base * 4.0 } else { base }
+}
+
+/// A repeatable spread in `-1..1` for one trace of one bullet (the same on every replay).
+fn bleed_noise(correlation: u32, pellet: u32, trace: u32, axis: u32) -> f32 {
+    let mut x = correlation
+        .wrapping_mul(0x9E37_79B1)
+        ^ pellet.wrapping_mul(0x85EB_CA77)
+        ^ trace.wrapping_mul(0xC2B2_AE3D)
+        ^ axis.wrapping_mul(0x27D4_EB2F);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    x = x.wrapping_mul(0x297A_2D39);
+    x ^= x >> 15;
+    (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+}
+
+/// A bullet's entry into something: where it came from and went in, what it met, and which
+/// shot and pellet it was.
+struct BleedHit {
+    start: [f32; 3],
+    end: [f32; 3],
+    surf_type: u8,
+    surface_flags: u32,
+    flesh_flags: u32,
+    weapon: u32,
+    correlation: u32,
+    pellet: u32,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bleed_on_world(
+    mut hits: MessageReader<BulletHitFx>,
+    pellets: Res<PendingPelletFx>,
+    clip: Res<crate::adapters::anim::dyn_ent::DynEntPhysClip>,
+    weapons: Option<Res<PreparedWeapons>>,
+    catalog: Option<Res<PreparedFxCatalog>>,
+    mut elem_infos: ResMut<PreparedFxElemInfos>,
+    mut host: ResMut<HostFxSystem>,
+    mut cursor: ResMut<FxJournalCursor>,
+    fx_world: FxSceneAccess,
+) {
+    let (Some(world), Some(catalog)) = (clip.0.as_ref(), catalog) else {
+        hits.clear();
+        return;
+    };
+    // Rifles' and pistols' hits come as events, shotguns' pellets as records.
+    let bullets = hits.read().map(|hit| BleedHit {
+        start: hit.0.origin2,
+        end: hit.0.origin,
+        surf_type: hit.0.surf_type,
+        surface_flags: hit.0.surface_flags,
+        flesh_flags: hit.0.event_parm as u32,
+        weapon: hit.0.weapon,
+        correlation: hit.0.correlation,
+        pellet: hit.0.pellet.into(),
+    });
+    let pellets = pellets.0.iter().map(|p| BleedHit {
+        start: p.start,
+        end: p.end,
+        surf_type: p.surf_type,
+        surface_flags: p.surface_flags,
+        flesh_flags: p.flesh_flags.into(),
+        weapon: p.weapon,
+        correlation: p.correlation,
+        pellet: p.pellet.into(),
+    });
+    for payload in bullets.chain(pellets) {
+        // Bullets entering a body (flesh is only ever a player's): exits bleed on the way in.
+        let exit = payload.surface_flags & fx_iw4::FX_IMPACT_EXIT_SURFACE_FLAG != 0;
+        if exit || usize::from(payload.surf_type) != fx_iw4::FX_SURF_TYPE_FLESH {
+            continue;
+        }
+        let travel: [f32; 3] = core::array::from_fn(|i| payload.end[i] - payload.start[i]);
+        let length = travel.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if length < 1e-3 {
+            continue;
+        }
+        let dir = travel.map(|v| v / length);
+        let head = payload.flesh_flags & fx_iw4::flesh_hit_flags(true, false) != 0;
+        let (count, noise) =
+            bleed_traces(bleed_damage(weapons.as_deref(), payload.weapon, head));
+        let previous_mark_entity = host.0.spawn_mark_entity;
+        host.0.spawn_mark_entity = None;
+        for trace in 0..count {
+            let scatter: [f32; 3] = core::array::from_fn(|axis| {
+                dir[axis]
+                    + noise * bleed_noise(payload.correlation, payload.pellet, trace, axis as u32)
+            });
+            let end = core::array::from_fn(|i| payload.end[i] + scatter[i] * BLEED_DISTANCE);
+            let found = world.sweep_box(payload.end, end, [0.0; 3], [0.0; 3], 0x1);
+            if found.startsolid || found.fraction >= 1.0 {
+                continue;
+            }
+            let mut played = 0;
+            try_play_weapon_fx_at_origin(
+                &mut host.0,
+                &catalog.0,
+                &mut elem_infos.0,
+                Some(asset_game::FxName::engine(BLEED_SPLAT_FX)),
+                found.endpos,
+                fx::axis_from_hit_normal(found.normal),
+                &mut played,
+                fx_world.view().as_ref().map(|s| s as &dyn FxScene),
+            );
+            cursor.impact_played = cursor.impact_played.saturating_add(played);
+        }
+        host.0.spawn_mark_entity = previous_mark_entity;
     }
 }
 

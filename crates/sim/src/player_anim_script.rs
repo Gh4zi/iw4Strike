@@ -57,6 +57,22 @@ impl AnimConditions {
     }
 }
 
+/// The animation type a body holds its weapon with. A CS grenade is carried upright (as MW2
+/// holds a throwing knife), pin pulled or not, and takes MW2's grenade animations only while a
+/// throw is under way: the hunched pin-pull pose would otherwise move the hitboxes of anyone
+/// just holding one.
+fn held_anim_type(ps: &PlayerState, facts: &WeaponCombatFacts) -> i32 {
+    if weapon_iw4::cs::cs_grenade(facts.cs_weapon).is_none() {
+        return facts.player_anim_type;
+    }
+    let throwing = ps.cs_grenade == playerstate_iw4::cs_grenade::THROWN && ps.cs_next_attack2_ms != 0;
+    if throwing {
+        weapon_iw4::PLAYER_ANIM_TYPE_GRENADE
+    } else {
+        weapon_iw4::PLAYER_ANIM_TYPE_THROWINGKNIFE
+    }
+}
+
 pub fn anim_conditions_from_pmove(
     ps: &PlayerState,
     view_facts: Option<WeaponCombatFacts>,
@@ -76,7 +92,7 @@ pub fn anim_conditions_from_pmove(
         u32::from(ps.mantle_flags & playerstate_iw4::mantle_flags::FAST_MANTLE != 0),
     );
     if let Some(facts) = view_facts {
-        conds.set_bit(ANIM_COND_PLAYERANIMTYPE, bit_index(facts.player_anim_type));
+        conds.set_bit(ANIM_COND_PLAYERANIMTYPE, bit_index(held_anim_type(ps, &facts)));
         conds.set_bit(ANIM_COND_WEAPONCLASS, bit_index(facts.weap_class));
     }
     if let Some(facts) = primary_facts {

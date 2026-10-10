@@ -786,6 +786,10 @@ fn skin_fpv_geometry(
     mut fpv_plan: ResMut<crate::FpvDrawPlan>,
     mut status: ResMut<FpvStatusGap>,
     gaps: Res<RenderPresentationGaps>,
+    camera_anim: (
+        Res<frame::GameSettings>,
+        Option<Res<super::cs_viewmodel::CsViewmodelActive>>,
+    ),
     mut lenses: Query<
         &mut Transform,
         (
@@ -836,8 +840,17 @@ fn skin_fpv_geometry(
             status.0 = Some(FpvState::Drawn {
                 idle_sampled: frame.idle_sampled,
             });
+            // A CS gun hides the MW2 one, whose camera bone would still shake the view
+            // (`cl_camera_anim`).
+            let (settings, cs_viewmodel) = &camera_anim;
+            let lens = if cs_viewmodel.as_ref().is_some_and(|active| active.0) && !settings.camera_anim
+            {
+                Mat4::IDENTITY
+            } else {
+                frame.lens
+            };
             for mut lens_tf in &mut lenses {
-                *lens_tf = Transform::from_matrix(frame.lens);
+                *lens_tf = Transform::from_matrix(lens);
             }
         }
     }

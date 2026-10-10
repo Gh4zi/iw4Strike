@@ -1,0 +1,17 @@
+[package]
+name = "mdl_source2"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Source 2 assets as Counter-Strike 2 ships them, read at runtime from the user's own install: resource files (.vmdl_c, .vtex_c, .vmat_c, .vnmclip_c, .vnmskel_c, .vsnd_c, .vsvg_c), binary KeyValues3 and meshoptimizer-compressed mesh buffers."
+
+[dependencies]
+mdl_source.workspace = true
+lz4_flex = { version = "0.11", default-features = false, features = ["std"] }
+ruzstd = "0.8"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+png.workspace = true

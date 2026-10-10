@@ -107,7 +107,10 @@ pub use placement::{
     weapon_placement_apply_origin, weapon_placement_assemble, weapon_placement_jump_land_ofs,
     weapon_stance_static_ofs,
 };
-pub use player_anim_type::{PLAYER_ANIM_TYPE_COUNT, PLAYER_ANIM_TYPE_NAMES};
+pub use player_anim_type::{
+    PLAYER_ANIM_TYPE_COUNT, PLAYER_ANIM_TYPE_GRENADE, PLAYER_ANIM_TYPE_NAMES,
+    PLAYER_ANIM_TYPE_THROWINGKNIFE,
+};
 pub use reload::{
     DualMagTimes, ReloadDelayedOutcome, reload_clip, reload_weaponstate_may_credit,
     weapon_allow_reload, weapon_arm_reload_add_delay, weapon_process_input_wants_reload,

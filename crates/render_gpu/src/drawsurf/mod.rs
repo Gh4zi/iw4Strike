@@ -2,6 +2,7 @@ mod admitted;
 mod backend;
 mod colour_submit;
 mod cs_scope;
+mod cs_smoke;
 mod cs_viewmodel;
 mod cs_world_model;
 mod depth_range;
@@ -32,9 +33,12 @@ mod texture_table;
 
 pub use admitted::AdmittedExactPort;
 pub use cs_scope::CsScopeFrame;
+pub use cs_smoke::{
+    CS_SMOKE_DIM, CS_SMOKE_HOLES, CS_SMOKE_SLOTS, CsSmokeFrame, CsSmokeHole, CsSmokeVolume,
+};
 pub use cs_viewmodel::{
-    CS_VIEWMODEL_MAX_BONES, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelModel, CsViewmodelShading,
-    CsViewmodelVertex,
+    CS_VIEWMODEL_MAX_BONES, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelMaps,
+    CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex,
 };
 pub use cs_world_model::{CsWorldModelInstance, CsWorldModelsFrame};
 pub use products::ExtractedRenderFrameProducts;

@@ -32,9 +32,10 @@ pub use progress::{
 };
 pub use game_paths::{GameFolder, pick_folder, settings_file};
 pub use steam::{
-    CSS_ENV, CSTRIKE_ENV, CZERO_ENV, GoldSrcDirs, MW2_SHORTCUT, SteamCandidate, SteamProbe,
-    css_env_override, cstrike_env_override, czero_env_override, find_css_pak, find_cstrike,
-    find_czero, find_goldsrc, link_steam_games, steam_css_pak,
+    CS2_ENV, CSS_ENV, CSTRIKE_ENV, CZERO_ENV, GoldSrcDirs, MW2_SHORTCUT, SteamCandidate,
+    SteamProbe, cs2_env_override, css_env_override, cstrike_env_override, czero_env_override,
+    find_cs2_pak, find_css_pak, find_cstrike, find_czero, find_goldsrc, link_steam_games,
+    steam_cs2_pak, steam_css_pak,
 };
 pub use zone::{
     Iw4WireFormat, Iw5ZoneMemory, T5ZoneMemory, ZoneImage, ZoneMemory, ZoneOpenError, open_zone,

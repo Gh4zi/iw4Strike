@@ -1604,6 +1604,176 @@ pub fn cs_grenade_for_projectile(projectile: &str) -> Option<&'static CsGrenade>
     CS_GRENADES.iter().find(|grenade| grenade.projectile == projectile)
 }
 
+/// Counter-Strike 2's model of a CS weapon and the viewmodel animation graph its clips come from,
+/// in CS2's own files (`game/csgo/pak01_dir.vpk`): each CS 1.6 gun as the CS2 gun whose CS:GO
+/// numbers it plays with (the TMP as the MP9, the M3 as the Nova...), and the knife, grenades and
+/// C4.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cs2View {
+    /// The CS weapon.
+    pub name: &'static str,
+    /// The weapon model.
+    pub model: &'static str,
+    /// The viewmodel graph whose clips the weapon plays (CS2's gun, knife or grenade graph's
+    /// variation for it); `graph#part` keeps only that graph's own clips whose path holds `part`.
+    pub graph: &'static str,
+}
+
+const CS2_VIEWS: [Cs2View; 29] = [
+    Cs2View {
+        name: "ak47",
+        model: "weapons/models/ak47/weapon_rif_ak47.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+ak47.vnmgraph",
+    },
+    Cs2View {
+        name: "m4a1",
+        model: "weapons/models/m4a1_silencer/weapon_rif_m4a1_silencer.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+m4a1s.vnmgraph",
+    },
+    Cs2View {
+        name: "awp",
+        model: "weapons/models/awp/weapon_snip_awp.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+awp.vnmgraph",
+    },
+    Cs2View {
+        name: "deagle",
+        model: "weapons/models/deagle/weapon_pist_deagle.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+deagle.vnmgraph",
+    },
+    Cs2View {
+        name: "usp",
+        model: "weapons/models/usp_silencer/weapon_pist_usp_silencer.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+usp.vnmgraph",
+    },
+    Cs2View {
+        name: "glock",
+        model: "weapons/models/glock18/weapon_pist_glock18.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+glock.vnmgraph",
+    },
+    Cs2View {
+        name: "p228",
+        model: "weapons/models/p250/weapon_pist_p250.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+p250.vnmgraph",
+    },
+    Cs2View {
+        name: "fiveseven",
+        model: "weapons/models/fiveseven/weapon_pist_fiveseven.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+five_seven.vnmgraph",
+    },
+    Cs2View {
+        name: "elite",
+        model: "weapons/models/elite/weapon_pist_elite.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun_elites.vnmgraph",
+    },
+    Cs2View {
+        name: "m3",
+        model: "weapons/models/nova/weapon_shot_nova.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+nova.vnmgraph",
+    },
+    Cs2View {
+        name: "xm1014",
+        model: "weapons/models/xm1014/weapon_shot_xm1014.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+xm1014.vnmgraph",
+    },
+    Cs2View {
+        name: "mac10",
+        model: "weapons/models/mac10/weapon_smg_mac10.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+mac10.vnmgraph",
+    },
+    Cs2View {
+        name: "tmp",
+        model: "weapons/models/mp9/weapon_smg_mp9.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+mp9.vnmgraph",
+    },
+    Cs2View {
+        name: "mp5",
+        model: "weapons/models/mp5sd/weapon_smg_mp5sd.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+mp5sd.vnmgraph",
+    },
+    Cs2View {
+        name: "ump45",
+        model: "weapons/models/ump45/weapon_smg_ump45.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+ump45.vnmgraph",
+    },
+    Cs2View {
+        name: "p90",
+        model: "weapons/models/p90/weapon_smg_p90.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+p90.vnmgraph",
+    },
+    Cs2View {
+        name: "galil",
+        model: "weapons/models/galilar/weapon_rif_galilar.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+galil.vnmgraph",
+    },
+    Cs2View {
+        name: "famas",
+        model: "weapons/models/famas/weapon_rif_famas.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+famas.vnmgraph",
+    },
+    Cs2View {
+        name: "sg552",
+        model: "weapons/models/sg556/weapon_rif_sg556.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+sg556.vnmgraph",
+    },
+    Cs2View {
+        name: "aug",
+        model: "weapons/models/aug/weapon_rif_aug.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+aug.vnmgraph",
+    },
+    Cs2View {
+        name: "scout",
+        model: "weapons/models/ssg08/weapon_snip_ssg08.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+ssg08.vnmgraph",
+    },
+    Cs2View {
+        name: "g3sg1",
+        model: "weapons/models/g3sg1/weapon_snip_g3sg1.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+g3sg1.vnmgraph",
+    },
+    Cs2View {
+        name: "sg550",
+        model: "weapons/models/scar20/weapon_snip_scar20.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+scar20.vnmgraph",
+    },
+    Cs2View {
+        name: "m249",
+        model: "weapons/models/m249/weapon_mach_m249.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_gun.vnmgraph+m249.vnmgraph",
+    },
+    Cs2View {
+        name: "knife",
+        model: "weapons/models/knife/knife_default_ct/weapon_knife_default_ct.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_knife.vnmgraph+default_ct.vnmgraph",
+    },
+    Cs2View {
+        name: "hegrenade",
+        model: "weapons/models/grenade/hegrenade/weapon_hegrenade.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_grenade.vnmgraph+he.vnmgraph",
+    },
+    Cs2View {
+        name: "flashbang",
+        model: "weapons/models/grenade/flashbang/weapon_flashbang.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_grenade.vnmgraph+flash.vnmgraph",
+    },
+    Cs2View {
+        name: "smokegrenade",
+        model: "weapons/models/grenade/smokegrenade/weapon_smokegrenade.vmdl",
+        graph: "animation/graphs/viewmodel/viewmodel_grenade.vnmgraph+smoke.vnmgraph",
+    },
+    Cs2View {
+        name: "c4",
+        model: "weapons/models/c4/weapon_c4.vmdl",
+        // CS2 lists the C4's clips in its main viewmodel graph, beside every weapon's own graph.
+        graph: "animation/graphs/viewmodel/viewmodel.vnmgraph#/equipment/c4/",
+    },
+];
+
+/// [`Cs2View`] of the CS weapon named `name`.
+#[must_use]
+pub fn cs2_view(name: &str) -> Option<Cs2View> {
+    CS2_VIEWS.iter().find(|view| view.name == name).copied()
+}
+
 /// `WeaponCombatFacts::cs_weapon` of the first grenade; the others follow.
 pub const CS_GRENADE_INDEX: u8 = CS_KNIFE_INDEX + 1;
 
@@ -1673,6 +1843,27 @@ pub const CS_SMOKE_GRENADE_LINGER_MS: i32 = 16_500;
 /// `event_parm` of the second firing of a CS smoke's cloud, which keeps it going as long as
 /// CS's; it makes no sound.
 pub const CS_SMOKE_REFIRE_PARM: i32 = 1;
+/// `event_parm` of a CS smoke's pop when the server draws smokes as CS2's volumetric cloud
+/// (`smoke_mode cs2`): each client fills the cloud through the map itself and fires no
+/// particle smoke, and the pop is not fired again.
+pub const CS_SMOKE_VOLUME_PARM: i32 = 2;
+
+/// How a server's smoke grenades look (`smoke_mode`): CS2's volumetric cloud that fills the
+/// space it pops in (the default), or the CS:GO-timed particle smoke.
+pub const SMOKE_CS2: u32 = 0;
+pub const SMOKE_CSGO: u32 = 1;
+
+#[must_use]
+pub fn smoke_mode_from_name(name: &str) -> Option<u32> {
+    let name = name.trim();
+    if name.eq_ignore_ascii_case("cs2") {
+        Some(SMOKE_CS2)
+    } else if name.eq_ignore_ascii_case("csgo") {
+        Some(SMOKE_CSGO)
+    } else {
+        None
+    }
+}
 /// A pulled pin throws no sooner than this after the pull.
 pub const CS_GRENADE_PULL_MS: i32 = 500;
 /// After a throw: the next grenade comes up, or the last one's hand retires.
@@ -2167,6 +2358,8 @@ pub fn apply_overrides(facts: &mut WeaponCombatFacts, index: u8) -> Option<(f32,
         facts.cs_weapon = index;
         facts.can_hold_breath = false;
         facts.aim_down_sight = false;
+        // Bodies hold it in one hand as MW2 holds a throwing knife, not as its pistol twin.
+        facts.player_anim_type = crate::PLAYER_ANIM_TYPE_THROWINGKNIFE;
         facts.location_damage = CS_LOCATION_DAMAGE;
         let scale = CS_KNIFE.max_speed / CS_BASE_SPEED;
         return Some((scale, scale));
@@ -2176,6 +2369,9 @@ pub fn apply_overrides(facts: &mut WeaponCombatFacts, index: u8) -> Option<(f32,
         facts.cs_weapon = index;
         facts.can_hold_breath = false;
         facts.aim_down_sight = false;
+        // Bodies carry it upright as MW2 holds a throwing knife, not as its pistol or SMG twin
+        // (the sim's anim conditions switch to MW2's grenade animations for the throw itself).
+        facts.player_anim_type = crate::PLAYER_ANIM_TYPE_THROWINGKNIFE;
         facts.clip_size = grenade.carry;
         facts.start_ammo = 1;
         facts.max_ammo = 0;

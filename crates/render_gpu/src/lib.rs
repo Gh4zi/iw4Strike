@@ -36,7 +36,11 @@ pub use drawsurf::{
     write_buffer_padded, write_buffer_range,
 };
 pub use drawsurf::{
-    CS_VIEWMODEL_MAX_BONES, CsScopeFrame, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelModel,
-    CsViewmodelShading, CsViewmodelVertex, CsWorldModelInstance, CsWorldModelsFrame,
+    CS_VIEWMODEL_MAX_BONES, CsScopeFrame, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame,
+    CsViewmodelMaps, CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex,
+    CsWorldModelInstance, CsWorldModelsFrame,
+};
+pub use drawsurf::{
+    CS_SMOKE_DIM, CS_SMOKE_HOLES, CS_SMOKE_SLOTS, CsSmokeFrame, CsSmokeHole, CsSmokeVolume,
 };
 pub use plugin::RenderGpuPlugin;

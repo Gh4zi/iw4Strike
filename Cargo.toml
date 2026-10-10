@@ -48,6 +48,7 @@ members = [
     "crates/math_iw4",
     "crates/mdl_goldsrc",
     "crates/mdl_source",
+    "crates/mdl_source2",
     "crates/movement_iw4",
     "crates/net",
     "crates/iw4l-master",
@@ -150,6 +151,7 @@ marks_iw4 = { path = "crates/marks_iw4" }
 math_iw4 = { path = "crates/math_iw4" }
 mdl_goldsrc = { path = "crates/mdl_goldsrc" }
 mdl_source = { path = "crates/mdl_source" }
+mdl_source2 = { path = "crates/mdl_source2" }
 master_protocol = { path = "crates/master_protocol" }
 movement_iw4 = { path = "crates/movement_iw4" }
 net = { path = "crates/net" }

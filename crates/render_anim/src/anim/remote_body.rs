@@ -1092,6 +1092,7 @@ pub fn remote_player_controller(
     view_pitch_deg: f32,
     prone: bool,
     crouch: bool,
+    hold: Option<xmodel_runtime::HoldKind>,
 ) -> Option<xmodel_runtime::PlayerControllerInput> {
     if is_corpse {
         None
@@ -1101,8 +1102,39 @@ pub fn remote_player_controller(
             prone,
             crouch,
             lean_frac: 0.0,
+            hold,
         })
     }
+}
+
+/// The CS stance a body holds (as the server poses it, from what the client sees): a CS knife's
+/// or grenade's, unless an event animation has the arms. An event plays on the torso alone (a
+/// slash, a draw: the torso's animation then differs from the legs'), or on the whole body for
+/// a grenade thrown standing still.
+pub fn remote_hold_kind(
+    weapons: Option<&assets::PreparedWeapons>,
+    tree: &asset_anim::CompiledAnimTreeDefinition,
+    weapon: u32,
+    legs: PlayerAnimValue,
+    torso: PlayerAnimValue,
+) -> Option<xmodel_runtime::HoldKind> {
+    let script = weapons?.0.script_name_of(weapon);
+    let index = weapon_iw4::cs::cs_weapon_index_for(&script)?;
+    let kind = if weapon_iw4::cs::is_knife(index) {
+        xmodel_runtime::HoldKind::Knife
+    } else if weapon_iw4::cs::cs_grenade(index).is_some() {
+        xmodel_runtime::HoldKind::Grenade
+    } else {
+        return None;
+    };
+    let (legs, torso) = (legs.effective_index(), torso.effective_index());
+    if torso != 0 && torso != legs {
+        return None;
+    }
+    let throwing = tree
+        .node(legs)
+        .is_some_and(|node| node.name.contains("throw"));
+    (!throwing).then_some(kind)
 }
 
 pub fn remote_dobj_model_base(

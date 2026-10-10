@@ -1518,6 +1518,11 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
         } else {
             entity_iw4::EntityEventKind::GRENADE_EXPLODE
         };
+        let cs_smoke = event_kind == entity_iw4::EntityEventKind::GRENADE_EXPLODE
+            && world.publishes_snapshot()
+            && is_cs_smoke(world, info.projectile.weapon);
+        // Under `smoke_mode cs2` clients build the volumetric cloud from the pop alone.
+        let volumetric = cs_smoke && crate::cs_settings::smoke_mode() == weapon_iw4::cs::SMOKE_CS2;
         let event = crate::EntityEventPayload {
             number: info.projectile.entnum,
             attacker_entity_num: info.projectile.owner.0 as i32,
@@ -1526,13 +1531,15 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
             origin: info.origin,
             direction: info.normal,
             surf_type: info.surf_type,
+            event_parm: if volumetric {
+                weapon_iw4::cs::CS_SMOKE_VOLUME_PARM
+            } else {
+                0
+            },
             ..Default::default()
         };
         world.push_entity_event(tick, EventAudience::All, event_kind, event);
-        if event_kind == entity_iw4::EntityEventKind::GRENADE_EXPLODE
-            && world.publishes_snapshot()
-            && is_cs_smoke(world, info.projectile.weapon)
-        {
+        if cs_smoke && !volumetric {
             // Clients drop events for entities they no longer have, and the cloud is placed by
             // `origin`, so the thrower carries the event; it is marked so it makes no sound.
             world.cs_smokes.push(CsSmoke {

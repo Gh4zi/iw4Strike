@@ -26,6 +26,10 @@ use std::num::NonZeroU64;
 use super::gpu_resources::RuntimeUploadedImageRegistry;
 use super::postfx::PostFxSet;
 
+/// The sun sprite, flare and glare; CS2 smoke draws after them, so it hides the sun.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct SunEffectsSet;
+
 const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/sun_effects.wgsl";
 const PARAMS_SIZE: u64 = 80;
 
@@ -549,6 +553,7 @@ pub(super) fn register(app: &mut App) {
             Core3d,
             draw_sun_effects
                 .in_set(Core3dSystems::PostProcess)
+                .in_set(SunEffectsSet)
                 .after(tonemapping)
                 .before(PostFxSet),
         );

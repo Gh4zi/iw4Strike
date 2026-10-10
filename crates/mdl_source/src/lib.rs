@@ -6,7 +6,7 @@ pub mod studio;
 pub mod vpk;
 pub mod vtf;
 
-pub use studio::{Attachment, BodyPart, EVENT_CLIENT_SOUND, StudioModel};
+pub use studio::{Animation, Attachment, BodyPart, BoneFrame, EVENT_CLIENT_SOUND, StudioModel};
 pub use vpk::Vpk;
 
 /// A model material resolved to its base texture.

@@ -338,6 +338,8 @@ pub fn apply_prepared_match(
             player_kit_collision(&bodies.0, false),
             player_kit_collision(&bodies.0, true),
         );
+        // Bodies holding a CS knife or grenade take CS2's stance when CS2 is installed.
+        assets::cs_hold_stance::install();
         if let Some(Ok(tree)) = player_anim_sources.compiled() {
             for axis in [false, true] {
                 if let Ok(definition) = tree.to_runtime_definition(|_, name| {

@@ -26,6 +26,16 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "shooting_mode [csgo|cs16] — how CS guns shoot on the server you host: CS:GO's spray, inaccuracy and recoil (default) or CS 1.6's",
         ));
     }
+    if registry.resolve("smoke_quality").is_none() {
+        registry.register(crate::CommandSpec::new("smoke_quality").usage(
+            "smoke_quality [high|medium|low] — how finely CS2 smoke is drawn: high every pixel (sharpest), medium half resolution (about a quarter of the cost), low half resolution with coarser steps",
+        ));
+    }
+    if registry.resolve("smoke_mode").is_none() {
+        registry.register(crate::CommandSpec::new("smoke_mode").usage(
+            "smoke_mode [cs2|csgo] — how smoke grenades look on the server you host: CS2's volumetric smoke that fills the room (default) or the particle smoke",
+        ));
+    }
     if registry.resolve("sv_destructibles").is_none() {
         registry.register(crate::CommandSpec::new("sv_destructibles").usage(
             "sv_destructibles [0|1] — cars, barrels and breakable walls take damage (default 0)",
@@ -87,6 +97,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             ),
         );
     }
+    if registry.resolve("cl_camera_anim").is_none() {
+        registry.register(crate::CommandSpec::new("cl_camera_anim").usage(
+            "cl_camera_anim [0|1] — with a CS gun in hand, let the MW2 weapon animations move your view (the head shake on draws and reloads); 0 by default",
+        ));
+    }
     if registry.resolve("cl_wpn_sway").is_none() {
         registry.register(
             crate::CommandSpec::new("cl_wpn_sway")
@@ -110,6 +125,12 @@ pub(crate) fn sync_movement_mode(game: Res<frame::GameSettings>) {
     {
         sim::cs_settings::set_shooting_mode(wanted);
         diag::info!(Console, "shooting_mode = {}", game.shooting_mode);
+    }
+    if let Some(wanted) = weapon_iw4::cs::smoke_mode_from_name(&game.smoke_mode)
+        && wanted != sim::cs_settings::smoke_mode()
+    {
+        sim::cs_settings::set_smoke_mode(wanted);
+        diag::info!(Console, "smoke_mode = {}", game.smoke_mode);
     }
     if let Some(wanted) = movement_iw4::rules::MovementMode::from_name(&game.mv_mode)
         && wanted != movement_iw4::rules::mode()
@@ -164,6 +185,31 @@ pub(crate) fn route_movement_commands(
                     )
                 }
                 _ => "usage: shooting_mode [csgo|cs16]".to_owned(),
+            },
+            "smoke_quality" => match cmd.args.as_slice() {
+                [] => format!("smoke_quality = {} (high|medium|low)", game.smoke_quality),
+                [arg] if frame::settings::SmokeQuality::from_name(arg).is_some() => {
+                    game.smoke_quality = arg.trim().to_ascii_lowercase();
+                    game.touch();
+                    format!("smoke_quality = {}", game.smoke_quality)
+                }
+                _ => "usage: smoke_quality [high|medium|low]".to_owned(),
+            },
+            "smoke_mode" => match cmd.args.as_slice() {
+                [] => format!(
+                    "smoke_mode = {} (cs2: CS2's volumetric smoke; csgo: the particle smoke)",
+                    game.smoke_mode
+                ),
+                [arg] if weapon_iw4::cs::smoke_mode_from_name(arg).is_some() => {
+                    game.smoke_mode = arg.trim().to_ascii_lowercase();
+                    game.touch();
+                    format!(
+                        "smoke_mode = {} — from the next smoke on the server you host; on \
+                         someone else's, theirs applies",
+                        game.smoke_mode
+                    )
+                }
+                _ => "usage: smoke_mode [cs2|csgo]".to_owned(),
             },
             "mv_mode" => {
                 use movement_iw4::rules::{MovementMode, mode, set_mode};
@@ -308,6 +354,15 @@ pub(crate) fn route_movement_commands(
                     format!("cl_righthand = {arg}")
                 }
                 _ => "usage: cl_righthand [0|1]".to_owned(),
+            },
+            "cl_camera_anim" => match cmd.args.as_slice() {
+                [] => format!("cl_camera_anim = {}", u8::from(game.camera_anim)),
+                [arg] if arg == "0" || arg == "1" => {
+                    game.camera_anim = arg == "1";
+                    game.touch();
+                    format!("cl_camera_anim = {arg}")
+                }
+                _ => "usage: cl_camera_anim [0|1]".to_owned(),
             },
             "cl_wpn_sway" => {
                 use render_anim::occupancy::cs_viewmodel::{set_viewmodel_sway, viewmodel_sway};

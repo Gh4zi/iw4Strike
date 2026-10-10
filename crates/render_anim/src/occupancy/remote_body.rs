@@ -4,7 +4,8 @@ use crate::anim::remote_body::{
     RemoteSkinModels, RemoteSkinPoseHashes, SkinAfterPose, WorldGunGap, advance_remote_tree,
     bind_remote_skin_models, clone_corpse_tree_from_victim, commit_assembled_body,
     ensure_remote_dobj, hash_skin_matrices, occupy_lod_byte, occupy_remote_kit_dobj, packed_anim,
-    pose_remote_dobj, push_cached_surfaces, radii, remote_player_controller, select_remote_lods,
+    pose_remote_dobj, push_cached_surfaces, radii, remote_hold_kind, remote_player_controller,
+    select_remote_lods,
     select_remote_models, skin_after_pose, skin_slot_need, skip_frozen_corpse_dobj,
     take_unique_geom, validate_remote_tracks, zero_anim,
 };
@@ -848,7 +849,13 @@ impl<'a> RemotePoseFrame<'a> {
             let world = pose_remote_dobj(
                 dobj,
                 anim_runtime,
-                remote_player_controller(is_corpse, view_pitch_deg, prone, crouch),
+                remote_player_controller(
+                    is_corpse,
+                    view_pitch_deg,
+                    prone,
+                    crouch,
+                    remote_hold_kind(weapons, tree, weapon, legs, torso),
+                ),
             )?;
             let skin = publish_remote_dobj(
                 dobj,

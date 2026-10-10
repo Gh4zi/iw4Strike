@@ -345,8 +345,11 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("fov={:.0}", settings.fov),
         format!("viewmodel_fov={:.0}", settings.viewmodel_fov),
         format!("cl_righthand={}", u8::from(settings.right_hand)),
+        format!("cl_camera_anim={}", u8::from(settings.camera_anim)),
         format!("mv_mode={}", settings.mv_mode),
         format!("shooting_mode={}", settings.shooting_mode),
+        format!("smoke_mode={}", settings.smoke_mode),
+        format!("smoke_quality={}", settings.smoke_quality),
         format!("sv_destructibles={}", u8::from(settings.destructibles)),
         format!("third_person={}", settings.third_person),
         format!("shadows={}", settings.shadows),
@@ -433,7 +436,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             .into_iter()
             .find(|folder| folder.use_key() == Some(key))
         {
-            settings.game_used.get_or_insert([true; 4])[folder.index()] = value.trim() != "0";
+            settings.game_used.get_or_insert([true; 5])[folder.index()] = value.trim() != "0";
             continue;
         }
         match key {
@@ -463,6 +466,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             }
             "viewmodel_fov" => parse_into(value, &mut settings.viewmodel_fov),
             "cl_righthand" => settings.right_hand = value.trim() != "0",
+            "cl_camera_anim" => settings.camera_anim = value.trim() != "0",
             "snd_timer_warning_volume" => {
                 if let Ok(volume) = value.trim().parse::<f32>()
                     && volume.is_finite()
@@ -492,6 +496,16 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "shooting_mode" => {
                 if weapon_iw4::csgo::shooting_mode_from_name(value).is_some() {
                     settings.shooting_mode = value.trim().to_ascii_lowercase();
+                }
+            }
+            "smoke_mode" => {
+                if weapon_iw4::cs::smoke_mode_from_name(value).is_some() {
+                    settings.smoke_mode = value.trim().to_ascii_lowercase();
+                }
+            }
+            "smoke_quality" => {
+                if frame::settings::SmokeQuality::from_name(value).is_some() {
+                    settings.smoke_quality = value.trim().to_ascii_lowercase();
                 }
             }
             "brightness" => {
@@ -612,7 +626,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
 }
 
 // `frame::GameSettings::game_paths` / `game_used` hold one entry per game folder.
-const _: () = assert!(asset_transport::GameFolder::COUNT == 4);
+const _: () = assert!(asset_transport::GameFolder::COUNT == 5);
 
 /// The options menu's crosshair rows and the `cl_crosshair*` variable each sets.
 const MENU_CROSSHAIR: [(&str, &str); 8] = [

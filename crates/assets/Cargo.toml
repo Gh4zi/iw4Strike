@@ -19,6 +19,10 @@ asset_material.workspace = true
 asset_model.workspace = true
 asset_transport.workspace = true
 asset_world.workspace = true
+# Counter-Strike stances for bodies holding a CS knife or grenade (`cs_hold_stance`).
+mdl_source.workspace = true
+mdl_source2.workspace = true
+glam.workspace = true
 weapon_iw4.workspace = true
 fastfile_iw4.workspace = true
 fastfile_t5.workspace = true

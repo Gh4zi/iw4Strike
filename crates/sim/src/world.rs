@@ -1422,6 +1422,21 @@ impl SimState {
         self.combat_facts_for(weapon)
     }
 
+    /// The CS stance `ps`'s body holds: a CS knife's or grenade's, unless an event animation
+    /// (a slash, a draw, a throw) has its arms.
+    fn cs_hold_kind(&self, ps: &PlayerState) -> Option<xmodel_runtime::HoldKind> {
+        let facts = self.combat_facts_for(playerstate_iw4::get_viewmodel_weapon_index(ps))?;
+        let kind = if weapon_iw4::cs::is_knife(facts.cs_weapon) {
+            xmodel_runtime::HoldKind::Knife
+        } else if weapon_iw4::cs::cs_grenade(facts.cs_weapon).is_some() {
+            xmodel_runtime::HoldKind::Grenade
+        } else {
+            return None;
+        };
+        let throwing = ps.cs_grenade == playerstate_iw4::cs_grenade::THROWN;
+        (ps.torso_timer <= 0 && !throwing).then_some(kind)
+    }
+
     pub(crate) fn combat_facts_for(&self, weapon: u32) -> Option<WeaponCombatFacts> {
         self.content
             .data
@@ -2415,7 +2430,7 @@ impl SimState {
             ));
         }
         let (request, _, _, _, _, _, _) = self.player_dobj_request(id, ps);
-        let input = player_controller_input(ps);
+        let input = player_controller_input(ps, self.cs_hold_kind(ps));
         let controller = move |dobj: &xmodel_runtime::DObj,
                                _: &anim_iw4::PartBits,
                                locals: &mut [anim_iw4::Local]| {
@@ -3729,7 +3744,7 @@ impl SimState {
         let Some(ps) = ps else {
             return HitvolControllerCensus::none();
         };
-        let input = player_controller_input(ps);
+        let input = player_controller_input(ps, self.cs_hold_kind(ps));
         let tags = self.collision_kit(client).body.as_ref().map_or(0, |cap| {
             xmodel_runtime::PLAYER_CONTROLLER_TAGS
                 .iter()
@@ -3862,12 +3877,16 @@ impl HitvolControllerCensus {
     }
 }
 
-fn player_controller_input(ps: &PlayerState) -> xmodel_runtime::PlayerControllerInput {
+fn player_controller_input(
+    ps: &PlayerState,
+    hold: Option<xmodel_runtime::HoldKind>,
+) -> xmodel_runtime::PlayerControllerInput {
     xmodel_runtime::PlayerControllerInput {
         view_pitch_deg: ps.viewangles[0],
         prone: ps.e_flags & playerstate_iw4::eflags::PRONE != 0,
         crouch: ps.e_flags & playerstate_iw4::eflags::DUCK != 0,
         lean_frac: math_iw4::get_lean_fraction(ps.leanf),
+        hold,
     }
 }
 

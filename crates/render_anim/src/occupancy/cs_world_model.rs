@@ -332,6 +332,7 @@ fn build_world_model(
                 uv: v.uv,
                 bones: [0; 4],
                 weights: [255, 0, 0, 0],
+                tangent: [0.0; 4],
             }
         })
         .collect();
@@ -364,6 +365,7 @@ fn build_world_model(
                 image: textures.get(mesh.material)?.clone()?,
                 first_vertex: mesh.first_vertex as u32,
                 vertex_count: mesh.vertex_count as u32,
+                maps: None,
                 shading: if material.fullbright {
                     CsViewmodelShading::Fullbright
                 } else {
@@ -475,6 +477,7 @@ fn build_goldsrc_world_model(
                 uv: v.uv,
                 bones: [0; 4],
                 weights: [255, 0, 0, 0],
+                tangent: [0.0; 4],
             }
         })
         .collect();
@@ -527,6 +530,7 @@ fn build_goldsrc_world_model(
                 image: images.get(mesh.texture)?.clone(),
                 first_vertex: mesh.first_vertex as u32,
                 vertex_count: mesh.vertex_count as u32,
+                maps: None,
                 shading: if flags & mdl_goldsrc::TEXTURE_FULLBRIGHT != 0 {
                     CsViewmodelShading::Fullbright
                 } else {
