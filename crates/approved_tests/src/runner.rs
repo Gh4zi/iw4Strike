@@ -70,7 +70,9 @@ pub fn run(launch: Launch<'_>) -> Outcome {
         .current_dir(launch.cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::from(stderr_file));
+        .stderr(Stdio::from(stderr_file))
+        // The run directory's own cache (see prepare_cache), not the user's.
+        .env("IW4L_CACHE_DIR", launch.cwd.join("iw4l-artifacts").join("cache"));
     for (key, value) in &launch.env {
         command.env(key, value);
     }

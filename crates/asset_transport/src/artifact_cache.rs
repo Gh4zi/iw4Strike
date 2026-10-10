@@ -104,13 +104,41 @@ impl Drop for CacheFlight {
     }
 }
 
+/// Where the cache lives: `IW4L_CACHE_DIR` when set; the artifacts folder's `cache` when
+/// `IW4L_ARTIFACTS_DIR` names one (a test run's own); on Linux the user's cache folder
+/// (`$XDG_CACHE_HOME/iw4strike`, else `~/.cache/iw4strike`), on the system drive rather than
+/// wherever the game was put (often a slow data drive, where every shader and mip read
+/// stalled); elsewhere the artifacts folder's `cache`.
+pub fn cache_root() -> Result<PathBuf, String> {
+    let dir = match std::env::var_os("IW4L_CACHE_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => match user_cache_dir().filter(|_| std::env::var_os("IW4L_ARTIFACTS_DIR").is_none()) {
+            Some(dir) => dir.join("iw4strike"),
+            None => ensure_artifacts_dir()?.join("cache"),
+        },
+    };
+    fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+#[cfg(target_os = "linux")]
+fn user_cache_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn user_cache_dir() -> Option<PathBuf> {
+    None
+}
+
 fn cache_path(kind: &str, key: &str) -> Result<PathBuf, String> {
     if !kind_ok(kind) || !key_ok(key) {
         return Err("cache kind/key must be ascii [0-9a-z._-]".into());
     }
-    let root = ensure_artifacts_dir()?;
-    Ok(root
-        .join("cache")
+    Ok(cache_root()?
         .join(kind)
         .join(&key[..2.min(key.len())])
         .join(key))
@@ -131,13 +159,13 @@ fn key_ok(key: &str) -> bool {
 fn request_sweep() {
     static SWEPT: std::sync::Once = std::sync::Once::new();
     SWEPT.call_once(|| {
-        let Ok(root) = ensure_artifacts_dir() else {
+        let Ok(root) = cache_root() else {
             return;
         };
 
         let _ = std::thread::Builder::new()
             .name("iw4l cache sweep".to_owned())
-            .spawn(move || sweep(&root.join("cache"), cache_budget_bytes()));
+            .spawn(move || sweep(&root, cache_budget_bytes()));
     });
 }
 

@@ -8,7 +8,9 @@ pub mod progress;
 pub mod steam;
 pub mod zone;
 
-pub use artifact_cache::{CacheFlight, cache_flight, cache_get, cache_put, fnv1a64, fnv1a64_more};
+pub use artifact_cache::{
+    CacheFlight, cache_flight, cache_get, cache_put, cache_root, fnv1a64, fnv1a64_more,
+};
 pub use asset_core::ZoneGame;
 pub use discover::{
     GamesRoot, MapPack, ZoneFile, ensure_artifacts_dir, find_common_mp_for_envelope,

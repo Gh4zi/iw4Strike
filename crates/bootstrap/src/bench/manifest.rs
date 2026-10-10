@@ -319,7 +319,7 @@ fn caches(artifacts: &Path) -> Value {
 /// meant the wrong directory — and the two have to be told apart, so this walks
 /// the kinds and reports each one.
 fn prepared_cache(artifacts: &Path) -> Value {
-    let dir = artifacts.join("cache");
+    let dir = asset_transport::cache_root().unwrap_or_else(|_| artifacts.join("cache"));
     let Ok(kinds) = std::fs::read_dir(&dir) else {
         return json!({ "path": dir.display().to_string(), "present": false });
     };

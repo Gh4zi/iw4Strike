@@ -1,20 +1,33 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 
 use crate::render_core::{QUANTUM, RenderShared, SAMPLE_RATE};
 
+/// How long the device may go without asking for audio before the stream is rebuilt (a device
+/// that hangs without reporting an error).
+const CALLBACK_STALL: Duration = Duration::from_secs(2);
+
 pub(crate) fn supervise(shared: Arc<RenderShared>, shutdown: Arc<AtomicBool>) {
     let failed = Arc::new(AtomicU8::new(0));
+    let epoch = Instant::now();
+    // When the device last asked for audio, in ms since `epoch`.
+    let heartbeat = Arc::new(AtomicU64::new(0));
     while !shutdown.load(Ordering::Acquire) {
         failed.store(0, Ordering::Release);
-        match open(shared.clone(), failed.clone()) {
+        heartbeat.store(epoch.elapsed().as_millis() as u64, Ordering::Release);
+        match open(shared.clone(), failed.clone(), epoch, heartbeat.clone()) {
             Ok(stream) => {
                 while !shutdown.load(Ordering::Acquire) && failed.load(Ordering::Acquire) == 0 {
                     std::thread::sleep(Duration::from_millis(20));
+                    let quiet = (epoch.elapsed().as_millis() as u64)
+                        .saturating_sub(heartbeat.load(Ordering::Acquire));
+                    if quiet > CALLBACK_STALL.as_millis() as u64 {
+                        failed.store(4, Ordering::Release);
+                    }
                 }
                 drop(stream);
                 let failure = failed.swap(0, Ordering::AcqRel);
@@ -22,7 +35,7 @@ pub(crate) fn supervise(shared: Arc<RenderShared>, shutdown: Arc<AtomicBool>) {
                     let reason = match failure {
                         1 => "device unavailable",
                         2 => "stream invalidated",
-                        _ => "backend failure",
+                        _ => "device stopped asking for audio",
                     };
                     diag::warn!(Audio, "audio: output interrupted: {reason}");
                 }
@@ -45,6 +58,8 @@ pub(crate) fn supervise(shared: Arc<RenderShared>, shutdown: Arc<AtomicBool>) {
 pub(crate) fn open(
     shared: Arc<RenderShared>,
     failed: Arc<AtomicU8>,
+    epoch: Instant,
+    heartbeat: Arc<AtomicU64>,
 ) -> Result<cpal::Stream, String> {
     let device = cpal::default_host()
         .default_output_device()
@@ -59,17 +74,17 @@ pub(crate) fn open(
     let config = config.config();
     let transport = shared.clone();
     let stream = match format {
-        SampleFormat::F32 => build::<f32>(&device, &config, shared, failed),
-        SampleFormat::F64 => build::<f64>(&device, &config, shared, failed),
-        SampleFormat::I8 => build::<i8>(&device, &config, shared, failed),
-        SampleFormat::I16 => build::<i16>(&device, &config, shared, failed),
-        SampleFormat::I24 => build::<cpal::I24>(&device, &config, shared, failed),
-        SampleFormat::I32 => build::<i32>(&device, &config, shared, failed),
-        SampleFormat::I64 => build::<i64>(&device, &config, shared, failed),
-        SampleFormat::U8 => build::<u8>(&device, &config, shared, failed),
-        SampleFormat::U16 => build::<u16>(&device, &config, shared, failed),
-        SampleFormat::U32 => build::<u32>(&device, &config, shared, failed),
-        SampleFormat::U64 => build::<u64>(&device, &config, shared, failed),
+        SampleFormat::F32 => build::<f32>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::F64 => build::<f64>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::I8 => build::<i8>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::I16 => build::<i16>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::I24 => build::<cpal::I24>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::I32 => build::<i32>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::I64 => build::<i64>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::U8 => build::<u8>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::U16 => build::<u16>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::U32 => build::<u32>(&device, &config, shared, failed, epoch, heartbeat),
+        SampleFormat::U64 => build::<u64>(&device, &config, shared, failed, epoch, heartbeat),
         _ => return Err(format!("unsupported device format {format:?}")),
     }
     .map_err(|error| error.to_string())?;
@@ -89,6 +104,8 @@ fn build<T: SizedSample + FromSample<f32>>(
     config: &cpal::StreamConfig,
     shared: Arc<RenderShared>,
     failed: Arc<AtomicU8>,
+    epoch: Instant,
+    heartbeat: Arc<AtomicU64>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError> {
     let channels = usize::from(config.channels);
     let step = f64::from(SAMPLE_RATE) / f64::from(config.sample_rate);
@@ -99,9 +116,11 @@ fn build<T: SizedSample + FromSample<f32>>(
     let mut b = [0.0; 2];
     let mut primed = false;
     let errors = shared.clone();
+    let backend_errors = AtomicU32::new(0);
     device.build_output_stream(
         config,
         move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
+            heartbeat.store(epoch.elapsed().as_millis() as u64, Ordering::Release);
             let mut next = || {
                 if position == QUANTUM {
                     shared.render_for(&mut block, Some(true));
@@ -147,7 +166,15 @@ fn build<T: SizedSample + FromSample<f32>>(
             }
             cpal::StreamError::DeviceNotAvailable => failed.store(1, Ordering::Release),
             cpal::StreamError::StreamInvalidated => failed.store(2, Ordering::Release),
-            _ => failed.store(3, Ordering::Release),
+            // A backend's own report (ALSA / PipeWire glitches, an xrun it recovered from) isn't
+            // the stream ending: it plays on. A device that does stop gets rebuilt by the
+            // supervisor once it stops asking for audio.
+            cpal::StreamError::BackendSpecific { err } => {
+                let n = backend_errors.fetch_add(1, Ordering::Relaxed) + 1;
+                if n.is_power_of_two() {
+                    diag::warn!(Audio, "audio: backend error #{n} (stream kept): {err}");
+                }
+            }
         },
         Some(Duration::from_secs(1)),
     )
