@@ -310,10 +310,14 @@ pub(crate) fn admit_material_generation(
 struct ProductBindPersist {
     generation: MaterialGenerationId,
     compact_seen: HashMap<LogicalInputKey, u32>,
-    /// (material id, sorted rank, technique) already folded into `code_sampler_mask` this fill:
-    /// the mask is an OR and depends on nothing else, so each pair is resolved once.
-    mask_seen:
-        bevy::platform::collections::HashSet<(Option<render_material::MaterialAssetId>, u32, u8)>,
+    /// The current sort-key run's logical keys during a sorted compaction (kept for its buffer).
+    compact_run: Vec<(LogicalInputKey, u32)>,
+    /// Each (material id, sorted rank, technique)'s code-sampler mask. The mask depends on nothing
+    /// else, so it is kept across fills (resolving it was a sixth of a fill, and a still camera
+    /// on an animated FX scene refills every frame) until the material generation changes.
+    mask_cache: HashMap<(Option<render_material::MaterialAssetId>, u32, u8), u64>,
+    /// The catalog generation and prepared table `mask_cache` was resolved against.
+    mask_cache_owner: (MaterialGenerationId, usize),
     compact_remap: Vec<u32>,
     compacted: bool,
     compact_tech: Vec<TechType>,
@@ -604,25 +608,51 @@ fn compact_product_draws(
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
 ) {
+    // Draws with one logical key share a sort key, and the lists arrive in sort-key order: when a
+    // partition is sorted, a duplicate can only sit in the run of its own key, so the dedupe
+    // scans that short run instead of hashing every draw of the list.
+    let input_len = product.ordered_draws.len();
+    let input_near_n = product.sun_near_n.min(input_len);
+    let split_sun = input_near_n > 0 && input_near_n < input_len;
+    let sorted =
+        |draws: &[RetainedDrawItem]| draws.windows(2).all(|pair| pair[0].key <= pair[1].key);
+    let by_runs = if split_sun {
+        sorted(&product.ordered_draws[..input_near_n])
+            && sorted(&product.ordered_draws[input_near_n..])
+    } else {
+        sorted(&product.ordered_draws)
+    };
     persist.compact_seen.clear();
-    persist.compact_seen.reserve(product.ordered_draws.len());
+    if !by_runs {
+        persist.compact_seen.reserve(input_len);
+    }
+    let mut run_key: Option<u64> = None;
+    let mut run = std::mem::take(&mut persist.compact_run);
+    run.clear();
+    // A run longer than this moves into `compact_seen` (cleared when the run ends).
+    const RUN_SCAN: usize = 32;
+    let mut run_hashed = false;
     persist.compact_remap.clear();
     persist.compact_remap.reserve(product.ordered_draws.len());
-    persist.mask_seen.clear();
+    let mask_owner = (catalog.generation_id, std::ptr::from_ref(prepared) as usize);
+    if persist.mask_cache_owner != mask_owner {
+        persist.mask_cache.clear();
+        persist.mask_cache_owner = mask_owner;
+    }
     product.draw_tech.clear();
     product.draw_tech.reserve(product.ordered_draws.len());
     product.code_sampler_mask = 0;
     product.has_codemesh = false;
 
-    let input_len = product.ordered_draws.len();
-    let input_near_n = product.sun_near_n.min(input_len);
-    let split_sun = input_near_n > 0 && input_near_n < input_len;
     let mut output_near_n = input_near_n;
     let mut output = 0;
     for input in 0..input_len {
         if split_sun && input == input_near_n {
             output_near_n = output;
             persist.compact_seen.clear();
+            run_key = None;
+            run.clear();
+            run_hashed = false;
         }
         let draw = product.ordered_draws[input];
         let draw_tech = if product.kind == FrameProductKind::Light {
@@ -645,30 +675,57 @@ fn compact_product_draws(
             tech_type
         };
         let key = logical_input_key(&draw, draw_tech);
-        if let Some(&compact) = persist.compact_seen.get(&key) {
+        if by_runs && run_key != Some(draw.key) {
+            run_key = Some(draw.key);
+            run.clear();
+            if run_hashed {
+                persist.compact_seen.clear();
+                run_hashed = false;
+            }
+        }
+        let seen = if by_runs && !run_hashed {
+            run.iter()
+                .find(|(have, _)| *have == key)
+                .map(|&(_, compact)| compact)
+        } else {
+            persist.compact_seen.get(&key).copied()
+        };
+        if let Some(compact) = seen {
             persist.compact_remap.push(compact);
             continue;
         }
         let compact = u32::try_from(output).unwrap_or(u32::MAX);
-        persist.compact_seen.insert(key, compact);
+        if by_runs && !run_hashed {
+            run.push((key, compact));
+            if run.len() > RUN_SCAN {
+                persist.compact_seen.extend(run.iter().copied());
+                run_hashed = true;
+            }
+        } else {
+            persist.compact_seen.insert(key, compact);
+        }
         persist.compact_remap.push(compact);
         product.ordered_draws[output] = draw;
         product.draw_tech.push(draw_tech);
-        if persist
-            .mask_seen
-            .insert((draw.material_id, draw.material_rank, draw_tech.0))
-        {
-            product.code_sampler_mask |= super::draw_code_sampler_mask(
-                catalog,
-                prepared,
-                render_material::MaterialDrawKey::new(draw.key, draw.material_rank)
-                    .with_material_id(draw.material_id),
-                draw_tech,
-            );
-        }
+        let mask_key = (draw.material_id, draw.material_rank, draw_tech.0);
+        product.code_sampler_mask |= match persist.mask_cache.get(&mask_key) {
+            Some(&mask) => mask,
+            None => {
+                let mask = super::draw_code_sampler_mask(
+                    catalog,
+                    prepared,
+                    render_material::MaterialDrawKey::new(draw.key, draw.material_rank)
+                        .with_material_id(draw.material_id),
+                    draw_tech,
+                );
+                persist.mask_cache.insert(mask_key, mask);
+                mask
+            }
+        };
         product.has_codemesh |= matches!(draw.kind, RetainedDrawKind::CodeMesh { .. });
         output += 1;
     }
+    persist.compact_run = run;
     product.ordered_draws.truncate(output);
     if input_near_n > 0 {
         product.sun_near_n = if split_sun { output_near_n } else { output };
@@ -692,9 +749,38 @@ fn merge_draw_lanes(out: &mut Vec<RetainedDrawItem>, lanes: [&[RetainedDrawItem]
     out.reserve(lanes.iter().map(|lane| lane.len()).sum());
     let mut cursors = [0usize; 3];
     while let Some(lane_index) = next_merge_lane(lanes, &cursors) {
-        out.push(lanes[lane_index][cursors[lane_index]]);
-        cursors[lane_index] += 1;
+        // The lane that won keeps winning while its items order before every other lane's head
+        // (a tie goes to the lower lane, as in `next_merge_lane`), and those heads do not move
+        // meanwhile: copy the whole run, rather than comparing three heads per item of the
+        // static lane, which is most of the list.
+        let lane = lanes[lane_index];
+        let heads: [Option<(u64, u32)>; 3] = std::array::from_fn(|other| {
+            if other == lane_index {
+                None
+            } else {
+                lanes[other].get(cursors[other]).map(merge_order_key)
+            }
+        });
+        let wins = |key: (u64, u32)| {
+            heads.iter().enumerate().all(|(other, head)| {
+                head.is_none_or(|head| key < head || (key == head && lane_index < other))
+            })
+        };
+        let start = cursors[lane_index];
+        let mut end = start + 1;
+        while end < lane.len() && wins(merge_order_key(&lane[end])) {
+            end += 1;
+        }
+        out.extend_from_slice(&lane[start..end]);
+        cursors[lane_index] = end;
     }
+}
+
+fn merge_order_key(item: &RetainedDrawItem) -> (u64, u32) {
+    (
+        item.key,
+        super::retained_list::retained_draw_order_tie(&item.kind),
+    )
 }
 
 fn next_merge_lane(lanes: [&[RetainedDrawItem]; 3], cursors: &[usize; 3]) -> Option<usize> {
