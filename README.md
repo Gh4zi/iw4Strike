@@ -138,7 +138,7 @@ welcome, even small fixes.**
 |---|---|
 | **Call of Duty: Modern Warfare 2** (2009, Steam) | Maps and engine data |
 | **Counter-Strike: Source** (Steam) | Weapon models, sounds and HUD fonts |
-| **Counter-Strike 2** (Steam, optional, experimental) | CS2's guns in your hands and CS2's knife and grenade stance (see [Counter-Strike 2](#counter-strike-2-experimental)) |
+| **Counter-Strike 2** (Steam, optional, experimental) | CS2's guns in your hands and CS2's knife and grenade stance (see [Counter-Strike 2](#counter-strike-2-experimental)). Not on its own: you still need CS:S, CZ or CS 1.6 too |
 | **Windows or Linux** | Steam games are found automatically on both. On Linux, install MW2 through Steam Play (Proton); iw4Strike only reads its files |
 | **Rust** ([rustup](https://rustup.rs)) | To build the game |
 | **Visual Studio Build Tools** (Windows) | Pick the *Desktop development with C++* workload |
@@ -427,6 +427,11 @@ iw4Strike can read Counter-Strike 2 straight from your CS2 install
 CS2 is in so far, and the rest still comes from Counter-Strike: Source (or CZ / CS 1.6). Turn it
 on or off with CS2's **Use** box in the game folders window (**Manage Game Paths**); with it off,
 everything is as before.
+
+**CS2 isn't enough on its own yet.** Only part of CS2 is in, so the rest (the HUD, sounds,
+third-person and dropped guns, the buy menu) comes from Counter-Strike: Source, Condition Zero or
+CS 1.6. To play, and to play with CS:S or CS 1.6 players, install one of them next to CS2:
+Counter-Strike: Source is the one to get.
 
 | | Status |
 |---|---|
