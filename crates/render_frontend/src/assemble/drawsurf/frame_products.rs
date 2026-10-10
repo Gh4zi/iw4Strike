@@ -1229,6 +1229,29 @@ pub(crate) struct StaticSunCasters {
     visibility_counts: [usize; 4],
 }
 
+/// Everything the static sun bake reads that can change while a map is up.
+#[derive(Clone, PartialEq)]
+struct StaticSunBakeKey {
+    planes: [Vec<[u32; 4]>; 2],
+    cell_vis: Vec<u32>,
+    cell_vis_all: bool,
+    eye: Option<[u32; 3]>,
+    ramp: String,
+    catalog_generation: MaterialGenerationId,
+    world_generation: Option<frame::WorldGeneration>,
+    pretess: bool,
+    smc_revision: Option<u64>,
+    lighting: Option<(usize, usize)>,
+    sources: (usize, usize, usize),
+}
+
+/// The last static sun bake, kept once its inputs held for two frames running.
+#[derive(Default)]
+pub(crate) struct StaticSunBakeCache {
+    key: Option<StaticSunBakeKey>,
+    baked: Option<([super::SunShadowCasterPlan; 2], [Vec<u16>; 4])>,
+}
+
 pub(crate) fn bake_static_sun_shadow_casters(
     generation: Res<MaterialGeneration>,
     frame: Res<MaterialFrameInputs>,
@@ -1244,9 +1267,13 @@ pub(crate) fn bake_static_sun_shadow_casters(
     mut casters: ResMut<super::SunShadowCasterPlan>,
     mut staged: ResMut<StaticSunCasters>,
     mut sun_staging: Local<super::SunShadowStaging>,
+    world_generation: Option<Res<frame::WorldGeneration>>,
+    mut bake_cache: Local<StaticSunBakeCache>,
 ) {
     let _static = perf::Span::HostStaticSunMs.enter();
     let (smodel_plan, lod_ramp, smc_cache, pretess, smodel_lighting) = smodel_plan;
+    let plans_changed = world_plan.as_ref().is_some_and(|plan| plan.is_changed())
+        || smodel_plan.as_ref().is_some_and(|plan| plan.is_changed());
     let camera_view = frame.view_from_world;
     staged.partitions = None;
     let super::SunShadowStaging {
@@ -1286,6 +1313,45 @@ pub(crate) fn bake_static_sun_shadow_casters(
             cache: smc_cache.as_deref(),
             lighting: smodel_lighting.as_deref(),
         };
+        // A still camera bakes the same partitions every frame, and the bake is a function of
+        // this key: while it holds, the last bake is handed out again (cloned, as the consumer
+        // takes it). A bake is kept only once its key held for a second frame, so a moving
+        // camera never pays for the copy.
+        let key = StaticSunBakeKey {
+            planes: [planes0.as_slice(), planes1.as_slice()]
+                .map(|planes| planes.iter().map(|plane| plane.map(f32::to_bits)).collect()),
+            cell_vis: cell_vis.to_vec(),
+            cell_vis_all,
+            eye: lod_origin_eye.map(|eye| eye.to_array().map(f32::to_bits)),
+            ramp: format!("{:?}", lod_ramp.args()),
+            catalog_generation: generation.catalog.generation_id,
+            world_generation: world_generation.as_deref().copied(),
+            pretess: pretess.enabled,
+            smc_revision: smc_cache.as_deref().map(|cache| cache.content_revision()),
+            lighting: smodel_lighting.as_deref().map(|lighting| {
+                (
+                    lighting.packed_lighting.as_ptr() as usize,
+                    lighting.packed_lighting.len(),
+                )
+            }),
+            sources: (
+                std::ptr::from_ref(cull) as usize,
+                std::ptr::from_ref(world_plan) as usize,
+                std::ptr::from_ref(smodel_plan) as usize,
+            ),
+        };
+        let held = !plans_changed && bake_cache.key.as_ref() == Some(&key);
+        if held && let Some((partitions, ids)) = bake_cache.baked.as_ref() {
+            let [bsp, smodel, bsp_far, smodel_far] = ids.clone();
+            casters.bsp_ids = bsp;
+            casters.smodel_ids = smodel;
+            casters.bsp_ids_far = bsp_far;
+            casters.smodel_ids_far = smodel_far;
+            staged.partitions = Some(partitions.clone());
+            return;
+        }
+        bake_cache.key = Some(key);
+        bake_cache.baked = None;
         let mut bsp_ids = std::mem::take(&mut casters.bsp_ids);
         let mut smodel_ids = std::mem::take(&mut casters.smodel_ids);
         let mut bsp_ids_far = std::mem::take(&mut casters.bsp_ids_far);
@@ -1359,6 +1425,17 @@ pub(crate) fn bake_static_sun_shadow_casters(
         casters.smodel_ids = smodel_ids;
         casters.bsp_ids_far = bsp_ids_far;
         casters.smodel_ids_far = smodel_ids_far;
+        if held {
+            bake_cache.baked = Some((
+                [near.clone(), far.clone()],
+                [
+                    casters.bsp_ids.clone(),
+                    casters.smodel_ids.clone(),
+                    casters.bsp_ids_far.clone(),
+                    casters.smodel_ids_far.clone(),
+                ],
+            ));
+        }
         if casters.generation_id != generation.catalog.generation_id {
             staged.visibility_counts = [
                 sun_surface_vis[0].iter().filter(|&&b| b != 0).count(),

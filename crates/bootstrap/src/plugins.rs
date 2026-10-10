@@ -63,24 +63,9 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
     app.edit_schedule(Last, |schedule| {
         schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
     });
-    // The fixed step's systems are small and mostly ordered one after another; on the
-    // multi-threaded executor the main thread spent its time waiting for each hop to a pool
-    // thread and back.
-    app.edit_schedule(FixedFirst, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-    app.edit_schedule(FixedPreUpdate, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-    app.edit_schedule(FixedUpdate, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-    app.edit_schedule(FixedPostUpdate, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
-    app.edit_schedule(FixedLast, |schedule| {
-        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
-    });
+    // The publish step's systems are small and run while the main thread waits on them; on the
+    // multi-threaded executor it spent that time on each hop to a pool thread and back. The fixed
+    // schedules stay multi-threaded: there the bots think on a pool thread beside the rest.
     app.edit_schedule(frame::AuthorityPublish, |schedule| {
         schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
     });

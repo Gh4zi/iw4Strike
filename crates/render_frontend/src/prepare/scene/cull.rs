@@ -142,6 +142,9 @@ pub fn apply_dpvs_cull(
     mut published_vis: ResMut<render_scene::PublishedCellVis>,
     prepared: Res<PreparedSceneView>,
     lock_pvs: Res<crate::prepare::scene::view_parms::RLockPvs>,
+    // The portal walk resets what it reads of this at the start of every walk; building a fresh
+    // one each frame was a copy of its whole fixed-size pool.
+    mut walk_scratch: Local<Box<WalkScratch>>,
 ) {
     let _cull = perf::Span::RenderCullCpuMs.enter();
     stats.frustum_planes.clear();
@@ -208,7 +211,7 @@ pub fn apply_dpvs_cull(
 
     let mut words = vec![0u32; words_for_bits(dpvs.cell_count.max(1))];
     let mut vis = VisBits::new(&mut words);
-    let mut scratch = WalkScratch::new();
+    let scratch: &mut WalkScratch = &mut walk_scratch;
     let mut walk_stats = dpvs_iw4::WalkStats::default();
     match eye_cell {
         Some(cell) if single_cell => vis.set(cell),
@@ -224,7 +227,7 @@ pub fn apply_dpvs_cull(
                 &frustum,
                 0,
                 &mut vis,
-                &mut scratch,
+                scratch,
                 Some(&mut cell_clips),
                 bevels.as_ref(),
                 Some(&mut |visited: usize, planes: &CellClipPlanes| {
