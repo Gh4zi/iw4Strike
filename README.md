@@ -436,6 +436,9 @@ everything is as before.
 - **Once CS2 is finished:** CS2 alone is enough to play the CS2 / CS:GO game mode, with other
   CS2 and CS:GO players. To join lobbies with CS:S, CZ or CS 1.6 players, you still need one of
   those games installed too.
+- **Once CS:GO is in (after CS2):** the same for CS:GO. CS:GO alone plays the CS2 / CS:GO game
+  mode with CS2 and CS:GO players; lobbies with CS:S, CZ or CS 1.6 players need one of those
+  installed too.
 
 | | Status |
 |---|---|
@@ -543,7 +546,8 @@ Known issues with CS2 on:
 
 **Counter-Strike: Global Offensive** (after CS2 is finished)
 - [ ] CS:GO read from your CS:GO (Legacy) install: its guns in first and third person, sounds,
-  HUD and buy menu
+  HUD and buy menu, playable with CS:GO alone (no CS:S needed); lobbies with CS:S, CZ or CS 1.6
+  players need one of those installed too
 - [ ] CS:GO in the same game mode as CS2: CS2 and CS:GO players play together, each with their
   own game installed
 - [ ] Mixed lobbies: CS 1.6, CS:S, CS:CZ, CS:GO and CS2 players in the same game, each seeing
