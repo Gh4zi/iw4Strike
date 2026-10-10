@@ -3219,7 +3219,7 @@ pub(crate) fn merge_sun_shadow_caster_partitions(
     near.xmodel_skipped_viewmodel = 0;
     near.xmodel_missing_key = 0;
     near.xmodel_no_technique = 0;
-    let mut dynamic = match xmodel {
+    let dynamic = match xmodel {
         Some(xmodel) => collect_xmodel_sun_shadow_casters(xmodel, catalog, near),
         None => Vec::new(),
     };
@@ -3233,12 +3233,28 @@ pub(crate) fn merge_sun_shadow_caster_partitions(
             std::mem::take(&mut far.items),
         );
     }
-    dynamic.sort_unstable_by_key(|caster| {
-        (
-            caster.item.host_sort_key(),
-            retained_draw_order_tie(&caster.item.kind),
-        )
-    });
+    // As in sort_retained_items: a caster carries a whole draw item, so the keys are sorted
+    // beside the indices and each caster moves once (sorting the casters in place moved each
+    // about log2(n) times). Equal keys keep their collection order.
+    let mut order: Vec<((u32, u32, u32), u32, u32)> = dynamic
+        .iter()
+        .enumerate()
+        .map(|(i, caster)| {
+            (
+                caster.item.host_sort_key(),
+                retained_draw_order_tie(&caster.item.kind),
+                u32::try_from(i).unwrap_or(u32::MAX),
+            )
+        })
+        .collect();
+    order.sort_unstable();
+    let dynamic: Vec<DynamicSunCaster> = {
+        let mut slots: Vec<Option<DynamicSunCaster>> = dynamic.into_iter().map(Some).collect();
+        order
+            .iter()
+            .filter_map(|&(_, _, i)| slots.get_mut(i as usize).and_then(Option::take))
+            .collect()
+    };
     let near_dynamic = partition_dynamic_casters(&dynamic, partition_planes[0]);
     let far_dynamic = partition_dynamic_casters(&dynamic, partition_planes[1]);
     (

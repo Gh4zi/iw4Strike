@@ -63,6 +63,27 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
     app.edit_schedule(Last, |schedule| {
         schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
     });
+    // The fixed step's systems are small and mostly ordered one after another; on the
+    // multi-threaded executor the main thread spent its time waiting for each hop to a pool
+    // thread and back.
+    app.edit_schedule(FixedFirst, |schedule| {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    });
+    app.edit_schedule(FixedPreUpdate, |schedule| {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    });
+    app.edit_schedule(FixedUpdate, |schedule| {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    });
+    app.edit_schedule(FixedPostUpdate, |schedule| {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    });
+    app.edit_schedule(FixedLast, |schedule| {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    });
+    app.edit_schedule(frame::AuthorityPublish, |schedule| {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    });
 
     if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
         render_app.edit_schedule(bevy::render::renderer::RenderGraph, |schedule| {

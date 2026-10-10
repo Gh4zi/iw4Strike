@@ -88,6 +88,10 @@ impl Plugin for RenderAssemblePlugin {
         .edit_schedule(DrawLaneRebuild, |schedule| {
             schedule.set_executor(bevy::ecs::schedule::MultiThreadedExecutor::new());
         })
+        // One chain of two systems: nothing to run beside, only the hop to a pool thread.
+        .edit_schedule(FxCommit, |schedule| {
+            schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+        })
         .add_systems(
             Update,
             rebuild_draw_lanes

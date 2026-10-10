@@ -362,6 +362,9 @@ pub fn apply_dpvs_cull(
         &mut draw_items_id,
         cull.draw_items.len() as u64,
     );
+    // Sorted once so each drawn surface is a binary search, not a scan of the sky list.
+    let mut sky_sorted = dpvs.sky_start_surfs.clone();
+    sky_sorted.sort_unstable();
     stats.sky_drawn_n = cull
         .draw_items
         .iter()
@@ -369,7 +372,7 @@ pub fn apply_dpvs_cull(
             (0..item.run)
                 .filter(|offset| {
                     let surf = item.surf.saturating_add(*offset);
-                    dpvs.sky_start_surfs.iter().any(|&s| s == u32::from(surf))
+                    sky_sorted.binary_search(&u32::from(surf)).is_ok()
                 })
                 .count() as u32
         })
@@ -635,8 +638,13 @@ fn append_camera_bsp_range(
     }
 
     let mut host_input_gap_n = 0u32;
+    let mut visible_n = 0usize;
     for surf in begin_i..end_i {
-        if surface_vis[surf] == 0 || draw_surfs[surf].packed != 0 {
+        if surface_vis[surf] == 0 {
+            continue;
+        }
+        if draw_surfs[surf].packed != 0 {
+            visible_n += 1;
             continue;
         }
         surface_vis[surf] = 0;
@@ -653,8 +661,10 @@ fn append_camera_bsp_range(
         draw_surf: GfxDrawSurf::from_packed(0),
         setup_key_changed: false,
     };
+    // A run is one or more visible surfaces, so the visible count bounds the runs: sizing the
+    // scratch to the whole range wrote a placeholder for every world surface each frame.
     scratch.clear();
-    scratch.resize(end_i - begin_i, placeholder);
+    scratch.resize(visible_n, placeholder);
 
     let mut census = BspDrawSurfCensus {
         range_n,
