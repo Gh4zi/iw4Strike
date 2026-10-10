@@ -434,6 +434,7 @@ everything is as before.
 | CS2's own first-person animations: draw, idle, shoot, reload, silencer on and off, shotguns reloading shell by shell, pistols' slide locked back when empty | ✅ In |
 | CS2's materials: colour, normal, roughness and metal, occlusion maps, with the map's reflections on the metal | ✅ In |
 | Third-person knife and grenade stance (on the server's hitboxes too) | ✅ In |
+| Volumetric smoke (`smoke_mode cs2`, set by the host) | 🟡 In, still being tuned |
 | Guns in third person and on the ground | ❌ Still CS:S models |
 | Sounds | ❌ Still CS:S sounds; CS2-only ones (the Nova's shell going in, the M4A1-S bolt) are silent |
 | HUD | ❌ Still the CS:S (or CS 1.6) HUD |
@@ -441,6 +442,8 @@ everything is as before.
 | Inspecting the gun (inspect key) | ❌ The animations are read, no key yet |
 | The rest of CS2's arsenal (P2000, Tec-9, CZ75-Auto, R8, M4A4, MP7, PP-Bizon, MAG-7, Sawed-Off, Negev, molotov, incendiary, decoy, Zeus) | ❌ Not yet |
 | The T-side knife, knife and glove skins, player models (agents) | ❌ Not yet |
+
+What comes next, in order, is in the [Roadmap](#roadmap). CS:GO comes after CS2 is finished.
 
 Known issues with CS2 on:
 - The first time each gun is drawn it can take a moment to appear (CS2's models and textures are
@@ -480,14 +483,6 @@ Known issues with CS2 on:
 - [x] Better FPS: the server's game logic on its own thread, smaller network snapshots
 
 **In progress (next release)**
-- [ ] Counter-Strike 2, experimental: CS2's guns in first person are in; third person, sounds,
-  HUD, buy menu and the rest of the arsenal are next. See
-  [Counter-Strike 2 (experimental)](#counter-strike-2-experimental) for what's in and what isn't
-- [ ] CS2-style volumetric smoke, an option the host or server owner turns on
-  (`smoke_mode cs2`, or `smoke_mode csgo` for CS:GO's particle smoke): smoke that fills the
-  space it pops in, flows around walls and down stairs, takes the light and colour of where it
-  is, and opens up when bullets and HE grenades go through it. Each player picks how finely it
-  is drawn with `smoke_quality high|medium|low`
 - [ ] Blood and hit feedback like CS:GO:
   - [x] A blood spray where a bullet hits a player (MW2's, bigger for a kill or a headshot)
   - [x] Blood splattered on the walls and floor behind a player a bullet hits, as CS:GO does it
@@ -507,6 +502,42 @@ Known issues with CS2 on:
 - [ ] No camera shake from the hidden MW2 weapon animations when you swap or reload a CS gun
   (`cl_camera_anim 1` brings it back)
 
+**Counter-Strike 2 (experimental)**, in order. See
+[Counter-Strike 2 (experimental)](#counter-strike-2-experimental) for what works today.
+- [x] CS2 read from your install (`game/csgo/pak01_dir.vpk`), a fifth game in the game folders
+  window with its own **Use** box
+- [x] Guns in first person: all 24 guns, the knife, grenades and the C4, with CS2's arms and
+  CS2's own animations
+- [x] CS2's materials: normal, roughness and metal, occlusion maps, with the map's reflections
+- [x] The third-person knife and grenade stance, on the server's hitboxes too
+- [ ] Volumetric smoke, an option the host or server owner turns on (`smoke_mode cs2`, or
+  `smoke_mode csgo` for CS:GO's particle smoke): smoke that fills the space it pops in, flows
+  around walls and down stairs, takes the light and colour of where it is, and opens up when
+  bullets and HE grenades go through it. Each player picks how finely it is drawn with
+  `smoke_quality high|medium|low`. In the current build, still being tuned (its size, and
+  smoke getting out of small rooms)
+- [ ] Guns in third person and lying on the ground (CS2's world models)
+- [ ] CS2 sounds: guns (with the CS2-only ones like the Nova's shell going in), footsteps,
+  grenades, the bomb and the UI
+- [ ] CS2 HUD: health, armor, ammo, money, round timer, kill feed and the bomb and kit icons,
+  drawn with CS2's own icons and fonts
+- [ ] CS2 buy menu over the existing buy rules, then the CS2 scoreboard and round-end panel
+- [ ] The inspect key, with CS2's inspect animations
+- [ ] The rest of CS2's arsenal: P2000, Tec-9, CZ75-Auto, R8 Revolver, M4A4, MP7, PP-Bizon,
+  MAG-7, Sawed-Off and Negev, then the decoy and the Zeus x27
+- [ ] Molotov and incendiary fire that spreads, burns and is put out by a smoke
+- [ ] The T-side knife, and CS2's loadout choices (M4A4 or M4A1-S, P2000 or USP-S, CZ75-Auto)
+- [ ] CS2's own movement and shooting presets (`mv_mode cs2`, `shooting_mode cs2`)
+- [ ] CS2 player models (agents)
+- [ ] CS2 as its own game mode
+
+**Counter-Strike: Global Offensive** (after CS2 is finished)
+- [ ] CS:GO read from your CS:GO (Legacy) install: its guns in first and third person, sounds,
+  HUD and buy menu
+- [ ] CS:GO as its own game mode
+- [ ] Mixed lobbies: CS 1.6, CS:S, CS:CZ, CS:GO and CS2 players in the same game, each seeing
+  their own game's guns, HUD and sounds
+
 **Planned**
 - [ ] Physics like CS:GO:
   - [ ] A physics engine in the game (Rapier, written in Rust)
@@ -517,9 +548,6 @@ Known issues with CS2 on:
     grenades)
   - [ ] Bodies removed after a set time (`corpse_time`), as CS:GO's fade out
   - [ ] Dropped guns that tumble and settle with physics
-- [ ] Mount CS:GO and CS2 together: CS:GO's and CS2's weapons, sounds, HUD and buy menu read
-  from your installs, as their own game modes, and lobbies where CS 1.6, CS:S, CS:CZ, CS:GO and
-  CS2 players play together, each seeing their own game's look
 - [ ] Console: `exec` and `autoexec.cfg`, and `lastinv` (quick switch to the last weapon)
 - [ ] Bots that play Defusal: carry, plant and defuse the bomb themselves
 - [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
