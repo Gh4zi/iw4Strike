@@ -124,6 +124,43 @@ fn steady_pitch(row: &mut crate::CapturedAlias) {
     row.pitch_max = 1.0;
 }
 
+/// The CS 1.6 player waves read (`sound/player`): the fall pains, the body hits a landing lands
+/// with, and the death cries a deadly one gets.
+const CS16_PLAYER_WAVES: [&str; 4] = ["pl_fallpain", "bhit_flesh", "bhit_kevlar", "die"];
+
+/// A hurting CS 1.6 landing's cry: `pl_fallpain3`, the only one CS 1.6 plays — its movement code
+/// (`PM_CheckFalling`) picks `pl_fallpain2` or `3` on the voice channel with no `break` between
+/// them, so the second always replaces the first.
+pub const CS_FALL_PAIN: &str = "cs/player/fall_pain";
+/// A deadly one's cry instead, one of `die1-3`.
+pub const CS_FALL_DEATH: &str = "cs/player/death";
+/// The body hit under either cry: one of `bhit_flesh-1-3` at random, or `bhit_kevlar-1` for a
+/// player in kevlar.
+pub const CS_FALL_BODY_HIT: &str = "cs/player/body_hit";
+pub const CS_FALL_BODY_HIT_KEVLAR: &str = "cs/player/body_hit_kevlar";
+
+/// Which landing group a CS 1.6 player wave belongs to (the alias after `cs/player/`).
+fn player_wave_group(stem: &str) -> Option<&'static str> {
+    let group = if stem == "pl_fallpain3" {
+        CS_FALL_PAIN
+    } else if stem.starts_with("bhit_flesh") {
+        CS_FALL_BODY_HIT
+    } else if stem.starts_with("bhit_kevlar") {
+        CS_FALL_BODY_HIT_KEVLAR
+    } else if stem.starts_with("die") {
+        CS_FALL_DEATH
+    } else {
+        return None;
+    };
+    group.strip_prefix(CS_PLAYER_SOUND_PREFIX)
+}
+
+/// The quiet voice waves (fall pains, death cries) that get [`OWN_FALL_CRY_GAIN`]; the body
+/// hits are recorded loud enough at the template's level.
+fn player_wave_is_cry(stem: &str) -> bool {
+    stem.starts_with("pl_fallpain") || stem.starts_with("die")
+}
+
 /// Your own fall cry's gain over the gun template it borrows: that template's 0.40-0.44 suits
 /// gun waves recorded near full scale, and left the quiet cry (CS 1.6's `pl_fallpain3` peaks at
 /// -5 dBFS, -21 dB RMS) under the landing thud. CS plays it at full volume; doubled it sits at
@@ -286,22 +323,29 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         .last()
         .and_then(|dir| dir.parent())
         .map(|dir| dir.join("valve"));
-    let mut folders = Vec::new();
+    let mut folders: Vec<(_, _, &[&str])> = Vec::new();
     for game in &goldsrc.0 {
         let sound = game.join("sound");
-        folders.push((sound.join("weapons"), CS_SOUND_PREFIX, ""));
-        folders.push((sound.join("player"), CS_PLAYER_SOUND_PREFIX, "pl_fallpain"));
-        folders.push((sound.join("radio"), CS_RADIO_SOUND_PREFIX, ""));
+        folders.push((sound.join("weapons"), CS_SOUND_PREFIX, &[""]));
+        folders.push((
+            sound.join("player"),
+            CS_PLAYER_SOUND_PREFIX,
+            &CS16_PLAYER_WAVES,
+        ));
+        folders.push((sound.join("radio"), CS_RADIO_SOUND_PREFIX, &[""]));
     }
     if let Some(valve) = &half_life {
         folders.push((
             valve.join("sound").join("weapons"),
             CS_SOUND_PREFIX,
-            "explode",
+            &["explode"],
         ));
     }
     let mut seen = std::collections::HashSet::new();
     let mut added = 0;
+    // The player sounds a landing picks from at random, by group.
+    let mut player_groups: std::collections::BTreeMap<&'static str, Vec<(String, LooseClip)>> =
+        std::collections::BTreeMap::new();
     for (folder, prefix, wanted) in folders {
         let Ok(entries) = std::fs::read_dir(&folder) else {
             continue;
@@ -318,7 +362,9 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 continue;
             };
             let stem = stem.to_ascii_lowercase();
-            if !stem.starts_with(wanted) || !seen.insert(format!("{prefix}{stem}")) {
+            if !wanted.iter().any(|wanted| stem.starts_with(wanted))
+                || !seen.insert(format!("{prefix}{stem}"))
+            {
                 continue;
             }
             let Some((rate, channels, pcm)) =
@@ -334,21 +380,30 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 channels,
                 pcm16: pcm.clone(),
             };
-            // The radio voice keeps its pitch; guns vary theirs as MW2's do.
-            let voice = prefix == CS_RADIO_SOUND_PREFIX;
-            let fall_cry = prefix == CS_PLAYER_SOUND_PREFIX;
+            // The radio voice and the player's own sounds keep their pitch; guns vary theirs as
+            // MW2's do.
+            let voice = prefix == CS_RADIO_SOUND_PREFIX || prefix == CS_PLAYER_SOUND_PREFIX;
+            let cry = prefix == CS_PLAYER_SOUND_PREFIX && player_wave_is_cry(&stem);
             let tune = |row: &mut crate::CapturedAlias| {
-                if voice || fall_cry {
+                if voice {
                     steady_pitch(row);
                 }
             };
             let tune_own = |row: &mut crate::CapturedAlias| {
-                if fall_cry {
+                if cry {
                     own_fall_cry(row);
                 } else {
                     tune(row);
                 }
             };
+            if prefix == CS_PLAYER_SOUND_PREFIX
+                && let Some(group) = player_wave_group(&stem)
+            {
+                player_groups
+                    .entry(group)
+                    .or_default()
+                    .push((stem.clone(), clip(String::new())));
+            }
             let both = catalog.add_loose_alias_tuned(
                 &alias,
                 &world,
@@ -370,6 +425,40 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 catalog.add_loose_alias_tuned(&event, &player, vec![clip(event.clone())], steady_pitch);
             }
         }
+    }
+    // A landing's sounds by group, each wave of a group one random variant of it.
+    for (group, mut waves) in player_groups {
+        waves.sort_by(|a, b| a.0.cmp(&b.0));
+        diag::info!(
+            Audio,
+            "cs sounds: {CS_PLAYER_SOUND_PREFIX}{group} = {}",
+            waves
+                .iter()
+                .map(|(stem, _)| format!("{stem}.wav"))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+        let cry = player_wave_is_cry(&waves[0].0);
+        let alias = format!("{CS_PLAYER_SOUND_PREFIX}{group}");
+        let own = format!("{alias}{CS_SOUND_PLAYER_SUFFIX}");
+        let named = |name: &str| -> Vec<LooseClip> {
+            waves
+                .iter()
+                .enumerate()
+                .map(|(i, (_, clip))| LooseClip {
+                    name: format!("{name}#{i}"),
+                    ..clip.clone()
+                })
+                .collect()
+        };
+        catalog.add_loose_alias_tuned(&alias, &world, named(&alias), steady_pitch);
+        catalog.add_loose_alias_tuned(&own, &player, named(&own), |row| {
+            if cry {
+                own_fall_cry(row);
+            } else {
+                steady_pitch(row);
+            }
+        });
     }
     // The bomb's sounds.
     for (event, wave) in CS16_C4 {
@@ -403,10 +492,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         goldsrc.0,
         alias_volume_range(catalog, &player),
         alias_volume_range(catalog, &world),
-        alias_volume_range(
-            catalog,
-            &format!("{CS_PLAYER_SOUND_PREFIX}pl_fallpain3{CS_SOUND_PLAYER_SUFFIX}")
-        )
+        alias_volume_range(catalog, &format!("{CS_FALL_PAIN}{CS_SOUND_PLAYER_SUFFIX}"))
     );
     added
 }
