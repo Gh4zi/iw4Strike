@@ -658,7 +658,10 @@ fn sync_cursor_grab(
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
     time: Res<Time<Real>>,
     mut held_frames: Local<u32>,
+    mut free_frames: Local<u32>,
     mut last_regrab: Local<f64>,
+    // The cursor's display count belongs to the thread that calls ShowCursor: winit's, the main one.
+    _main_thread: bevy::ecs::system::NonSendMarker,
 ) {
     let mut returned = false;
     for ev in focused.read() {
@@ -713,6 +716,20 @@ fn sync_cursor_grab(
         }
     } else {
         *held_frames = 0;
+    }
+    // The other way round: the game shows the arrow (a menu, the console) but a hide above raced
+    // a screenshot tool or Alt+Tab and left the count below winit's, so its show did not bring
+    // it back.
+    if want == CursorGrabMode::None && cursor.grab_mode == want && window.focused {
+        *free_frames = free_frames.saturating_add(1);
+        // About once a second, so a cursor Windows will not report as showing is not stepped
+        // every frame.
+        if *free_frames >= 3 && (*free_frames - 3) % 60 == 0 && !os_cursor::cursor_showing() {
+            os_cursor::show_cursor();
+            diag::info!(Input, "cursor: arrow hidden behind the game's back; shown again");
+        }
+    } else {
+        *free_frames = 0;
     }
     if cursor.grab_mode != want {
         cursor.grab_mode = want;

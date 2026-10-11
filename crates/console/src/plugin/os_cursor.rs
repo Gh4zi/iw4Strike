@@ -28,12 +28,37 @@ mod imp {
         }
     }
 
-    /// Brings the display count down to -1, where winit's own hide leaves it, so its later
-    /// `ShowCursor(TRUE)` (the console opening) shows the arrow again.
+    /// Sets the display count to exactly -1, where winit's own hide leaves it, so its later
+    /// `ShowCursor(TRUE)` (the console opening) shows the arrow again. Never lower: Windows can
+    /// report the arrow showing while this thread's count is already hidden (a screenshot tool's
+    /// overlay, Alt+Tab), and stepping past -1 then left the arrow hidden in menus for good.
     pub fn hide_cursor() {
         for _ in 0..64 {
             // SAFETY: ShowCursor only adjusts this thread's display count.
-            if unsafe { ShowCursor(0) } < 0 {
+            let count = unsafe { ShowCursor(0) };
+            if count < -1 {
+                // SAFETY: as above; undoes the step past -1.
+                unsafe { ShowCursor(1) };
+            }
+            if count < 0 {
+                break;
+            }
+        }
+    }
+
+    /// Brings the display count back up to zero, so the arrow shows and winit's next hide (one
+    /// step down) hides it again. For when the count ended below where winit left it (a hide
+    /// above that raced a screenshot tool or Alt+Tab), which winit's single show cannot undo.
+    /// Never above zero, for the same reason as `hide_cursor`.
+    pub fn show_cursor() {
+        for _ in 0..64 {
+            // SAFETY: ShowCursor only adjusts this thread's display count.
+            let count = unsafe { ShowCursor(1) };
+            if count > 0 {
+                // SAFETY: as above; undoes the step past 0.
+                unsafe { ShowCursor(0) };
+            }
+            if count >= 0 {
                 break;
             }
         }
@@ -89,9 +114,11 @@ mod imp {
 
     pub fn hide_cursor() {}
 
+    pub fn show_cursor() {}
+
     pub fn clipped_to_foreground() -> Option<bool> {
         None
     }
 }
 
-pub(super) use imp::{clipped_to_foreground, cursor_showing, hide_cursor};
+pub(super) use imp::{clipped_to_foreground, cursor_showing, hide_cursor, show_cursor};
