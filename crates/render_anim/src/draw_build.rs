@@ -325,6 +325,7 @@ pub fn overwrite_script_model_asset(
         }
         ranges.push((vmin as usize, n, mat_i as usize));
     }
+    let mut materials_changed = false;
     for ((base, n, mat_i), (surface, material)) in ranges.into_iter().zip(incoming.iter()) {
         let Some(positions) = surface
             .mesh
@@ -361,14 +362,20 @@ pub fn overwrite_script_model_asset(
             };
             dst.copy_from_slice(&surface.packed_vertices);
         }
-        if let Some(slot) = plan.materials.get_mut(mat_i) {
+        if let Some(slot) = plan.materials.get_mut(mat_i)
+            && *slot != **material
+        {
             *slot = (*material).clone();
+            materials_changed = true;
         }
     }
     if let Some(asset) = plan.assets.get_mut(asset_index) {
         asset.dobj_state = dobj_state;
     }
-    plan.revisions.bump_surfaces();
+    plan.revisions.bump_vertices();
+    if materials_changed {
+        plan.revisions.bump_materials();
+    }
     plan.revision = plan.revision.wrapping_add(1);
     true
 }

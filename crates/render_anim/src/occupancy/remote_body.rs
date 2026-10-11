@@ -1362,6 +1362,16 @@ fn submit_remote_bodies(
         return;
     }
 
+    // A rebuild that seats the same draws with the same materials only moved vertices and
+    // draw rows: it keeps the admission and materials revisions the plan had, so consumers
+    // keyed on them do not take it for a new set of bodies.
+    let prev_revisions = plan.revisions;
+    let prev_materials = std::mem::take(&mut plan.materials);
+    let prev_seats: Vec<(Option<u32>, u32, u32)> = plan
+        .draws
+        .iter()
+        .map(|d| (d.scene_entnum, d.surface, d.material))
+        .collect();
     plan.clear_geometry();
     let vert_n: usize = seated
         .iter()
@@ -1435,6 +1445,18 @@ fn submit_remote_bodies(
         let topology = topology_fingerprint(&plan.indices, &plan.surface_ranges, plan.decoded_n);
         if plan.revisions.topology != topology {
             plan.revisions.topology = topology;
+        }
+        if plan.materials == prev_materials {
+            plan.revisions.materials = prev_revisions.materials;
+        }
+        if topology == prev_revisions.topology
+            && plan
+                .draws
+                .iter()
+                .map(|d| (d.scene_entnum, d.surface, d.material))
+                .eq(prev_seats.iter().copied())
+        {
+            plan.revisions.admission = prev_revisions.admission;
         }
         plan.revision = plan.revision.wrapping_add(1);
         plan.last_packed_id = Some(packed_id);
