@@ -14,9 +14,9 @@ pub struct ConsoleSettings {
 impl Default for ConsoleSettings {
     fn default() -> Self {
         Self {
-            log_capacity: 12,
-            height: 360.0,
-            width: 780.0,
+            log_capacity: 1000,
+            height: 780.0,
+            width: 1000.0,
         }
     }
 }
