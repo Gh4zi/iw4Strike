@@ -49,6 +49,8 @@ pub(super) struct Palette {
     pub suggest_bg: Color,
     /// The prompt shows `PROMPT` before the line (the suggestions indent past it).
     pub prompt_glyph: bool,
+    /// The scrollback's line height, when the look sets one.
+    pub line_height: Option<f32>,
 }
 
 const CLASSIC_BODY: Color = Color::srgb(0.82, 0.92, 0.82);
@@ -63,21 +65,23 @@ pub(super) const CLASSIC: Palette = Palette {
     panel: Color::srgba(0.02, 0.03, 0.04, 0.96),
     suggest_bg: Color::srgb(0.02, 0.03, 0.04),
     prompt_glyph: true,
+    line_height: None,
 };
 
-/// CS2's console (`gameconsole.vcss`): 14 px text, white input, light grey output. Its
+/// CS2's console (`gameconsole.vcss`): 14 px text on 19.5 px lines, white, unwrapped. Its
 /// suggestions are a list of their own (`fill_cs2_suggestions`), so the suggestion colours
 /// here only serve the classic span list.
 pub(super) const CS2: Palette = Palette {
     font_size: 14.0,
     body: Color::WHITE,
-    output: Color::srgb(0.8, 0.8, 0.8),
+    output: Color::srgb(0.93, 0.93, 0.93),
     matched: Color::srgba(1.0, 1.0, 1.0, 0.6),
     rest_selected: Color::WHITE,
     rest_muted: Color::srgba(1.0, 1.0, 1.0, 0.6),
     panel: window::COLOR_WINDOW,
     suggest_bg: CS2_SUGGEST_BG,
     prompt_glyph: false,
+    line_height: Some(19.5),
 };
 
 /// The original panel's size (the CS2 window takes `ConsoleSettings`' size instead).
@@ -328,9 +332,9 @@ fn spawn_cs2(
                     BackgroundColor(window::COLOR_TITLE),
                 ))
                 .with_children(|header| {
-                    // CS2's title: Stratum2 Mono bold, 18 px, uppercase, 2 px letter spacing.
-                    // The monospace face draws it twice a pixel apart for the bold weight it
-                    // does not have.
+                    // CS2's title: Stratum2 Mono bold, uppercase, 2 px letter spacing. The
+                    // monospace face matches its visible size at CS2_TITLE_SIZE, drawn twice a
+                    // pixel apart for the bold weight it does not have.
                     header
                         .spawn((
                             Node {
@@ -344,7 +348,7 @@ fn spawn_cs2(
                             for nudge in [0.0, 1.0] {
                                 title.spawn((
                                     Text::new("CONSOLE"),
-                                    text_font(&title_font, 18.0),
+                                    text_font(&title_font, CS2_TITLE_SIZE),
                                     LetterSpacing::Px(2.0),
                                     TextColor(Color::WHITE),
                                     Node {
@@ -369,7 +373,7 @@ fn spawn_cs2(
                         .with_children(|close| {
                             close.spawn((
                                 Text::new("X"),
-                                text_font(&title_font, 16.0),
+                                text_font(&title_font, CS2_TITLE_SIZE),
                                 TextColor(window::COLOR_CLOSE),
                                 Pickable::IGNORE,
                             ));
@@ -389,7 +393,11 @@ fn spawn_cs2(
                             bottom: px(12),
                         },
                         flex_direction: FlexDirection::Column,
-                        overflow: Overflow::scroll_y(),
+                        // Long lines run on past the right edge and are cut there, as in CS2.
+                        overflow: Overflow {
+                            x: OverflowAxis::Clip,
+                            y: OverflowAxis::Scroll,
+                        },
                         ..default()
                     },
                     ScrollPosition::default(),
@@ -401,6 +409,7 @@ fn spawn_cs2(
                             Text::new(""),
                             text_font(&font, palette.font_size),
                             TextColor(palette.output),
+                            TextLayout::no_wrap(),
                             log_cursor(CS2_SELECTION),
                             Node {
                                 margin: UiRect::all(px(2)),
@@ -515,6 +524,10 @@ fn spawn_cs2(
         log: log.expect("console log entity"),
     }
 }
+
+/// The title's size in the monospace face, matching what CS2's 18 px Stratum2 Mono shows
+/// (measured against CS2 screenshots: about 70-75 px wide on a 1000 px console).
+const CS2_TITLE_SIZE: f32 = 14.0;
 
 /// The CS2 console's autocomplete: a list that drops below the window (CS2's
 /// `TextEntryAutocomplete`, `autocompleteposition bottom`).

@@ -9,7 +9,7 @@ use bevy::{
         pointer::PointerButton,
     },
     prelude::*,
-    text::{EditableText, FontCx, LayoutCx, TextEdit, TextLayoutInfo},
+    text::{EditableText, FontCx, LayoutCx, LineHeight, TextEdit, TextLayoutInfo},
     ui::{ComputedUiRenderTargetInfo, UiGlobalTransform},
     window::{CursorEntered, CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused},
 };
@@ -2439,7 +2439,7 @@ fn update_console_ui(
             let runs = log_color_runs(&state.log, palette);
             commands.entity(entity).with_children(|root| {
                 for (run, color) in runs {
-                    root.spawn((
+                    let mut span = root.spawn((
                         TextSpan::new(run),
                         TextFont {
                             font: font.clone().into(),
@@ -2448,6 +2448,9 @@ fn update_console_ui(
                         },
                         TextColor(color),
                     ));
+                    if let Some(height) = palette.line_height {
+                        span.insert(LineHeight::Px(height));
+                    }
                 }
             });
         }
