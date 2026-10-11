@@ -17,7 +17,8 @@ use crate::adapters::anim::dyn_ent::{
     relink_dyn_ent_primary_lights,
 };
 use crate::prepare::scene::cull::{
-    DpvsFrameStats, append_bmodel_colour_span, draw_item_rebinds, refresh_draw_items_id,
+    DpvsFrameStats, SurfaceBits, append_bmodel_colour_span, draw_item_rebinds,
+    refresh_draw_items_id,
 };
 use crate::prepare::scene::gfx_scene::HostGfxScene;
 use crate::prepare::scene::smodel_geom_cache::FrontendWorkerCmds;
@@ -236,7 +237,7 @@ fn exec_cell_dyn_brush_cmds(
     let Some(cull) = scene.cull.as_mut() else {
         return;
     };
-    let mut already = HashSet::new();
+    let mut already = SurfaceBits::new();
     for item in &cull.draw_items {
         for offset in 0..item.run {
             already.insert(item.surf.saturating_add(offset));

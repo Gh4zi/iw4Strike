@@ -1,5 +1,3 @@
-use bevy::platform::collections::HashSet;
-
 use bevy::prelude::*;
 use dpvs_iw4::{
     AabbCullStats, AabbTreeCull, BspDrawSurfCensus, BspDrawSurfRun, CellClipPlanes,
@@ -879,11 +877,30 @@ pub(crate) fn packed_world_colour_key(
     ))
 }
 
+/// Surfaces already in a draw list, one bit per surface number (they are `u16`): setting a
+/// bit for every drawn surface each frame was a hash insert per surface.
+pub(crate) struct SurfaceBits(Vec<u64>);
+
+impl SurfaceBits {
+    pub(crate) fn new() -> Self {
+        Self(vec![0; (usize::from(u16::MAX) + 1) / 64])
+    }
+
+    /// Sets the surface's bit; true when it was clear (as `HashSet::insert`).
+    pub(crate) fn insert(&mut self, surf: u16) -> bool {
+        let word = &mut self.0[usize::from(surf) / 64];
+        let mask = 1u64 << (surf % 64);
+        let was_clear = *word & mask == 0;
+        *word |= mask;
+        was_clear
+    }
+}
+
 pub(crate) fn append_bmodel_colour_span(
     cull: &mut crate::prepare::scene::world::WorldCull,
     start_surf: u16,
     surface_count: u16,
-    already: &mut HashSet<u16>,
+    already: &mut SurfaceBits,
     baked_material_keys: &[Option<u64>],
     batch_primary_lights: &[u8],
 ) -> (u32, u32) {
