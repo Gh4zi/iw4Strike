@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -70,7 +70,7 @@ fn scene_quat_from_mover_sample(sample: Option<&ScriptMoverCentitySample>) -> Op
 #[derive(SystemParam)]
 struct ScriptModelPoseLocals<'w, 's> {
     live_assets: Local<'s, Vec<usize>>,
-    live_ids: Local<'s, std::collections::HashSet<u32>>,
+    live_ids: Local<'s, HashSet<u32>>,
     keep: Local<'s, Vec<bool>>,
     remap: Local<'s, Vec<Option<usize>>>,
     lod_skinned: Res<'w, render_scene::LodRampSkinnedDvar>,
@@ -281,7 +281,7 @@ fn sync_spawned_scene_models(
         }
         return;
     };
-    let movers: std::collections::HashMap<u32, &sim::ScriptMoverGentity> = snapshot
+    let movers: HashMap<u32, &sim::ScriptMoverGentity> = snapshot
         .meta
         .script_movers
         .iter()
@@ -294,7 +294,7 @@ fn sync_spawned_scene_models(
             None => commands.entity(entity).despawn(),
         }
     }
-    let known: std::collections::HashSet<u32> = existing
+    let known: HashSet<u32> = existing
         .iter()
         .map(|(_, marker, _)| marker.source)
         .collect();
@@ -425,13 +425,19 @@ fn apply_script_mover_centity_pose(
         };
         let (origin, angles) = sample_script_mover_pose(runtime, at_time);
         let [pitch, yaw, roll] = angles;
-        transform.rotation = Quat::from_euler(
+        let rotation = Quat::from_euler(
             EulerRot::ZYX,
             yaw.to_radians(),
             pitch.to_radians(),
             roll.to_radians(),
         );
-        transform.translation = Vec3::from_array(origin);
+        let translation = Vec3::from_array(origin);
+        // Written only when it moved: a transform written every frame marks every script model
+        // changed, and transform propagation then walks all of them.
+        if transform.rotation != rotation || transform.translation != translation {
+            transform.rotation = rotation;
+            transform.translation = translation;
+        }
         persist
             .mover_pose
             .insert(mapent, ScriptMoverCentitySample::posed(angles));
