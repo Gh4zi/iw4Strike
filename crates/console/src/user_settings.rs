@@ -353,6 +353,8 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("sv_destructibles={}", u8::from(settings.destructibles)),
         format!("third_person={}", settings.third_person),
         format!("console_style={}", settings.console_style),
+        format!("fsr_mode={}", settings.fsr_mode),
+        format!("fsr_sharpness={:.2}", settings.fsr_sharpness),
         format!("shadows={}", settings.shadows),
         format!("depth_of_field={}", settings.depth_of_field),
         format!("bloom={}", settings.bloom),
@@ -507,6 +509,18 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "console_style" => {
                 if let Ok(style @ (0 | 1)) = value.trim().parse::<u8>() {
                     settings.console_style = style;
+                }
+            }
+            "fsr_mode" => {
+                if let Ok(mode @ 0..=5) = value.trim().parse::<u8>() {
+                    settings.fsr_mode = mode;
+                }
+            }
+            "fsr_sharpness" => {
+                if let Ok(sharpness) = value.trim().parse::<f32>()
+                    && sharpness.is_finite()
+                {
+                    settings.fsr_sharpness = sharpness.clamp(0.0, 1.0);
                 }
             }
             "smoke_quality" => {
@@ -723,6 +737,18 @@ pub(crate) fn native_menu_settings(
             "ui_third_person" | "cg_thirdPerson" => settings.third_person = value == "1",
             "ui_shadows" => parse_into(value, &mut settings.shadows),
             "ui_dof" => settings.depth_of_field = value == "1",
+            "ui_fsr" => {
+                if let Ok(mode @ 0..=5) = value.trim().parse::<u8>() {
+                    settings.fsr_mode = mode;
+                }
+            }
+            "ui_fsr_sharpness" => {
+                if let Ok(sharpness) = value.trim().parse::<f32>()
+                    && sharpness.is_finite()
+                {
+                    settings.fsr_sharpness = sharpness.clamp(0.0, 1.0);
+                }
+            }
             "ui_bloom" => settings.bloom = value == "1",
             "ui_max_frames_ahead" => parse_into(value, &mut settings.max_frames_ahead),
             "ui_pad_layout" => parse_into(value, &mut settings.pad_layout),
@@ -836,6 +862,8 @@ pub(crate) fn native_menu_settings(
     );
     dvars.set("ui_shadows", settings.shadows.to_string());
     dvars.set("ui_dof", if settings.depth_of_field { "1" } else { "0" });
+    dvars.set("ui_fsr", settings.fsr_mode.to_string());
+    dvars.set("ui_fsr_sharpness", format!("{:.1}", settings.fsr_sharpness));
     dvars.set("ui_bloom", if settings.bloom { "1" } else { "0" });
     dvars.set("ui_max_frames_ahead", settings.max_frames_ahead.to_string());
     dvars.set("ui_r_mode", settings.resolution.to_string());

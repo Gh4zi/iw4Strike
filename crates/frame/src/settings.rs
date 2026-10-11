@@ -54,6 +54,11 @@ pub struct GameSettings {
     pub third_person: bool,
     /// The console's look: 0 the original panel, 1 the CS2-style window.
     pub console_style: u8,
+    /// AMD FSR 3 upscaling: 0 off, 1 Native AA, 2 Quality, 3 Balanced, 4 Performance,
+    /// 5 Ultra Performance.
+    pub fsr_mode: u8,
+    /// FSR 3's sharpening, 0 (none) to 1 (most).
+    pub fsr_sharpness: f32,
     pub master_volume: f32,
     /// `snd_ambient_volume`: the map's own ambience (background bed and looping emitters), 0-1.
     pub ambient_volume: f32,
@@ -134,6 +139,8 @@ impl Default for GameSettings {
             destructibles: false,
             third_person: false,
             console_style: 0,
+            fsr_mode: 0,
+            fsr_sharpness: 0.8,
             master_volume: 1.0,
             ambient_volume: Self::AMBIENT_VOLUME_DEFAULT,
             timer_warning_volume: 1.0,

@@ -1,5 +1,6 @@
 pub mod diag;
 pub mod drawsurf;
+pub mod fsr;
 mod plugin;
 
 pub use drawsurf::{

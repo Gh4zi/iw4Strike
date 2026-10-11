@@ -36,6 +36,16 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "smoke_mode [cs2|csgo] — how smoke grenades look on the server you host: CS2's volumetric smoke that fills the room (default) or the particle smoke",
         ));
     }
+    if registry.resolve("r_fsr").is_none() {
+        registry.register(crate::CommandSpec::new("r_fsr").usage(
+            "r_fsr [0-5] — AMD FSR 3 upscaling: 0 off, 1 Native AA, 2 Quality, 3 Balanced, 4 Performance, 5 Ultra Performance",
+        ));
+    }
+    if registry.resolve("r_fsr_sharpness").is_none() {
+        registry.register(crate::CommandSpec::new("r_fsr_sharpness").usage(
+            "r_fsr_sharpness [0-1] — FSR 3's sharpening (default 0.8)",
+        ));
+    }
     if registry.resolve("console_style").is_none() {
         registry.register(crate::CommandSpec::new("console_style").usage(
             "console_style [0|1] — the console's look: 0 the original panel, 1 the CS2-style window",
@@ -199,6 +209,28 @@ pub(crate) fn route_movement_commands(
                     format!("smoke_quality = {}", game.smoke_quality)
                 }
                 _ => "usage: smoke_quality [high|medium|low]".to_owned(),
+            },
+            "r_fsr" => match cmd.args.as_slice() {
+                [] => format!(
+                    "r_fsr = {} (0 off, 1 Native AA, 2 Quality, 3 Balanced, 4 Performance, 5 Ultra \
+                     Performance)",
+                    game.fsr_mode
+                ),
+                [arg] if matches!(arg.parse::<u8>(), Ok(0..=5)) => {
+                    game.fsr_mode = arg.parse().unwrap_or(0);
+                    game.touch();
+                    format!("r_fsr = {}", game.fsr_mode)
+                }
+                _ => "usage: r_fsr [0-5]".to_owned(),
+            },
+            "r_fsr_sharpness" => match cmd.args.as_slice() {
+                [] => format!("r_fsr_sharpness = {:.2}", game.fsr_sharpness),
+                [arg] if arg.parse::<f32>().is_ok_and(f32::is_finite) => {
+                    game.fsr_sharpness = arg.parse::<f32>().unwrap_or(0.8).clamp(0.0, 1.0);
+                    game.touch();
+                    format!("r_fsr_sharpness = {:.2}", game.fsr_sharpness)
+                }
+                _ => "usage: r_fsr_sharpness [0-1]".to_owned(),
             },
             "console_style" => match cmd.args.as_slice() {
                 [] => format!(
