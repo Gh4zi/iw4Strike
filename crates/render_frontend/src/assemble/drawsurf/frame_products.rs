@@ -865,28 +865,6 @@ fn colour_list_keep(
     .is_ok_and(|(_, technique)| technique.flags & 1 != 0)
 }
 
-fn overlay_filter_from_lanes(
-    dest: &mut [RetainedDrawItem],
-    lanes: [&[RetainedDrawItem]; 3],
-    keep: impl Fn(&RetainedDrawItem) -> bool,
-) -> bool {
-    let expect = dest.len();
-    let mut filled = 0usize;
-    let mut cursors = [0usize; 3];
-    while let Some(lane_index) = next_merge_lane(lanes, &cursors) {
-        let item = lanes[lane_index][cursors[lane_index]];
-        cursors[lane_index] += 1;
-        if keep(&item) {
-            let Some(dst) = dest.get_mut(filled) else {
-                return false;
-            };
-            *dst = item;
-            filled += 1;
-        }
-    }
-    filled == expect
-}
-
 fn distortion_sort_keep(draw: &RetainedDrawItem, sort_key: u32) -> bool {
     u32::from(dpvs_iw4::unpack(dpvs_iw4::GfxDrawSurf { packed: draw.key }).primary_sort_key)
         == sort_key
@@ -2063,21 +2041,19 @@ pub(crate) fn execute_camera_products(
                 &xmodel_lane.distortion,
                 &fx_lane.distortion,
             ];
-            distortion.ordered_draws.clone_from(
-                &published
-                    .product(FrameProductKind::Distortion)
-                    .ordered_draws,
+            // Filtering each lane before the merge gives the list a merge-then-filter gave (a
+            // stable merge commutes with a filter) while copying only the draws kept, not every
+            // draw of every lane. The old overlay of last frame's list ended in that same list.
+            let kept = lanes.map(|lane| {
+                lane.iter()
+                    .filter(|draw| distortion_sort_keep(draw, sort_key))
+                    .copied()
+                    .collect::<Vec<_>>()
+            });
+            merge_draw_lanes(
+                &mut distortion.ordered_draws,
+                [&kept[0], &kept[1], &kept[2]],
             );
-            if !reuse_compact
-                || !overlay_filter_from_lanes(&mut distortion.ordered_draws, lanes, |draw| {
-                    distortion_sort_keep(draw, sort_key)
-                })
-            {
-                merge_draw_lanes(&mut distortion.ordered_draws, lanes);
-                distortion
-                    .ordered_draws
-                    .retain(|draw| distortion_sort_keep(draw, sort_key));
-            }
             distortion.status = FrameProductStatus::ResolveReady {
                 target: ProductTarget::ResolvedPostSun,
             };
