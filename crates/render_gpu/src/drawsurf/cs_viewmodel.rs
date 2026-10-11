@@ -12,6 +12,7 @@ use std::sync::Arc;
 use bevy::core_pipeline::{Core3d, Core3dSystems};
 use bevy::mesh::VertexBufferLayout;
 use bevy::prelude::*;
+use bevy::render::camera::TemporalJitter;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::binding_types::{
     sampler, texture_2d, texture_cube, uniform_buffer_sized,
@@ -36,7 +37,9 @@ use bevy::shader::Shader;
 const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/cs_viewmodel.wgsl";
 /// Bones a frame can carry (GoldSrc's `MAXSTUDIOBONES`).
 pub const CS_VIEWMODEL_MAX_BONES: usize = 128;
-const PARAMS_HEADER: u64 = 160;
+const PARAMS_HEADER: u64 = 176;
+/// Where the jitter sits in the params (after the reflection flag).
+const PARAMS_JITTER: u64 = 160;
 const PARAMS_SIZE: u64 = PARAMS_HEADER + CS_VIEWMODEL_MAX_BONES as u64 * 48;
 const DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32Float;
 /// Near plane in view-space units (GoldSrc units).
@@ -411,6 +414,8 @@ fn prepare_cs_viewmodel(
             bytes.extend_from_slice(&v.to_le_bytes());
         }
     }
+    // The jitter is filled in at draw time with the projection.
+    bytes.extend_from_slice(&[0; 16]);
     for bone in &frame.bones {
         for row in bone {
             for v in row {
@@ -423,7 +428,7 @@ fn prepare_cs_viewmodel(
 }
 
 fn draw_cs_viewmodel(
-    view: ViewQuery<&ViewTarget>,
+    view: ViewQuery<(&ViewTarget, Option<&TemporalJitter>)>,
     extracted: Res<ExtractedCsViewmodel>,
     pipeline: Option<Res<CsViewmodelPipeline>>,
     mut gpu: ResMut<CsViewmodelGpu>,
@@ -434,7 +439,7 @@ fn draw_cs_viewmodel(
     images: Res<RenderAssets<GpuImage>>,
     mut context: RenderContext,
 ) {
-    let target = view.into_inner();
+    let (target, jitter) = view.into_inner();
     let (Some(pipeline), Some(model)) = (pipeline, extracted.0.model.as_ref()) else {
         return;
     };
@@ -452,6 +457,14 @@ fn draw_cs_viewmodel(
     let fy = 1.0 / extracted.0.tan_half_fov_y.max(0.01);
     let fx = fy * size.height as f32 / size.width as f32;
     queue.write_buffer(&pipeline.params, 0, &fx.to_le_bytes());
+    // The scene's jitter (Bevy's offset moves the image left and up, hence the signs).
+    let jitter = jitter.map_or(Vec2::ZERO, |jitter| {
+        Vec2::new(-2.0, 2.0) * jitter.offset / Vec2::new(size.width as f32, size.height as f32)
+    });
+    let mut jitter_bytes = [0u8; 8];
+    jitter_bytes[..4].copy_from_slice(&jitter.x.to_le_bytes());
+    jitter_bytes[4..].copy_from_slice(&jitter.y.to_le_bytes());
+    queue.write_buffer(&pipeline.params, PARAMS_JITTER, &jitter_bytes);
 
     if gpu.depth.as_ref().is_none_or(|(extent, _)| *extent != size) {
         let texture = device.create_texture(&TextureDescriptor {

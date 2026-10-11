@@ -6,8 +6,81 @@ pub use render_scene::{
 
 use bevy::camera::Viewport;
 use bevy::prelude::*;
+use bevy::render::camera::TemporalJitter;
+use bevy::window::PrimaryWindow;
 
 use crate::prepare::scene::camera::{FlyCamera, FpvLens};
+
+/// FSR's camera jitter this frame, in render-target pixels; zero without FSR.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct SceneJitter(pub Vec2);
+
+/// With FSR on, moves the 3D camera by a sub-pixel amount each frame (AMD's Halton 2,3 sequence)
+/// so the upscaler can gather detail across frames. Bevy jitters its own view through
+/// `TemporalJitter`; `stamp_prepared_scene_view` applies the same offset to ours.
+pub(crate) fn jitter_scene_camera(
+    mut commands: Commands,
+    settings: Res<frame::GameSettings>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut lenses: Query<(Entity, &Camera, Option<&mut TemporalJitter>), With<FpvLens>>,
+    mut jitter: ResMut<SceneJitter>,
+    mut index: Local<u32>,
+) {
+    let Ok((entity, camera, temporal)) = lenses.single_mut() else {
+        jitter.0 = Vec2::ZERO;
+        return;
+    };
+    if settings.fsr_mode == 0 || !fsr_jitter_env() {
+        jitter.0 = Vec2::ZERO;
+        if temporal.is_some() {
+            commands.entity(entity).remove::<TemporalJitter>();
+        }
+        return;
+    }
+    // AMD's phase count: 8 samples per display pixel's worth of render pixels.
+    let render_w = camera.physical_target_size().map_or(0, |size| size.x);
+    let display_w = windows.single().map_or(0, Window::physical_width);
+    let ratio = if render_w > 0 && display_w > 0 {
+        display_w as f32 / render_w as f32
+    } else {
+        1.0
+    };
+    let phases = ((8.0 * ratio * ratio) as u32).max(1);
+    *index = index.wrapping_add(1);
+    let sample = *index % phases + 1;
+    jitter.0 = Vec2::new(halton(sample, 2) - 0.5, halton(sample, 3) - 0.5);
+    // Bevy's offset moves the image the other way.
+    let offset = -jitter.0;
+    match temporal {
+        Some(mut temporal) => temporal.offset = offset,
+        None => {
+            commands.entity(entity).insert(TemporalJitter { offset });
+        }
+    }
+}
+
+/// Jitter shakes the picture until FSR's temporal pass averages it out, so it stays behind
+/// `IW4L_FSR_JITTER=1` until that pass lands.
+fn fsr_jitter_env() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        matches!(
+            std::env::var("IW4L_FSR_JITTER").as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        )
+    })
+}
+
+fn halton(mut index: u32, base: u32) -> f32 {
+    let mut f = 1.0;
+    let mut result = 0.0;
+    while index > 0 {
+        f /= base as f32;
+        result += f * (index % base) as f32;
+        index /= base;
+    }
+    result
+}
 
 pub(crate) fn stamp_prepared_scene_view(
     mut view: ResMut<PreparedSceneView>,
@@ -22,6 +95,7 @@ pub(crate) fn stamp_prepared_scene_view(
     clock: Option<Res<net::FrameClock>>,
     depthhack: Res<RZnearDepthhackDvar>,
     subwindow: Res<RSubwindowDvar>,
+    jitter: Res<SceneJitter>,
     hosts: Query<&Transform, With<FlyCamera>>,
     mut lenses: Query<(&Transform, &Projection, &mut Camera), With<FpvLens>>,
 ) {
@@ -100,6 +174,10 @@ pub(crate) fn stamp_prepared_scene_view(
         dpvs_z_near,
         depthhack.value,
         scene_viewport,
+    );
+    view.apply_jitter(
+        jitter.0,
+        Vec2::new(scene_viewport.width as f32, scene_viewport.height as f32),
     );
     lock_pvs.apply_after_stamp(&view);
 

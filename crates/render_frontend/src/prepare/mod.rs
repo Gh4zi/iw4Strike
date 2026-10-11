@@ -88,6 +88,7 @@ impl Plugin for RenderPreparePlugin {
             .init_resource::<crate::assemble::drawsurf::DynEntDrawPlan>()
             .init_resource::<crate::assemble::drawsurf::XModelDrawPlan>()
             .init_resource::<frame::ClassSelectHandoff>()
+            .init_resource::<crate::prepare::scene::view_parms::SceneJitter>()
             .add_systems(
                 Update,
                 (
@@ -103,6 +104,8 @@ impl Plugin for RenderPreparePlugin {
                         .after(spawn_world_finish)
                         .before(stamp_prepared_scene_view),
                     fly_camera,
+                    crate::prepare::scene::view_parms::jitter_scene_camera
+                        .before(stamp_prepared_scene_view),
                     stamp_prepared_scene_view
                         .after(fly_camera)
                         .after(sync_camera_from_presented)

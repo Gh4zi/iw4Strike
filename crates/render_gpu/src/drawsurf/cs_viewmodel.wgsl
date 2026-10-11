@@ -20,6 +20,8 @@ struct Params {
     axis_up: vec4<f32>,
     // x = 1 when the map's reflection probe is bound.
     reflection: vec4<f32>,
+    // xy = FSR's camera jitter as an NDC shift (zero without FSR).
+    jitter: vec4<f32>,
     // Three rows per bone (row-major 3x4).
     bones: array<vec4<f32>, 384>,
 }
@@ -86,6 +88,7 @@ fn vs_viewmodel(in: VsIn) -> VsOut {
         + bone_point(b3, in.position) * w.w;
     // Reverse-Z with an infinite far plane: depth = near / forward distance.
     out.clip = vec4<f32>(-p.y * params.proj.x, p.z * params.proj.y, params.proj.z, p.x);
+    out.clip = vec4<f32>(out.clip.xy + params.jitter.xy * out.clip.w, out.clip.zw);
     out.uv = in.uv;
     out.normal = bone_dir(b0, in.normal) * w.x
         + bone_dir(b1, in.normal) * w.y

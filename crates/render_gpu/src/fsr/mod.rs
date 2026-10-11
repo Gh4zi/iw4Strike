@@ -8,7 +8,7 @@
 
 use bevy::{
     asset::RenderAssetUsages,
-    camera::RenderTarget,
+    camera::{ImageRenderTarget, RenderTarget},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
     window::{PrimaryWindow, WindowRef},
@@ -62,7 +62,19 @@ impl FsrMode {
 struct FsrTarget {
     image: Option<Handle<Image>>,
     size: UVec2,
+    /// Render pixels per window logical pixel, so `world_to_viewport` (HUD waypoints, overhead
+    /// names) still answers in window coordinates.
+    scale_factor: f32,
     present: Option<Entity>,
+}
+
+impl FsrTarget {
+    fn image_target(&self) -> Option<ImageRenderTarget> {
+        Some(ImageRenderTarget {
+            handle: self.image.clone()?,
+            scale_factor: self.scale_factor,
+        })
+    }
 }
 
 /// The full-window image under the HUD that shows the upscaled frame.
@@ -140,6 +152,7 @@ fn apply_fsr_target(
         return;
     }
     let size = mode.render_size(display);
+    target.scale_factor = size.x as f32 / window.width().max(1.0);
     if target.image.is_none() || target.size != size {
         let handle = images.add(new_render_image(size));
         target.image = Some(handle);
@@ -155,10 +168,11 @@ fn apply_fsr_target(
         );
     }
     let handle = target.image.clone().expect("render image set above");
-    if !is_ours(render_target, target.image.as_ref()) {
+    let wanted = target.image_target().expect("render image set above");
+    if !matches!(render_target, Some(RenderTarget::Image(current)) if *current == wanted) {
         commands
             .entity(camera_entity)
-            .insert(RenderTarget::Image(handle.clone().into()));
+            .insert(RenderTarget::Image(wanted));
     }
     let shown = if camera.is_active {
         Visibility::Inherited

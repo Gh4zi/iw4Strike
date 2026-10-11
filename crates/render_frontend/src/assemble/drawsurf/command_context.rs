@@ -886,8 +886,11 @@ pub(crate) fn update_command_context_code_sources(
     let view = prepared.view_from_world;
     let clip_from_view = prepared.clip_from_view;
     let clip_from_world = prepared.clip_from_world;
-    let viewmodel_clip_from_world =
-        host_clip_from_view(prepared.fov, prepared.aspect, prepared.depth_hack_near) * view;
+    let viewmodel_clip_from_world = prepared.jittered(host_clip_from_view(
+        prepared.fov,
+        prepared.aspect,
+        prepared.depth_hack_near,
+    )) * view;
     let eye = prepared.eye;
     let mat_frame = &mut *runtime;
     mat_frame.view_origin = eye;

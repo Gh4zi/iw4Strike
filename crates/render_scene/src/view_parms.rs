@@ -54,6 +54,12 @@ pub struct PreparedSceneView {
     pub clip_from_view: Mat4,
     pub clip_from_world: Mat4,
     pub frustum_planes: Vec<[f32; 4]>,
+    /// `clip_from_world` before `jitter`, for motion vectors.
+    pub unjittered_clip_from_world: Mat4,
+    /// FSR's sub-pixel camera offset this frame, in render-target pixels (zero without FSR).
+    pub jitter: Vec2,
+    /// `jitter` as an NDC shift, which every scene projection applies.
+    pub jitter_ndc: Vec2,
     pub fov: f32,
     pub aspect: f32,
     pub near: f32,
@@ -73,6 +79,30 @@ impl PreparedSceneView {
     #[must_use]
     pub fn tan_half_fov_y(&self) -> f32 {
         (self.fov * 0.5).tan()
+    }
+
+    /// A projection with this frame's jitter applied.
+    #[must_use]
+    pub fn jittered(&self, clip_from_view: Mat4) -> Mat4 {
+        Mat4::from_translation(self.jitter_ndc.extend(0.0)) * clip_from_view
+    }
+
+    /// Offsets the projection by `jitter` pixels of a `size` view: the image moves right and
+    /// down by that much (AMD's convention, and Bevy's `TemporalJitter` with the sign flipped).
+    pub fn apply_jitter(&mut self, jitter: Vec2, size: Vec2) {
+        if jitter == Vec2::ZERO || size.x <= 0.0 || size.y <= 0.0 {
+            return;
+        }
+        self.jitter = jitter;
+        self.jitter_ndc = Vec2::new(2.0, -2.0) * jitter / size;
+        self.clip_from_view = self.jittered(self.clip_from_view);
+        self.clip_from_world = self.clip_from_view * self.view_from_world;
+        self.parms = pack_live_view_parms(
+            self.view_from_world,
+            self.clip_from_view,
+            self.clip_from_world,
+            self.eye,
+        );
     }
 }
 
@@ -234,6 +264,9 @@ impl Default for PreparedSceneView {
             view_from_world: Mat4::IDENTITY,
             clip_from_view: Mat4::IDENTITY,
             clip_from_world: Mat4::IDENTITY,
+            unjittered_clip_from_world: Mat4::IDENTITY,
+            jitter: Vec2::ZERO,
+            jitter_ndc: Vec2::ZERO,
             frustum_planes: Vec::new(),
             fov: 0.0,
             aspect: 0.0,
@@ -308,6 +341,9 @@ pub fn prepare_scene_view(
         view_from_world,
         clip_from_view,
         clip_from_world,
+        unjittered_clip_from_world: clip_from_world,
+        jitter: Vec2::ZERO,
+        jitter_ndc: Vec2::ZERO,
         frustum_planes,
         fov,
         aspect,
