@@ -118,10 +118,20 @@ pub(super) fn grip_bundle(image: Handle<Image>) -> impl Bundle {
     )
 }
 
-/// The size of the area the console window has to stay inside, in UI pixels.
+/// The size of the area the console window has to stay inside, in UI pixels. None while the
+/// game window is minimized (Windows reports it as 0x0) or smaller than the console can be:
+/// fitting the console to that would shrink it for good.
 fn screen_size(windows: &Query<&Window, With<PrimaryWindow>>, ui_scale: f32) -> Option<Vec2> {
     let window = windows.single().ok()?;
-    Some(Vec2::new(window.width(), window.height()) / ui_scale.max(f32::EPSILON))
+    let screen = Vec2::new(window.width(), window.height()) / ui_scale.max(f32::EPSILON);
+    (screen.x >= MIN_SIZE.x && screen.y >= MIN_SIZE.y).then_some(screen)
+}
+
+/// Where the console shows: the player's placement, fitted to the screen.
+fn shown_window(console_window: ConsoleWindow, screen: Option<Vec2>) -> ConsoleWindow {
+    screen.map_or(console_window, |screen| {
+        clamp_window(console_window, screen)
+    })
 }
 
 fn clamp_window(mut window: ConsoleWindow, screen: Vec2) -> ConsoleWindow {
@@ -143,7 +153,9 @@ pub(super) fn drag_console_window(
     mut console_window: ResMut<ConsoleWindow>,
 ) {
     let scale = ui_scale.0.max(f32::EPSILON);
-    let mut next = *console_window;
+    let screen = screen_size(&windows, ui_scale.0);
+    let mut next = shown_window(*console_window, screen);
+    let mut moved = false;
     for drag in drags.read() {
         if drag.button != PointerButton::Primary {
             continue;
@@ -151,13 +163,16 @@ pub(super) fn drag_console_window(
         let delta = drag.delta / scale;
         if titles.contains(drag.entity) {
             next.pos += delta;
+            moved = true;
         } else if grips.contains(drag.entity) {
             next.size += delta;
+            moved = true;
         }
     }
-    if let Some(screen) = screen_size(&windows, ui_scale.0) {
-        next = clamp_window(next, screen);
+    if !moved {
+        return;
     }
+    next = shown_window(next, screen);
     if next != *console_window {
         *console_window = next;
     }
@@ -185,20 +200,16 @@ pub(super) fn close_console_button(
     focus.clear();
 }
 
-/// Places the panel where `ConsoleWindow` says, and keeps it on screen when the window changes.
+/// Places the panel where `ConsoleWindow` says, fitted to the screen. The fit is only shown,
+/// never stored: a smaller window (or a minimized one) must not shrink the player's console.
 pub(super) fn apply_console_window(
-    mut console_window: ResMut<ConsoleWindow>,
+    console_window: Res<ConsoleWindow>,
     windows: Query<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
     mut panels: Query<&mut Node, With<ConsolePanel>>,
 ) {
-    if let Some(screen) = screen_size(&windows, ui_scale.0) {
-        let clamped = clamp_window(*console_window, screen);
-        if clamped != *console_window {
-            *console_window = clamped;
-        }
-    }
-    let ConsoleWindow { pos, size } = *console_window;
+    let ConsoleWindow { pos, size } =
+        shown_window(*console_window, screen_size(&windows, ui_scale.0));
     for mut node in &mut panels {
         let want = (px(pos.x), px(pos.y), px(size.x), px(size.y));
         if (node.left, node.top, node.width, node.height) != want {

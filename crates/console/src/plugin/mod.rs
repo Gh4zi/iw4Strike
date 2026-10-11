@@ -1489,10 +1489,14 @@ fn handle_console_input(
         editable.queue_edit(TextEdit::LineEnd(false));
     }
 
+    let typed_before = state.editor.line.clone();
     apply_prompt_edits(&mut editable, &mut font_cx, &mut layout_cx, &mut clipboard);
     sanitize_prompt_newlines(&mut editable);
     apply_prompt_edits(&mut editable, &mut font_cx, &mut layout_cx, &mut clipboard);
     sync_editor_from_widget(&mut state.editor, &editable);
+    if state.editor.line != typed_before {
+        state.suggestion_picked = false;
+    }
 
     if want_kill_word {
         state.editor.kill_word();
@@ -1512,6 +1516,7 @@ fn handle_console_input(
             let len = console_suggestions(&state, &registry).len();
             if len > 0 {
                 state.editor.selected = (state.editor.selected + 1) % len;
+                state.suggestion_picked = true;
             }
         }
     } else if arrow_down {
@@ -1523,6 +1528,7 @@ fn handle_console_input(
             let len = console_suggestions(&state, &registry).len();
             if len > 0 {
                 state.editor.selected = (state.editor.selected + len - 1) % len;
+                state.suggestion_picked = true;
             }
         }
     }
@@ -1530,6 +1536,7 @@ fn handle_console_input(
     if want_tab {
         let suggestions = console_suggestions(&state, &registry);
         if state.editor.accept(&suggestions) {
+            state.suggestion_picked = false;
             state.leave_history_browse();
             write_widget_from_editor(&mut editable, &state.editor);
             apply_prompt_edits(&mut editable, &mut font_cx, &mut layout_cx, &mut clipboard);
@@ -1538,12 +1545,13 @@ fn handle_console_input(
     }
 
     if want_submit {
-        if state.history_cursor.is_none() {
+        if state.history_cursor.is_none() && state.suggestion_picked {
             let suggestions = console_suggestions(&state, &registry);
             if !suggestions.is_empty() {
                 state.editor.accept(&suggestions);
             }
         }
+        state.suggestion_picked = false;
         let line = state.editor.take();
         state.leave_history_browse();
         editable.clear();

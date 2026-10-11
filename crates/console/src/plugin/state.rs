@@ -56,6 +56,11 @@ pub struct ConsoleState {
 
     pub pending_feed: Option<String>,
 
+    /// The player picked a suggestion with the arrow keys since last typing: Enter takes it.
+    /// Otherwise Enter runs the line as typed (a one-letter line must not run whatever the
+    /// first suggestion for that letter is).
+    pub suggestion_picked: bool,
+
     pub pending_os_paste: bool,
 
     pub feed_n: usize,
