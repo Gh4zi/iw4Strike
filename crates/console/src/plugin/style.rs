@@ -5,7 +5,7 @@
 use bevy::{
     input_focus::{FocusCause, InputFocus},
     prelude::*,
-    text::{EditableText, TextCursorStyle},
+    text::{EditableText, LetterSpacing, TextCursorStyle},
     ui::{BoxShadow, ShadowStyle},
 };
 use ui::UiLayer;
@@ -328,17 +328,35 @@ fn spawn_cs2(
                     BackgroundColor(window::COLOR_TITLE),
                 ))
                 .with_children(|header| {
-                    header.spawn((
-                        Text::new("CONSOLE"),
-                        text_font(&title_font, 18.0),
-                        TextColor(Color::WHITE),
-                        Node {
-                            flex_grow: 1.0,
-                            padding: UiRect::axes(px(4), px(3)),
-                            ..default()
-                        },
-                        Pickable::IGNORE,
-                    ));
+                    // CS2's title: Stratum2 Mono bold, 18 px, uppercase, 2 px letter spacing.
+                    // The monospace face draws it twice a pixel apart for the bold weight it
+                    // does not have.
+                    header
+                        .spawn((
+                            Node {
+                                flex_grow: 1.0,
+                                height: percent(100),
+                                ..default()
+                            },
+                            Pickable::IGNORE,
+                        ))
+                        .with_children(|title| {
+                            for nudge in [0.0, 1.0] {
+                                title.spawn((
+                                    Text::new("CONSOLE"),
+                                    text_font(&title_font, 18.0),
+                                    LetterSpacing::Px(2.0),
+                                    TextColor(Color::WHITE),
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: px(4.0 + nudge),
+                                        top: px(3),
+                                        ..default()
+                                    },
+                                    Pickable::IGNORE,
+                                ));
+                            }
+                        });
                     header
                         .spawn((
                             window::ConsoleCloseButton,

@@ -861,8 +861,7 @@ fn setup_console(
     let cs2_font = load_font(cs2_panorama_font(CS2_CONSOLE_FONT))
         .or_else(|| load_font(system_console_font()))
         .unwrap_or_else(|| classic_font.clone());
-    let cs2_title_font =
-        load_font(cs2_panorama_font(CS2_CONSOLE_TITLE_FONT)).unwrap_or_else(|| cs2_font.clone());
+    let cs2_title_font = cs2_font.clone();
     let console_window = style::initial_window(&settings);
     commands.insert_resource(console_window);
     commands.insert_resource(window::ConsoleScroll::default());
@@ -886,7 +885,6 @@ fn setup_console(
 /// The CS2 console's face is Valve's licensed Stratum2 Mono, which CS2 ships encrypted; its
 /// open fallback, Noto Mono (SIL Open Font License), sits beside it in CS2's `panorama/fonts`.
 const CS2_CONSOLE_FONT: &str = "notomono-regular.ttf";
-const CS2_CONSOLE_TITLE_FONT: &str = "notosans-bold.ttf";
 
 /// A font from the player's CS2 install (`game/csgo/panorama/fonts`), read at start-up.
 fn cs2_panorama_font(name: &str) -> Option<Vec<u8>> {
