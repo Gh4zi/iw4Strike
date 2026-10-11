@@ -225,6 +225,22 @@ fn scene_ent_admitted(scene: Option<&crate::GfxScene>, entnum: Option<u32>) -> b
     }
 }
 
+/// Whether a remote body's surfaces are drawn, and with what colour refusal. A body out of the
+/// camera's walk is posed only while it is inside a sun partition, and is drawn only into the
+/// sun shadow.
+#[must_use]
+fn body_admission(
+    scene: Option<&crate::GfxScene>,
+    entnum: Option<u32>,
+) -> Option<Option<XModelColourRefusal>> {
+    if scene_ent_admitted(scene, entnum) {
+        return Some(None);
+    }
+    entnum
+        .is_some_and(|n| scene.is_some_and(|s| s.scene_ent_hidden(n)))
+        .then_some(Some(XModelColourRefusal::CameraFrustum))
+}
+
 /// A script model out of the camera's walk is drawn only into the sun shadow: its producer
 /// keeps it, colour refused, while it is inside a sun partition.
 #[must_use]
@@ -409,7 +425,9 @@ fn xmodel_merge_stamp(
     let mut occupancy = DefaultHasher::new();
     fpv_scene_colour(fpv, scene).hash(&mut occupancy);
     for draw in bodies.draws() {
-        scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
+        body_admission(scene, draw.scene_entnum)
+            .map(|refusal| refusal.is_some())
+            .hash(&mut occupancy);
     }
     for draw in scripts.draws() {
         script_draw_admitted(scene, draw).hash(&mut occupancy);
@@ -918,7 +936,7 @@ fn owner_draw_lists(
     ] = lists;
     let mut next_body_object = XMODEL_OBJECT_ID_BODY_BASE;
     body_list.extend(bodies.draws().iter().filter_map(|d| {
-        scene_ent_admitted(scene, d.scene_entnum).then(|| {
+        body_admission(scene, d.scene_entnum).map(|colour_refusal| {
             let object_id = next_body_object;
             next_body_object = next_body_object.saturating_add(1);
             XModelSurfaceDraw {
@@ -928,7 +946,7 @@ fn owner_draw_lists(
                 lighting_handle: d.lighting_handle,
 
                 pending_lighting: None,
-                colour_refusal: None,
+                colour_refusal,
                 object_id,
                 scene_light_index: d.scene_light_index,
                 reflection_probe_index: d.reflection_probe_index,
@@ -1206,7 +1224,7 @@ fn refresh_concat_draws(
         bodies.surface_ranges().len(),
         bodies.materials(),
         bodies.draws().iter().filter_map(|d| {
-            scene_ent_admitted(scene, d.scene_entnum).then(|| {
+            body_admission(scene, d.scene_entnum).map(|colour_refusal| {
                 let object_id = next_body_object;
                 next_body_object = next_body_object.saturating_add(1);
                 XModelSurfaceDraw {
@@ -1215,7 +1233,7 @@ fn refresh_concat_draws(
                     world_from_local: d.world_from_local,
                     lighting_handle: d.lighting_handle,
                     pending_lighting: None,
-                    colour_refusal: None,
+                    colour_refusal,
                     object_id,
                     scene_light_index: d.scene_light_index,
                     reflection_probe_index: d.reflection_probe_index,
@@ -1330,7 +1348,7 @@ fn admitted_mask(
     if bodies
         .draws()
         .iter()
-        .any(|d| scene_ent_admitted(scene, d.scene_entnum))
+        .any(|d| body_admission(scene, d.scene_entnum).is_some())
     {
         admitted |= ADMIT_BODY;
     }

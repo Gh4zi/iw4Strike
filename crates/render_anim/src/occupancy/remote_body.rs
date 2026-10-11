@@ -465,6 +465,7 @@ struct RemotePoseFrame<'a> {
     dobj_poses: &'a mut crate::anim::dobj_pose::HostDObjPoseFrame,
     posed_players: &'a mut crate::anim::dobj_pose::PosedPlayerFrame,
     scene: &'a render_scene::GfxScene,
+    sun_casters: &'a render_scene::SunShadowCasterVolume,
     last_cache_hits: &'a HashSet<u32>,
     pending: Vec<PendingBodySkin<'a>>,
     /// Weapon hands of bodies holding a CS weapon drawn as its CS:S world model.
@@ -518,6 +519,7 @@ fn pose_remote_bodies(
         ResMut<crate::anim::dobj_pose::PosedPlayerFrame>,
         Res<HostGfxScene>,
         Option<Res<FrameClock>>,
+        Res<render_scene::SunShadowCasterVolume>,
     ),
     mut roots: Query<
         (
@@ -535,7 +537,8 @@ fn pose_remote_bodies(
         ),
     >,
 ) {
-    let (cameras, lod_skinned, mut dobj_poses, mut posed_players, gfx, cg_clock) = dpvs;
+    let (cameras, lod_skinned, mut dobj_poses, mut posed_players, gfx, cg_clock, sun_casters) =
+        dpvs;
     submit.clear();
     held.0.clear();
     for (_, _, _, mut bolts, _) in &mut roots {
@@ -646,6 +649,7 @@ fn pose_remote_bodies(
         dobj_poses: &mut dobj_poses,
         posed_players: &mut posed_players,
         scene: &gfx.scene,
+        sun_casters: &sun_casters,
         last_cache_hits: &last_cache_hits,
         pending: Vec::new(),
         held: &mut held.0,
@@ -782,6 +786,19 @@ impl<'a> RemotePoseFrame<'a> {
         let skin_entries = slot.skin_entries;
         let slot_lods = slot.lods;
         let scene_ent_hidden = slot.hidden;
+        // Out of the camera's walk, a body can still shade what the camera sees (a player on a
+        // ledge above the view, on the ground in front of it): it is posed for the sun shadow
+        // only, while it is inside a sun partition (no radius: kept, as body casters are
+        // unbounded).
+        let casts_into_view = scene_ent_hidden
+            && self.scene.scene_dobj(persist_key).is_some_and(|dobj| {
+                dobj.radius.is_none_or(|radius| {
+                    self.sun_casters.admits(render_scene::XModelCasterBound {
+                        origin: dobj.origin,
+                        radius,
+                    })
+                })
+            });
         let last_cache_hits = self.last_cache_hits;
         let axis = asset_model::kit_assignment_is_axis(remote.client_state_team, remote.ffa_team);
         let eye = self.eye;
@@ -808,7 +825,7 @@ impl<'a> RemotePoseFrame<'a> {
                 trees,
             )?;
 
-            if scene_ent_hidden {
+            if scene_ent_hidden && !casts_into_view {
                 return Ok(PoseOneOutcome::SceneHidden);
             }
             let AdvancedRemoteTree {
@@ -861,7 +878,11 @@ impl<'a> RemotePoseFrame<'a> {
                 bolts,
                 dobj_poses,
             )?;
-            if !is_corpse && let Some(bone) = kit.cs_weapon_tag.and_then(|tag| world.get(tag)) {
+            // A body posed for its shadow only is not seen: its CS gun and head stay unpublished.
+            if !is_corpse
+                && !scene_ent_hidden
+                && let Some(bone) = kit.cs_weapon_tag.and_then(|tag| world.get(tag))
+            {
                 // The MW2 twin's muzzle on the tag lines the CS model up.
                 let muzzle = kit.bolt_bones[0]
                     .and_then(|flash| world.get(usize::from(flash)))
@@ -885,7 +906,7 @@ impl<'a> RemotePoseFrame<'a> {
                         .map(|hand| transform.to_matrix() * hand),
                 });
             }
-            if !is_corpse {
+            if !is_corpse && !scene_ent_hidden {
                 publish_posed_player_head(
                     kit.head_bone,
                     &world,
