@@ -104,6 +104,10 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
         primary.desired_maximum_frame_latency = core::num::NonZeroU32::new(frame_latency());
     }
     let mut wgpu = WgpuSettings::default();
+    // Smaller GPU memory blocks: the default keeps 64-128 MiB host-visible blocks around after
+    // the load's uploads (~200 MB on Favela) on machines already short of RAM, and BR frame
+    // times did not move.
+    wgpu.memory_hints = bevy::render::settings::MemoryHints::MemoryUsage;
     wgpu.features |= WgpuFeatures::TEXTURE_FORMAT_16BIT_NORM
         | WgpuFeatures::TEXTURE_COMPRESSION_BC
         | WgpuFeatures::POLYGON_MODE_LINE
