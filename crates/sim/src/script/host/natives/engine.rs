@@ -1960,7 +1960,15 @@ fn register_level(registry: &mut NativeRegistry) {
     unavailable!("no script ranking service is connected": "sendranks", "setplayerteamrank");
     unavailable!("no script skill-rating service is connected": "updateskill");
     unavailable!("no script match-data upload service is connected": "sendmatchdata", "sendclientmatchdata");
-    unavailable!("IW4 definition schemas are not supported by the local match-data store": "setmatchdatadef", "setclientmatchdatadef");
+    // The match-data store keeps whatever keys the script writes, with no schema to load: the
+    // definition file's name is accepted and the script goes on (an error here ended
+    // `_matchdata::init` at its first line, before its `level` constants and listener).
+    for name in ["setmatchdatadef", "setclientmatchdatadef"] {
+        registry.register(Function, name, |_, _, args| {
+            string(args, 0)?;
+            Ok(Value::Undefined)
+        });
+    }
     unavailable!("IW4 lobby termination is not bound to the IW4L lobby lifecycle": "endlobby");
     unavailable!("IW4 party termination is not bound to the IW4L party lifecycle": "endparty");
 }
