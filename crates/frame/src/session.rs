@@ -361,3 +361,8 @@ pub struct BotNavigationReady(pub bool);
 
 #[derive(Component)]
 pub struct UiCamera;
+
+/// The main menu's 3D camera. It draws the MW2 menus, not the Bevy UI, and it is not the
+/// world's camera.
+#[derive(Component)]
+pub struct MenuSceneCamera;

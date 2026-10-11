@@ -320,6 +320,19 @@ fn sync_frontend_camera(
                     ..default()
                 },
                 bevy::render::view::Msaa::Off,
+                frame::MenuSceneCamera,
+            ));
+            // The Bevy UI gets a 2D camera of its own, as in a match: drawn by the menu's 3D
+            // camera it landed on the menus' gamma-encoded target and came out too dark (the CS2
+            // console's grey window showed black).
+            commands.spawn((
+                FrontendCamera,
+                Camera2d,
+                Camera {
+                    order: 0,
+                    clear_color: ClearColorConfig::None,
+                    ..default()
+                },
                 frame::UiCamera,
             ));
         }

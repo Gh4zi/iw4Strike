@@ -30,8 +30,8 @@ pub use session::{
     AdmissionKey, AppScreen, BotNavigationReady, CacWeaponOffer, ClassSelectHandoff, HasWorld,
     Headless, HostClassLoadouts, HostClassSlot, HudInputView, LaunchIdentity, LaunchReport,
     LifeEndCause, LifeEnded, LifeStartReason, LifeStarted, LocalLoadKey, MapLoadApproved,
-    MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, ReturnedToMenu, RuntimeRole,
-    TeardownReason, UiCamera, UiDraw, ViewSubject, WorldGeneration, WorldProducts,
+    MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, MenuSceneCamera, ReturnedToMenu,
+    RuntimeRole, TeardownReason, UiCamera, UiDraw, ViewSubject, WorldGeneration, WorldProducts,
 };
 pub use settings::{DisplayResolution, GameSettings};
 pub use ui::{

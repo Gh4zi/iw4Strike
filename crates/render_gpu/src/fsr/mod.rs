@@ -144,11 +144,15 @@ fn apply_fsr_target(
     mut commands: Commands,
     settings: Res<frame::GameSettings>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    // The world's camera only: the main menu's camera is a 3D camera too, but it also draws the
-    // UI, so taking it sent the whole menu into FSR's image and left the window black.
+    // The world's camera only: the main menu's camera is a 3D camera too, and taking it sent the
+    // whole menu into FSR's image and left the window black.
     cameras: Query<
         (Entity, &Camera, Option<&RenderTarget>),
-        (With<Camera3d>, Without<frame::UiCamera>),
+        (
+            With<Camera3d>,
+            Without<frame::UiCamera>,
+            Without<frame::MenuSceneCamera>,
+        ),
     >,
     mut images: ResMut<Assets<Image>>,
     mut target: ResMut<FsrTarget>,
