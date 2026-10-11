@@ -221,7 +221,12 @@ pub fn init_log(artifacts_root: &Path) -> PathBuf {
     let bump = std::env::var("IW4L_LOG_LEVEL")
         .ok()
         .and_then(|s| Level::parse(&s));
-    let stderr_threshold = bump.unwrap_or(Level::Error);
+    // The game's console window shows warnings by default, GSC script errors among them (a
+    // match logs about ten); `IW4L_CONSOLE_LEVEL` sets it alone, the log file keeps its level.
+    let console = std::env::var("IW4L_CONSOLE_LEVEL")
+        .ok()
+        .and_then(|s| Level::parse(&s));
+    let stderr_threshold = console.or(bump).unwrap_or(Level::Warn);
     let file_threshold = bump.unwrap_or(Level::Info);
 
     let started = START.get().copied().unwrap_or_else(Instant::now);
