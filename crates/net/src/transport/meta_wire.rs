@@ -810,6 +810,40 @@ fn decode_rows<T>(
     Ok(rows)
 }
 
+/// `decode_rows` for a list shared with the baseline: a delta that changes no row hands the
+/// baseline's list back as it is, and only a list some row changed in is copied out of it.
+fn decode_shared_rows<T: Clone>(
+    input: &mut WireReader<'_>,
+    baseline: Option<std::sync::Arc<Vec<T>>>,
+    decode: impl Fn(&mut WireReader<'_>) -> Result<T, WireError>,
+) -> Result<std::sync::Arc<Vec<T>>, WireError> {
+    let Some(mut shared) = baseline else {
+        return decode_rows(input, None, decode).map(std::sync::Arc::new);
+    };
+    let count = input.get_u16()? as usize;
+    let changed_n = input.get_u16()? as usize;
+    if changed_n == 0 && count == shared.len() {
+        return Ok(shared);
+    }
+    let rows = std::sync::Arc::make_mut(&mut shared);
+    rows.truncate(count);
+    for _ in 0..changed_n {
+        let index = input.get_u16()? as usize;
+        let row = decode(input)?;
+        if index < rows.len() {
+            rows[index] = row;
+        } else if index == rows.len() && index < count {
+            rows.push(row);
+        } else {
+            return Err(WireError::Malformed("delta row past the end of its list"));
+        }
+    }
+    if rows.len() != count {
+        return Err(WireError::Malformed("delta list is missing rows"));
+    }
+    Ok(shared)
+}
+
 /// Against a baseline, a section that rarely changes is preceded by one byte: 1 when it equals
 /// the baseline's and is left out, 0 when it follows. Without a baseline it is always sent,
 /// unmarked. Returns whether the section is left out.
@@ -1006,11 +1040,11 @@ pub fn decode_snapshot_meta(
             decode_rng_debug(input)?,
         ),
     };
-    let entity_dobjs = decode_rows(
+    let entity_dobjs = decode_shared_rows(
         input,
         baseline
             .as_mut()
-            .map(|b| std::sync::Arc::unwrap_or_clone(std::mem::take(&mut b.entity_dobjs))),
+            .map(|b| std::mem::take(&mut b.entity_dobjs)),
         decode_entity_dobj,
     )?;
     let corpses = decode_corpse_pool(input)?;
@@ -1067,7 +1101,7 @@ pub fn decode_snapshot_meta(
             world_objects,
             area_entities,
             objectives,
-            entity_dobjs: std::sync::Arc::new(entity_dobjs),
+            entity_dobjs,
             entities,
             script_movers,
             entity_kernel,
