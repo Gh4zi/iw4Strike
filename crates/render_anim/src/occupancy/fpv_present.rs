@@ -830,10 +830,16 @@ fn skin_fpv_geometry(
                 crate::install_prepared_fpv_plan(&mut fpv_plan, &rig.geometry, handle);
                 fpv_plan.rig_generation = rig.generation();
             }
-            if let Some(rows) = fpv_plan.packed_rows_mut() {
-                rig.skin_into(&catalog.0, &frame.poses, rows);
+            // While a CS model owns the first-person view the MW2 rig is never put in the scene
+            // (occupy_fpv_scene), so it is not drawn: skinning it, and marking its vertices new for
+            // the xmodel merge, was per-frame work nobody saw.
+            let cs_owns_view = camera_anim.1.as_ref().is_some_and(|active| active.0);
+            if !cs_owns_view {
+                if let Some(rows) = fpv_plan.packed_rows_mut() {
+                    rig.skin_into(&catalog.0, &frame.poses, rows);
+                }
+                fpv_plan.revisions.bump_vertices();
             }
-            fpv_plan.revisions.bump_vertices();
             fpv_plan.geometry_ok = !fpv_plan.draws().is_empty();
             fpv_plan.settle_visible();
             gaps.clear(RenderGap::FpvViewmodel);
@@ -1254,6 +1260,7 @@ pub fn register_fpv_present_systems(app: &mut App) {
                 tick_fpv_viewmodel.after(flush_fpv_spawn),
                 skin_fpv_geometry
                     .after(tick_fpv_viewmodel)
+                    .after(super::cs_viewmodel::update_cs_viewmodel)
                     .in_set(FpvGeometrySet),
                 publish_fpv_notetracks.after(tick_fpv_viewmodel),
                 apply_fpv_placement
