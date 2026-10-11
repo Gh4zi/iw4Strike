@@ -90,9 +90,15 @@ pub(crate) fn open(
     .map_err(|error| error.to_string())?;
     transport.device_active.store(true, Ordering::Release);
     stream.play().map_err(|error| error.to_string())?;
+    // Which device: a Bluetooth headset can come back as another endpoint (its hands-free one)
+    // after the stream is rebuilt.
+    let device_name = device
+        .description()
+        .map(|description| description.name().to_string())
+        .unwrap_or_else(|_| "unknown".into());
     diag::info!(
         Audio,
-        "audio: output running rate={} channels={} format={format:?}",
+        "audio: output running on `{device_name}` rate={} channels={} format={format:?}",
         config.sample_rate,
         config.channels
     );
