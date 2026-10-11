@@ -749,13 +749,17 @@ fn run_step(
     tick: u32,
     input: &sim::TickInput,
 ) -> Result<sim::Snapshot, sim::script::Fault> {
-    sim::try_step(
+    let started = std::time::Instant::now();
+    let stepped = sim::try_step(
         world,
         sim::Tick(tick),
         input,
         crate::AUTHORITY_MS,
         sim::StepReason::AuthorityFrame,
-    )
+    );
+    perf::Counter::AuthorityStepMs.emit(started.elapsed().as_secs_f64() * 1000.0);
+    perf::Counter::AuthorityStepN.emit(1.0);
+    stepped
 }
 
 struct StepFailed {

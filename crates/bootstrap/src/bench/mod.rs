@@ -132,9 +132,28 @@ pub fn insert(
     milestones::install(Milestones::new(zone.to_owned(), screenshot, progress));
     let _ = ARTIFACTS.set(artifacts.to_path_buf());
     arm_exit_hook();
-    app.add_systems(Last, (milestones::poll, facts::collect));
+    app.add_systems(Last, (milestones::poll, facts::collect, log_hitches));
     #[cfg(not(unix))]
     app.add_systems(PostUpdate, report_on_app_exit);
+}
+
+/// Logs each slow frame as it closes (a warning, so the console window shows it too), with the
+/// spans that took most of it: a freeze that ends with the game killed is still on record.
+fn log_hitches() {
+    for hitch in perf::frames::take_hitches() {
+        let top = hitch
+            .top
+            .iter()
+            .map(|(name, ns)| format!("{name} {:.1}", *ns as f64 / 1e6))
+            .collect::<Vec<_>>()
+            .join(", ");
+        diag::warn!(
+            Launch,
+            "hitch: frame {} took {:.1} ms (largest, ms: {top})",
+            hitch.index,
+            hitch.wall_ns as f64 / 1e6
+        );
+    }
 }
 
 /// `std::process::exit` on Windows runs no `atexit` handler: report from

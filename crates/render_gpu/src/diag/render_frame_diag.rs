@@ -50,6 +50,10 @@ pub(crate) struct RenderFrameSample {
     phase_sort_ms: Option<f32>,
     prepare_ms: Option<f32>,
     render_ms: Option<f32>,
+    /// `Render` set start to the render graph's `Begin`: bevy's pipeline queue.
+    pipeline_queue_ms: Option<f32>,
+    /// The render graph's `Begin` set.
+    graph_begin_ms: Option<f32>,
     pub(crate) submit_prepare_ms: Option<f32>,
 
     pub(crate) colour_submit_ms: Option<f32>,
@@ -788,11 +792,45 @@ stage_timer!(
     prepare_stage_end,
     prepare_ms
 );
-fn render_stage_start() {
+/// When the `Render` set opened, and when the render graph's `Begin` set did.
+#[derive(Resource, Default)]
+struct RenderSetMarks {
+    set: Option<Instant>,
+    graph_begin: Option<Instant>,
+}
+
+fn render_stage_start(mut marks: ResMut<RenderSetMarks>) {
     perf::Span::RenderRenderRenderMs.begin();
+    marks.set = Some(Instant::now());
 }
 fn render_stage_end() {
     perf::Span::RenderRenderRenderMs.end();
+}
+
+/// The first point of the render graph: what ran in the `Render` set before it
+/// is bevy's `process_pipeline_queue_system`, which `render_system` follows.
+fn pipeline_queue_end(mut marks: ResMut<RenderSetMarks>, slot: Res<SharedRenderStagesSlot>) {
+    let now = Instant::now();
+    marks.graph_begin = Some(now);
+    let Some(started) = marks.set else {
+        return;
+    };
+    let ms = now.duration_since(started).as_secs_f32() * 1000.0;
+    if let Ok(mut guard) = slot.0.lock() {
+        guard.pipeline_queue_ms = Some(ms);
+    }
+}
+
+/// The graph's `Begin` set: bevy's GPU diagnostics frame and sparse buffer
+/// uploads.
+fn graph_begin_end(marks: Res<RenderSetMarks>, slot: Res<SharedRenderStagesSlot>) {
+    let Some(started) = marks.graph_begin else {
+        return;
+    };
+    let ms = started.elapsed().as_secs_f32() * 1000.0;
+    if let Ok(mut guard) = slot.0.lock() {
+        guard.graph_begin_ms = Some(ms);
+    }
 }
 stage_timer!(
     GraphRenderStageTimer,
@@ -897,6 +935,7 @@ pub fn register_render_frame_diag(app: &mut App) {
     render_app.init_resource::<PhaseSortStageTimer>();
     render_app.init_resource::<PrepareStageTimer>();
     render_app.init_resource::<GraphRenderStageTimer>();
+    render_app.init_resource::<RenderSetMarks>();
     render_app.init_resource::<GraphSubmitStageTimer>();
     render_app.init_resource::<GraphPresentMark>();
 
@@ -995,6 +1034,10 @@ pub fn register_render_frame_diag(app: &mut App) {
     render_app.add_systems(
         RenderGraph,
         (
+            pipeline_queue_end.before(RenderGraphSystems::Begin),
+            graph_begin_end
+                .after(RenderGraphSystems::Begin)
+                .before(graph_render_start),
             graph_render_start
                 .after(RenderGraphSystems::Begin)
                 .before(RenderGraphSystems::Render),
@@ -1241,6 +1284,21 @@ pub fn sample_render_frame_diag(
                     // in it, so it is not addable to anything and not
                     // exclusive CPU work.
                     (perf::Counter::RenderPrepareViewsMs, sample.prepare_views_ms),
+                    // The other stage sets, read the same way: they say which
+                    // stage a render-thread stall sat in.
+                    (
+                        perf::Counter::RenderPrepareAssetsMs,
+                        sample.prepare_assets_ms,
+                    ),
+                    (perf::Counter::RenderCreateViewsMs, sample.create_views_ms),
+                    (perf::Counter::RenderSpecializeMs, sample.specialize_ms),
+                    (perf::Counter::RenderQueueMs, sample.queue_ms),
+                    (perf::Counter::RenderPrepareMs, sample.prepare_ms),
+                    (
+                        perf::Counter::RenderPipelineQueueMs,
+                        sample.pipeline_queue_ms,
+                    ),
+                    (perf::Counter::RenderGraphBeginMs, sample.graph_begin_ms),
                 ] {
                     if let Some(value) = value {
                         counter.emit_at(f64::from(value), sample.origin_frame);

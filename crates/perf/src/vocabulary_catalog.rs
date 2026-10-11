@@ -912,6 +912,108 @@ macro_rules! counters {
             category: "iw4l.render",
             category_class: default,
         },
+        /// Bevy render stage set intervals, read like `prepare_views`: wall time
+        /// on the render thread with whatever the executor ran inside the set.
+        /// They name the stage a render-thread stall sits in, not exclusive CPU
+        /// work.
+        RenderPrepareAssetsMs {
+            ordinal: 60,
+            name: "prepare_assets",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        RenderCreateViewsMs {
+            ordinal: 61,
+            name: "create_views",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        RenderSpecializeMs {
+            ordinal: 62,
+            name: "specialize",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        RenderQueueMs {
+            ordinal: 63,
+            name: "queue",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        RenderPrepareMs {
+            ordinal: 64,
+            name: "prepare",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        /// From the start of the `Render` set to the render graph's `Begin`:
+        /// Bevy's pipeline queue (shader modules, pipeline builds it does not
+        /// hand to a task) runs there, ahead of the graph.
+        RenderPipelineQueueMs {
+            ordinal: 65,
+            name: "pipeline_queue",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        /// The render graph's `Begin` set: bevy's GPU diagnostics frame and
+        /// sparse buffer uploads.
+        RenderGraphBeginMs {
+            ordinal: 66,
+            name: "graph_begin",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.render",
+            category_class: default,
+        },
+        /// One authority `sim::step`, wherever it ran: in FixedUpdate, inline
+        /// as a deferred tick's catch-up, or on the overlap worker. A frame's
+        /// row sums its steps; `authority_steps` is how many there were.
+        AuthorityStepMs {
+            ordinal: 67,
+            name: "authority_step",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.sim",
+            category_class: explicit,
+        },
+        AuthorityStepN {
+            ordinal: 68,
+            name: "authority_steps",
+            unit: Count,
+            unit_class: default,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.sim",
+            category_class: explicit,
+        },
         }
     };
 }

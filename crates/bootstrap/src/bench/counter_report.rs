@@ -23,10 +23,10 @@ use perf::{Counter, CounterStats, Origin, Phase, SpanStats, Unit};
 use crate::bench::table::{Align, Table};
 
 /// CPU stage timings, in the order the work happens rather than by size.
-/// `prepare_views` is last because it is a render-world set interval around
-/// bevy's own `PrepareViews` systems, not one step of the submit sequence, and
-/// it holds whatever else the executor ran inside that set.
-const CPU_MS: [Counter; 8] = [
+/// The stage sets from `prepare_assets` on are render-world set intervals
+/// around bevy's own systems, not steps of the submit sequence, and each holds
+/// whatever else the executor ran inside that set.
+const CPU_MS: [Counter; 15] = [
     Counter::RenderSubmitPrepareMs,
     Counter::RenderSubmitGatherMs,
     Counter::RenderSubmitArenaMs,
@@ -34,7 +34,14 @@ const CPU_MS: [Counter; 8] = [
     Counter::RenderSubmitSunMs,
     Counter::RenderGraphRenderMs,
     Counter::RenderGraphPresentMs,
+    Counter::RenderPrepareAssetsMs,
+    Counter::RenderCreateViewsMs,
+    Counter::RenderSpecializeMs,
     Counter::RenderPrepareViewsMs,
+    Counter::RenderQueueMs,
+    Counter::RenderPrepareMs,
+    Counter::RenderPipelineQueueMs,
+    Counter::RenderGraphBeginMs,
 ];
 
 /// GPU pass timings. `gpu_frame` is last and is the span sum, not the sum of

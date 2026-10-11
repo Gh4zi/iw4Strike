@@ -1,6 +1,67 @@
 use super::*;
 use bevy::render::render_resource::CommandEncoderDescriptor;
 
+/// A colour submit longer than this logs its sections: the stalls it has shown hold the render
+/// thread for 70-280 ms while every census timing inside it stays under a millisecond.
+const SLOW_COLOUR_SUBMIT_MS: f32 = 40.0;
+
+/// Section times through one `draw_exact_colour`, logged on drop when the whole call was slow.
+struct ColourLaps {
+    started: std::time::Instant,
+    last: std::time::Instant,
+    laps: Vec<(&'static str, f32)>,
+    /// Per pooled chunk: ms queued before it started, ms it ran, and the thread that ran it.
+    chunks: Vec<(f32, f32, String)>,
+}
+
+impl ColourLaps {
+    fn new() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            started: now,
+            last: now,
+            laps: Vec::with_capacity(12),
+            chunks: Vec::new(),
+        }
+    }
+
+    fn lap(&mut self, section: &'static str) {
+        let now = std::time::Instant::now();
+        self.laps.push((
+            section,
+            now.duration_since(self.last).as_secs_f32() * 1000.0,
+        ));
+        self.last = now;
+    }
+}
+
+impl Drop for ColourLaps {
+    fn drop(&mut self) {
+        let total = self.started.elapsed().as_secs_f32() * 1000.0;
+        if total < SLOW_COLOUR_SUBMIT_MS {
+            return;
+        }
+        self.lap("tail");
+        let laps = self
+            .laps
+            .iter()
+            .map(|(section, ms)| format!("{section} {ms:.1}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let chunks = self
+            .chunks
+            .iter()
+            .map(|(queued, ran, thread)| format!("queued {queued:.1} ran {ran:.1} on {thread}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        diag::warn!(
+            World,
+            "colour submit slow: {total:.1} ms (sections, ms: {laps}) chunks: [{chunks}] waited on {}",
+            std::thread::current().name().unwrap_or("unnamed")
+        );
+    }
+}
+
 pub(super) fn draw_exact_colour(
     view: ViewQuery<(
         &ViewTarget,
@@ -61,6 +122,7 @@ pub(super) fn draw_exact_colour(
     ),
     mut context: RenderContext,
 ) {
+    let mut laps = ColourLaps::new();
     let extracted = ExtractedColourRefs::new(&world, &frame);
     let products = &extracted.frame.frame_products;
     let _colour_submit = perf::Span::RenderColourSubmitMs.enter();
@@ -140,8 +202,10 @@ pub(super) fn draw_exact_colour(
     let colour = products.0.product(FrameProductKind::Colour);
     let light = products.0.product(FrameProductKind::Light);
     let emissive = products.0.product(FrameProductKind::Emissive);
+    laps.lap("checks");
     scratch.skinned_tess.upload(&device, &queue);
     shadow_scratch.skinned_tess.upload(&device, &queue);
+    laps.lap("skinned_upload");
     // Handles only: taking the caches would drop the kept skinned surfaces.
     let tess_vertex = scratch.skinned_tess.vertex_buffer().cloned();
     let tess_index = scratch.skinned_tess.index_buffer().cloned();
@@ -167,6 +231,7 @@ pub(super) fn draw_exact_colour(
         shadow_skinned_vertex,
         shadow_skinned_index,
     );
+    laps.lap("sun_shadow");
     let spot_submit = record_shadowmap_spot(
         spot_prepared,
         pipeline.as_ref(),
@@ -179,6 +244,7 @@ pub(super) fn draw_exact_colour(
         shadow_skinned_vertex,
         shadow_skinned_index,
     );
+    laps.lap("spot_shadow");
     let mut record_n = sun_submit.record_n;
     record_n.add(spot_submit.record_n);
     if census_on {
@@ -345,10 +411,13 @@ pub(super) fn draw_exact_colour(
     let mut gpu_indexed = 0u32;
     let mut bsp_drawn_surfaces = [0u32; 4];
     let mut bsp_draw_refused_surfaces = [0u32; 4];
+    laps.lap("census");
     if !prepared.is_empty() {
         coalesce_exact_draws(&mut prepared);
+        laps.lap("coalesce");
 
         indirect.publish(&mut prepared, &device, &adapter, &queue);
+        laps.lap("indirect_publish");
         for draw in &prepared {
             if draw.bsp_counted
                 && let Some(kind) = draw.bsp_kind
@@ -393,6 +462,7 @@ pub(super) fn draw_exact_colour(
             .0
             .each_mut()
             .map(|table| &table.binds(&device, &registry, table_layout).scene);
+        laps.lap("table_binds");
 
         let diagnostics = context.diagnostic_recorder();
         let diagnostics = diagnostics.as_deref();
@@ -429,23 +499,37 @@ pub(super) fn draw_exact_colour(
             clear_view_target_once(context.command_encoder(), target, depth);
             let share = colour_draws.len().div_ceil(chunk_n).max(1);
             let inputs = &inputs;
+            let spawned_at = std::time::Instant::now();
             let chunks = bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default)
                 .scope(|scope| {
                     for part in colour_draws.chunks(share) {
                         scope.spawn(async move {
+                            let started = std::time::Instant::now();
                             let mut encoder =
-                                inputs.device.create_command_encoder(&CommandEncoderDescriptor {
-                                    label: Some("iw4_exact_colour_chunk"),
-                                });
+                                inputs
+                                    .device
+                                    .create_command_encoder(&CommandEncoderDescriptor {
+                                        label: Some("iw4_exact_colour_chunk"),
+                                    });
                             let record = record_colour_chunk(inputs, &mut encoder, part);
-                            (encoder.finish(), record)
+                            let buffer = encoder.finish();
+                            let timing = (
+                                started.duration_since(spawned_at).as_secs_f32() * 1000.0,
+                                started.elapsed().as_secs_f32() * 1000.0,
+                                std::thread::current()
+                                    .name()
+                                    .unwrap_or("unnamed")
+                                    .to_owned(),
+                            );
+                            (buffer, record, timing)
                         });
                     }
                 });
             let mut records = Vec::with_capacity(chunks.len());
-            for (buffer, record) in chunks {
+            for (buffer, record, timing) in chunks {
                 context.add_command_buffer(buffer);
                 records.push(record);
+                laps.chunks.push(timing);
             }
             records
         } else {
@@ -473,6 +557,11 @@ pub(super) fn draw_exact_colour(
             pass_end_ms += record.drop_ms;
             pass_end_n = pass_end_n.saturating_add(1);
         }
+        laps.lap(if chunk_n > 1 {
+            "record_chunks"
+        } else {
+            "record_inline"
+        });
         let encoder = context.command_encoder();
         gpu_span.end(encoder);
 
@@ -536,6 +625,7 @@ pub(super) fn draw_exact_colour(
                 }
             }
         }
+        laps.lap("late_passes");
         if census_on {
             if pass_end_n > 0 {
                 census.frame.pass_end_ms = Some(pass_end_ms);

@@ -261,6 +261,69 @@ impl Cover {
 
 static TABLE: Mutex<Vec<FrameRow>> = Mutex::new(Vec::new());
 
+/// A live frame at least this long is reported as it happens ([`take_hitches`]): the log
+/// carries it even when the run never reaches the exit that writes `frames.csv`.
+const HITCH_NS: u64 = 50_000_000;
+const HITCH_TOP: usize = 8;
+/// Render-thread timings reach their row a frame or two after it closed
+/// ([`add_counter_at`]), so a hitch is held this many frames before it is reported.
+const HITCH_SETTLE_FRAMES: u64 = 4;
+/// [`Phase::Live`](crate::stats::Phase)'s index, as [`close`] receives it.
+const LIVE_PHASE: u8 = 1;
+
+/// One slow frame, with the spans and millisecond counters that took most of it (parents and
+/// their children both), by name.
+pub struct Hitch {
+    pub index: u64,
+    pub wall_ns: u64,
+    pub top: Vec<(&'static str, u64)>,
+}
+
+static HITCHES: Mutex<Vec<Hitch>> = Mutex::new(Vec::new());
+
+/// The slow frames that closed at least [`HITCH_SETTLE_FRAMES`] ago and were not taken yet.
+pub fn take_hitches() -> Vec<Hitch> {
+    let closed = CLOSED.load(Ordering::Relaxed);
+    let mut ready = {
+        let mut pending = HITCHES.lock().unwrap_or_else(|poison| poison.into_inner());
+        let settled = pending
+            .iter()
+            .take_while(|hitch| hitch.index + HITCH_SETTLE_FRAMES <= closed)
+            .count();
+        pending.drain(..settled).collect::<Vec<_>>()
+    };
+    if ready.is_empty() {
+        return ready;
+    }
+    let table = TABLE.lock().unwrap_or_else(|poison| poison.into_inner());
+    for hitch in &mut ready {
+        if let Some(at) = row_at(&table, hitch.index) {
+            let row = &table[at];
+            hitch.top.extend(
+                Counter::ALL
+                    .iter()
+                    .filter(|counter| counter.unit() == Unit::Milliseconds)
+                    .map(|&counter| (counter.name(), row.counters[counter as usize]))
+                    .filter(|&(_, ns)| ns > 0),
+            );
+        }
+        hitch.top.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        hitch.top.truncate(HITCH_TOP);
+    }
+    ready
+}
+
+/// Where the row for frame `index` sits in the table, if it was kept.
+fn row_at(table: &[FrameRow], index: u64) -> Option<usize> {
+    // Rows are pushed in index order with no gaps, so the index *is* the slot
+    // until the table fills; the check is what makes that an assumption the
+    // code can survive being wrong about.
+    usize::try_from(index)
+        .ok()
+        .filter(|at| table.get(*at).is_some_and(|row| row.index == index))
+        .or_else(|| table.binary_search_by_key(&index, |row| row.index).ok())
+}
+
 /// Thread slot names, indexed by slot. Slot 0 is "not recorded".
 static THREADS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -416,20 +479,8 @@ pub(crate) fn add_counter_at(index: u64, counter: Counter, stored: u64) -> bool 
         return false;
     }
     let mut table = TABLE.lock().unwrap_or_else(|poison| poison.into_inner());
-    // Rows are pushed in index order with no gaps, so the index *is* the slot
-    // until the table fills; the check is what makes that an assumption the
-    // code can survive being wrong about.
-    let at = usize::try_from(index).ok().filter(|at| {
-        table
-            .get(*at)
-            .is_some_and(|row: &FrameRow| row.index == index)
-    });
-    let at = match at {
-        Some(at) => at,
-        None => match table.binary_search_by_key(&index, |row| row.index) {
-            Ok(at) => at,
-            Err(_) => return false,
-        },
+    let Some(at) = row_at(&table, index) else {
+        return false;
     };
     let row = &mut table[at];
     row.counters[counter as usize] += stored;
@@ -514,6 +565,23 @@ pub(crate) fn close(start_ns: u64, end_ns: u64, phase: u8) {
         counters,
         counter_samples,
     };
+
+    if phase == LIVE_PHASE && row.wall_ns >= HITCH_NS {
+        // Sorted and cut once the counters are in, by `take_hitches`.
+        let top: Vec<(&'static str, u64)> = Span::ALL
+            .iter()
+            .map(|&span| (span.name(), row.spans_ns[span as usize]))
+            .filter(|&(_, ns)| ns > 0)
+            .collect();
+        HITCHES
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(Hitch {
+                index: row.index,
+                wall_ns: row.wall_ns,
+                top,
+            });
+    }
 
     let mut table = TABLE.lock().unwrap_or_else(|poison| poison.into_inner());
     if table.len() == table.capacity() {
