@@ -11,7 +11,7 @@ use crate::gaps::{GapCause, HudGap, HudPresentationGaps};
 use crate::images::HudImages;
 use crate::presentation_scale::{PresentationScale, ScaleClass};
 use crate::reticle::ReticleAdsLatch;
-use crate::ui_write::adopt_display;
+use crate::ui_write::{adopt_box, adopt_display};
 
 #[derive(Resource, Default)]
 pub(crate) struct IrisLetterboxFill {
@@ -65,8 +65,11 @@ fn hide_overlay(
 ) {
     for (mut node, mut image_node, _) in overlay.iter_mut() {
         adopt_display(&mut node, Display::None);
-        image_node.flip_x = false;
-        image_node.flip_y = false;
+        // Written only when different: a written image node is a changed node, every frame.
+        if image_node.flip_x || image_node.flip_y {
+            image_node.flip_x = false;
+            image_node.flip_y = false;
+        }
     }
 }
 
@@ -83,7 +86,7 @@ fn hide_letterbox(
 ) {
     for (mut node, _, mut bg, _) in letterbox.iter_mut() {
         adopt_display(&mut node, Display::None);
-        *bg = BackgroundColor(Color::NONE);
+        bg.set_if_neq(BackgroundColor(Color::NONE));
     }
 }
 
@@ -275,8 +278,11 @@ pub(crate) fn update_iris(
     for (mut node, mut image_node, slot) in overlay.iter_mut() {
         let Some(quad) = layout.live_quads().get(usize::from(slot.0)) else {
             adopt_display(&mut node, Display::None);
-            image_node.flip_x = false;
-            image_node.flip_y = false;
+            // Written only when different: a written image node is a changed node.
+            if image_node.flip_x || image_node.flip_y {
+                image_node.flip_x = false;
+                image_node.flip_y = false;
+            }
             continue;
         };
         adopt_display(&mut node, Display::Flex);
@@ -284,15 +290,26 @@ pub(crate) fn update_iris(
         let top = (cy + xhair.1 + quad.y * factor).round();
         let right = (cx + xhair.0 + (quad.x + quad.w) * factor).round();
         let bottom = (cy + xhair.1 + (quad.y + quad.h) * factor).round();
-        node.left = Val::Px(left);
-        node.top = Val::Px(top);
-        node.width = Val::Px(right - left);
-        node.height = Val::Px(bottom - top);
-        image_node.image = handle.clone();
-        image_node.color = Color::srgba(1.0, 1.0, 1.0, alpha);
-        image_node.rect = None;
-        image_node.flip_x = quad.flip_s;
-        image_node.flip_y = quad.flip_t;
+        adopt_box(
+            &mut node,
+            Val::Px(left),
+            Val::Px(top),
+            Val::Px(right - left),
+            Val::Px(bottom - top),
+        );
+        let color = Color::srgba(1.0, 1.0, 1.0, alpha);
+        if image_node.image != handle
+            || image_node.color != color
+            || image_node.rect.is_some()
+            || image_node.flip_x != quad.flip_s
+            || image_node.flip_y != quad.flip_t
+        {
+            image_node.image = handle.clone();
+            image_node.color = color;
+            image_node.rect = None;
+            image_node.flip_x = quad.flip_s;
+            image_node.flip_y = quad.flip_t;
+        }
     }
 
     let fill = match fill_for_overlay(&mut fill, image_name, &handle, &mut images) {
@@ -342,10 +359,13 @@ pub(crate) fn update_iris(
             continue;
         }
         adopt_display(&mut node, Display::Flex);
-        node.left = Val::Px(left);
-        node.top = Val::Px(top);
-        node.width = Val::Px(width);
-        node.height = Val::Px(height);
+        adopt_box(
+            &mut node,
+            Val::Px(left),
+            Val::Px(top),
+            Val::Px(width),
+            Val::Px(height),
+        );
         image_node.image = fill.handle.clone();
         image_node.color = Color::srgba(1.0, 1.0, 1.0, alpha);
         image_node.rect = None;

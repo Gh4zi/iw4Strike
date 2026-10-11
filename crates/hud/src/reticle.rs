@@ -19,7 +19,7 @@ use weapon_iw4::{
 use crate::gaps::{GapCause, HudGap, HudPresentationGaps, ImageMiss, ReticleSlot};
 use crate::images::HudImages;
 use crate::presentation_scale::{PresentationScale, ScaleClass};
-use crate::ui_write::adopt_display;
+use crate::ui_write::{adopt_box, adopt_display};
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ReticleQuad {
@@ -300,13 +300,25 @@ pub(crate) fn update_reticle(
             Some(_) => (-(gap_v[0] * factor), 0.0, 3),
         };
         adopt_display(&mut node, Display::Flex);
-        node.left = Val::Px(cx + xhair_px.0 + dx - size * 0.5);
-        node.top = Val::Px(cy + xhair_px.1 + dy - size * 0.5);
-        node.width = Val::Px(size);
-        node.height = Val::Px(size);
-        xform.rotation = Rot2::degrees(f32::from(turns) * 90.0);
-        image_node.image = handle;
-        image_node.color = Color::srgba(1.0, 1.0, 1.0, alpha);
+        adopt_box(
+            &mut node,
+            Val::Px(cx + xhair_px.0 + dx - size * 0.5),
+            Val::Px(cy + xhair_px.1 + dy - size * 0.5),
+            Val::Px(size),
+            Val::Px(size),
+        );
+        // Only real changes are written: a written image or transform marks the node changed.
+        let rotation = Rot2::degrees(f32::from(turns) * 90.0);
+        if xform.rotation != rotation {
+            xform.rotation = rotation;
+        }
+        if image_node.image != handle {
+            image_node.image = handle;
+        }
+        let color = Color::srgba(1.0, 1.0, 1.0, alpha);
+        if image_node.color != color {
+            image_node.color = color;
+        }
     }
 }
 

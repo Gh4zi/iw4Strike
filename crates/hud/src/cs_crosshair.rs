@@ -14,7 +14,7 @@ use playerstate_iw4::{ENTITYNUM_NONE, PlayerState, pm_flags};
 use weapon_iw4::cs::{CS_KNIFE_CROSSHAIR, CsCrosshair, CsSpread};
 
 use crate::presentation_scale::PresentationScale;
-use crate::ui_write::adopt_display;
+use crate::ui_write::{adopt_box, adopt_display};
 
 /// Widest the shots open the gap.
 const MAX_GAP: f32 = 15.0;
@@ -193,10 +193,13 @@ pub(crate) fn update_cs_crosshair(
             _ => (cx - half, cy + gap, thickness, length),
         };
         adopt_display(&mut node, Display::Flex);
-        node.left = Val::Px(left);
-        node.top = Val::Px(top);
-        node.width = Val::Px(width);
-        node.height = Val::Px(height);
+        adopt_box(
+            &mut node,
+            Val::Px(left),
+            Val::Px(top),
+            Val::Px(width),
+            Val::Px(height),
+        );
         background.set_if_neq(color);
         edge.set_if_neq(outline);
     }

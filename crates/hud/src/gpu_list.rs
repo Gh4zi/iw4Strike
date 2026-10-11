@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use crate::draw2d::{DRAW2D_QUAD_INDICES, Draw2dQuad};
 use crate::images::HudImages;
-use crate::ui_write::adopt_display;
+use crate::ui_write::{NodeWrite, adopt_display};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -234,7 +234,7 @@ pub fn take_tess_body_cost() -> (f32, u32) {
 
 pub fn apply_tess_job(
     job: TessJob,
-    host: &mut Node,
+    host: &mut dyn NodeWrite,
     latch: &mut GpuListLatch,
     hud_images: &mut HudImages,
     images: &mut Assets<Image>,
@@ -269,11 +269,11 @@ pub fn apply_tess_job(
     }
 }
 
-pub fn hide_host(node: &mut Node) {
+pub fn hide_host(node: &mut dyn NodeWrite) {
     adopt_display(node, Display::None);
 }
 
-pub fn hide_list(host: &mut Node, latch: &mut GpuListLatch) {
+pub fn hide_list(host: &mut dyn NodeWrite, latch: &mut GpuListLatch) {
     hide_host(host);
     latch.hidden = true;
     latch.packed = PackedList::default();
@@ -333,7 +333,7 @@ struct Prepared {
 }
 
 pub struct PresentInput<'a> {
-    pub host: &'a mut Node,
+    pub host: &'a mut dyn NodeWrite,
     pub latch: &'a mut GpuListLatch,
     pub quads: &'a [Draw2dQuad],
     pub hud_images: &'a mut HudImages,
