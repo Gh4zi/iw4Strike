@@ -9,7 +9,7 @@ pub use alloc_count::{
 };
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
@@ -84,14 +84,17 @@ enum WriterMsg {
     Flush(std::sync::mpsc::SyncSender<()>),
 }
 
-/// A log file written by its own thread. Game threads only queue lines: a disk write that
-/// stalls (antivirus scanning a growing log is common on Windows) never stalls a frame.
+/// A log file, or the console, written by its own thread. Game threads only queue lines: a disk
+/// write that stalls (antivirus scanning a growing log is common on Windows) never stalls a
+/// frame, and neither does a console that blocks a write for 100+ ms (conhost busy, or text
+/// selected in the window) — which, written under the sink lock, froze the render thread and
+/// every other thread that logged meanwhile.
 struct AsyncFile {
     tx: std::sync::mpsc::Sender<WriterMsg>,
 }
 
 impl AsyncFile {
-    fn spawn(file: File, thread_name: &str) -> Option<Self> {
+    fn spawn(file: impl Write + Send + 'static, thread_name: &str) -> Option<Self> {
         let (tx, rx) = std::sync::mpsc::channel::<WriterMsg>();
         std::thread::Builder::new()
             .name(thread_name.to_owned())
@@ -137,6 +140,9 @@ impl AsyncFile {
 struct DiagState {
     file: Option<AsyncFile>,
     file_path: PathBuf,
+    /// The console; `None` only if its writer thread could not start, and then lines go out
+    /// with `eprintln!` as before.
+    stderr: Option<AsyncFile>,
 
     latest: Option<PathBuf>,
     traces: Option<AsyncFile>,
@@ -233,6 +239,7 @@ pub fn init_log(artifacts_root: &Path) -> PathBuf {
     let state = DiagState {
         file,
         file_path: path.clone(),
+        stderr: AsyncFile::spawn(std::io::stderr(), "iw4l-stderr"),
         latest: link_latest(&path),
         traces,
         traces_path,
@@ -282,6 +289,9 @@ pub fn exit_launch_error(message: &str) -> ! {
     if let Some(sink) = SINK.get()
         && let Ok(state) = sink.lock()
     {
+        if let Some(stderr) = state.stderr.as_ref() {
+            stderr.flush_wait();
+        }
         if let Some(file) = state.file.as_ref() {
             file.flush_wait();
             eprintln!("log: {}", state.file_path.display());
@@ -347,7 +357,10 @@ fn emit_raw(
     };
 
     if lvl <= state.stderr_threshold {
-        eprintln!("{text}");
+        match state.stderr.as_ref() {
+            Some(stderr) => stderr.line(text.clone()),
+            None => eprintln!("{text}"),
+        }
     }
     if lvl <= state.file_threshold
         && let Some(file) = state.file.as_ref()
@@ -431,9 +444,13 @@ pub fn flush() {
         && let Ok(mut state) = sink.lock()
     {
         flush_collapsed(&mut state);
-        for file in [state.file.as_ref(), state.traces.as_ref()]
-            .into_iter()
-            .flatten()
+        for file in [
+            state.file.as_ref(),
+            state.traces.as_ref(),
+            state.stderr.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             file.flush_wait();
         }
