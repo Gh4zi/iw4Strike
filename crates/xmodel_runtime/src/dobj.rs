@@ -58,6 +58,9 @@ pub struct DObj {
     pub bones: Vec<Bone>,
     pub models: Vec<ModelSlot>,
     pub duplicates: Vec<(usize, usize)>,
+    /// Each bone name's first index, built once: `tracks_for` runs for every clip of every
+    /// posed model every frame, and rebuilt this map each time.
+    first_by_name: std::collections::HashMap<String, usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -276,10 +279,15 @@ impl DObj {
             }
         }
 
+        let mut first_by_name = std::collections::HashMap::with_capacity(bones.len());
+        for (index, bone) in bones.iter().enumerate() {
+            first_by_name.entry(bone.name.clone()).or_insert(index);
+        }
         Ok(DObj {
             bones,
             models: slots,
             duplicates,
+            first_by_name,
         })
     }
 
@@ -300,13 +308,9 @@ impl DObj {
     }
 
     pub fn tracks_for(&self, clip: &AnimClip) -> Vec<Option<usize>> {
-        let mut first_by_name = std::collections::HashMap::with_capacity(self.bones.len());
-        for (index, bone) in self.bones.iter().enumerate() {
-            first_by_name.entry(bone.name.as_str()).or_insert(index);
-        }
         clip.tracks
             .iter()
-            .map(|track| first_by_name.get(track.name.as_str()).copied())
+            .map(|track| self.first_by_name.get(track.name.as_str()).copied())
             .collect()
     }
 
