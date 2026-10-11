@@ -2281,6 +2281,7 @@ dependencies = [
  "sim",
  "ui",
  "weapon_iw4",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

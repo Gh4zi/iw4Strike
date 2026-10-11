@@ -28,6 +28,7 @@ use crate::{
 };
 
 mod dispatch_state;
+mod os_cursor;
 mod state;
 
 pub use dispatch_state::{ConsoleCommandQueue, ConsoleDispatch, WaitMovePose};
@@ -643,6 +644,9 @@ fn sync_cursor_grab(
     mut focused: MessageReader<WindowFocused>,
     mut entered: MessageReader<CursorEntered>,
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    time: Res<Time<Real>>,
+    mut held_frames: Local<u32>,
+    mut last_regrab: Local<f64>,
 ) {
     let mut returned = false;
     for ev in focused.read() {
@@ -671,7 +675,29 @@ fn sync_cursor_grab(
         // Drop it visibly held but actually loose, and re-take it next frame.
         // The cursor stays hidden across the gap, so the player sees nothing.
         cursor.grab_mode = CursorGrabMode::None;
+        *held_frames = 0;
         return;
+    }
+    // An overlay over the game (NVIDIA's on Alt+Z) can leave the arrow showing, or the cursor
+    // free, behind the game's back. Once the game has held the cursor for a few frames (so its
+    // own hide has gone through), put back whatever Windows says was lost.
+    if want == CursorGrabMode::Locked && cursor.grab_mode == want {
+        *held_frames = held_frames.saturating_add(1);
+        if *held_frames >= 3 {
+            if os_cursor::cursor_showing() {
+                os_cursor::hide_cursor();
+            }
+            let now = time.elapsed_secs_f64();
+            if os_cursor::clipped_to_foreground() == Some(false) && now - *last_regrab >= 1.0 {
+                *last_regrab = now;
+                cursor.grab_mode = CursorGrabMode::None;
+                *held_frames = 0;
+                diag::info!(Input, "cursor: confinement lost behind the game's back; re-taken");
+                return;
+            }
+        }
+    } else {
+        *held_frames = 0;
     }
     if cursor.grab_mode != want {
         cursor.grab_mode = want;
