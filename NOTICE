@@ -34,11 +34,18 @@ GNU FreeFont (crates/console/assets/FreeMono.otf)
 Third-party source code
 --------------------------------------------------------------------------------
 
-No third-party source code is vendored in this repository, and the build links
-no third-party project named below. The Rust crates compiled into the IW4L
-binary, with their licence and copyright texts, are listed in
+The build links no third-party project named below. The Rust crates compiled
+into the IW4L binary, with their licence and copyright texts, are listed in
 THIRD-PARTY-LICENSES.txt; the binary embeds that file and `iw4l licenses`
 prints it. `cargo xtask licenses` regenerates it from Cargo.lock.
+
+AMD FidelityFX Super Resolution 3.1 (crates/render_gpu/src/fsr/fsr3_*.wgsl)
+  Copyright (C) 2026 Advanced Micro Devices, Inc.
+  https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK
+  The FSR 3.1 upscaler's shaders, ported from HLSL to WGSL (the SDK's
+  ffx_fsr3upscaler_*.h and the RCAS part of ffx_fsr1.h). MIT licence — full
+  text at the top of crates/render_gpu/src/fsr/fsr3_common.wgsl, which is
+  compiled into the binary with every pass.
 
 --------------------------------------------------------------------------------
 References consulted during development

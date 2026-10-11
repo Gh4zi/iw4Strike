@@ -71,6 +71,8 @@ pub(crate) struct FsrFrame {
     pub render_size: UVec2,
     /// The full-size frame FSR writes and the passes after it draw on.
     pub output: Option<Handle<Image>>,
+    /// RCAS strength, 0 (off) to 1.
+    pub sharpness: f32,
 }
 
 /// The images the 3D camera and FSR render into while FSR is on, and what shows them.
@@ -224,6 +226,7 @@ fn apply_fsr_target(
         active: true,
         render_size: size,
         output: Some(output.clone()),
+        sharpness: settings.fsr_sharpness,
     };
     let shown = if camera.is_active {
         Visibility::Inherited

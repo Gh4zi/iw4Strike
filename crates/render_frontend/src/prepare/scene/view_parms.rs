@@ -30,7 +30,7 @@ pub(crate) fn jitter_scene_camera(
         jitter.0 = Vec2::ZERO;
         return;
     };
-    if settings.fsr_mode == 0 || !fsr_jitter_env() {
+    if settings.fsr_mode == 0 {
         jitter.0 = Vec2::ZERO;
         if temporal.is_some() {
             commands.entity(entity).remove::<TemporalJitter>();
@@ -57,18 +57,6 @@ pub(crate) fn jitter_scene_camera(
             commands.entity(entity).insert(TemporalJitter { offset });
         }
     }
-}
-
-/// Jitter shakes the picture until FSR's temporal pass averages it out, so it stays behind
-/// `IW4L_FSR_JITTER=1` until that pass lands.
-fn fsr_jitter_env() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        matches!(
-            std::env::var("IW4L_FSR_JITTER").as_deref(),
-            Ok("1") | Ok("true") | Ok("yes")
-        )
-    })
 }
 
 fn halton(mut index: u32, base: u32) -> f32 {
