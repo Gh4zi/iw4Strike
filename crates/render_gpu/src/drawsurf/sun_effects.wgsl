@@ -20,6 +20,8 @@ struct SunParams {
     fade: vec4<f32>,
     blind: vec4<f32>,
     glare: vec4<f32>,
+    // x = render pixels per screen pixel (below 1 while FSR renders small).
+    probe: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> params: SunParams;
@@ -64,7 +66,7 @@ fn probe_visibility() -> f32 {
     }
     let size = vec2<f32>(params.viewport.x, params.viewport.y);
     let center = uv * size;
-    let half = vec2<f32>(8.0, 8.0);
+    let half = vec2<f32>(8.0, 8.0) * params.probe.x;
     var visible = 0.0;
     var counted = 0.0;
     for (var y = 0; y < 4; y = y + 1) {

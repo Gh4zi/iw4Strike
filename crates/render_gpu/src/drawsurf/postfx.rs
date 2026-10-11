@@ -310,7 +310,8 @@ fn prepare_postfx_gpu(
     mut gpu: ResMut<ExactPostFxGpu>,
     device: Res<RenderDevice>,
     cache: Res<PipelineCache>,
-    views: Query<&ExtractedView>,
+    // The 3D camera's view: the UI cameras are views too, and with FSR the 3D one is smaller.
+    views: Query<&ExtractedView, With<Camera3d>>,
 ) {
     let (Some(sampler), Some(depth_sampler), Some(film)) = (
         extracted.sampler,

@@ -75,6 +75,7 @@ pub use colour_submit::{
 };
 pub(crate) use cs_viewmodel::CsViewmodelSet;
 pub(crate) use draw::register_drawsurf_render;
+pub(crate) use iw_tess::IwTessSet;
 pub(crate) use postfx::PostFxSet;
 pub use geometry_diagnostic::{ExtractedDiagnosticGeometry, geometry_diagnostic_enabled};
 pub use gpu_resources::*;

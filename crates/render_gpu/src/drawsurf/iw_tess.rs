@@ -433,6 +433,10 @@ fn prepare_iw_tess(
     queue.write_buffer(&pipeline.params, 0, bytemuck::bytes_of(&coeffs));
 }
 
+/// The in-world HUD pass (the last that draws on the scene).
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct IwTessSet;
+
 fn draw_iw_tess(
     view: ViewQuery<(&ViewTarget, &ExtractedView)>,
     extracted: Res<ExtractedIwTess>,
@@ -792,6 +796,7 @@ pub(super) fn register(app: &mut App) {
             Core3d,
             draw_iw_tess
                 .in_set(Core3dSystems::PostProcess)
+                .in_set(IwTessSet)
                 .after(super::postfx::PostFxSet)
                 .after(super::cs_viewmodel::CsViewmodelSet)
                 .after(super::cs_scope::CsScopeSet),

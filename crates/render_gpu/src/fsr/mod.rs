@@ -4,6 +4,7 @@
 //! a full-window image under the UI shows it. Off, the 3D camera draws straight to the window as
 //! it always has.
 
+mod alpha;
 mod gpu;
 
 pub(crate) use gpu::{FsrOutput, prepare_fsr};
@@ -109,6 +110,7 @@ pub(crate) fn register(app: &mut App) {
         .init_resource::<FsrFrame>()
         .add_systems(Update, apply_fsr_target);
     gpu::register(app);
+    alpha::register(app);
 }
 
 /// The camera already renders into our image.

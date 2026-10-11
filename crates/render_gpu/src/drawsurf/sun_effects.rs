@@ -31,7 +31,7 @@ use super::postfx::PostFxSet;
 pub(super) struct SunEffectsSet;
 
 const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/sun_effects.wgsl";
-const PARAMS_SIZE: u64 = 80;
+const PARAMS_SIZE: u64 = 96;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -41,6 +41,8 @@ struct SunParamsGpu {
     fade: [f32; 4],
     blind: [f32; 4],
     glare: [f32; 4],
+    /// x = render pixels per screen pixel (below 1 while FSR renders small).
+    probe: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -349,6 +351,7 @@ fn pack_params(frame: &SunEffectsFrame) -> SunParamsGpu {
             if frame.camera_cut { 1.0 } else { 0.0 },
             if frame.behind_camera { 1.0 } else { 0.0 },
         ],
+        probe: [1.0, 0.0, 0.0, 0.0],
     }
 }
 
@@ -383,6 +386,7 @@ fn draw_sun_effects(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     uploaded: Res<RuntimeUploadedImageRegistry>,
+    fsr: Res<crate::fsr::FsrOutput>,
     mut context: RenderContext,
 ) {
     let Some(mut gpu) = gpu else {
@@ -411,7 +415,12 @@ fn draw_sun_effects(
     let colour_ok = target.main_texture_format() == TextureFormat::Rgba8Unorm;
     let write = gpu.slot as usize;
     let read = 1 - write;
-    queue.write_buffer(&gpu.params, 0, bytemuck::bytes_of(&pack_params(&sun)));
+    let mut params = pack_params(&sun);
+    // The visibility probe covers the same patch of screen whatever FSR renders at.
+    if let Some(out) = fsr.0.as_ref() {
+        params.probe[0] = target.main_texture().width() as f32 / out.size().width.max(1) as f32;
+    }
+    queue.write_buffer(&gpu.params, 0, bytemuck::bytes_of(&params));
     let encoder = context.command_encoder();
     let history_bind = bind_sun(
         &gpu,
