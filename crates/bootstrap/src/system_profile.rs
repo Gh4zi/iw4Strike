@@ -60,9 +60,10 @@ fn spike_ns() -> Option<u64> {
 /// Per span: total ns, runs, longest run ns.
 static TOTALS: Mutex<Option<HashMap<String, (u64, u64, u64)>>> = Mutex::new(None);
 
-struct SystemName(String);
+/// The name, and its index for the stall sampler.
+struct SystemName(String, u32);
 
-struct Entered(Instant);
+struct Entered(Instant, Option<u64>);
 
 struct SystemProfileLayer;
 
@@ -80,8 +81,9 @@ where
                 // `IW4L_PROFILE_ALL_SPANS=1`: every other span by its static name, wgpu's
                 // `profiling::scope!` markers among them.
                 if let Some(span) = ctx.span(id) {
-                    span.extensions_mut()
-                        .insert(SystemName(format!("span: {name}")));
+                    let name = format!("span: {name}");
+                    let index = stall_intern(&name);
+                    span.extensions_mut().insert(SystemName(name, index));
                 }
                 return;
             }
@@ -103,16 +105,18 @@ where
         let mut name = NameField(field_name, None);
         attrs.record(&mut name);
         if let (Some(name), Some(span)) = (name.1, ctx.span(id)) {
-            span.extensions_mut()
-                .insert(SystemName(format!("{prefix}{name}")));
+            let name = format!("{prefix}{name}");
+            let index = stall_intern(&name);
+            span.extensions_mut().insert(SystemName(name, index));
         }
     }
 
     fn on_enter(&self, id: &span::Id, ctx: Context<'_, S>) {
         if let Some(span) = ctx.span(id) {
             let mut extensions = span.extensions_mut();
-            if extensions.get_mut::<SystemName>().is_some() {
-                extensions.replace(Entered(Instant::now()));
+            if let Some(name) = extensions.get_mut::<SystemName>() {
+                stall_enter(name.1);
+                extensions.replace(Entered(Instant::now(), diag::thread_cpu_ns()));
             }
         }
     }
@@ -127,13 +131,20 @@ where
         else {
             return;
         };
+        stall_exit();
         let ns = entered.0.elapsed().as_nanos() as u64;
         if spike_ns().is_some_and(|spike| ns > spike) {
             static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
             let at = START.get_or_init(Instant::now).elapsed().as_secs_f64();
+            // CPU used over the interval: near the wall time it was work, far below it the
+            // thread waited (a lock, I/O) or was descheduled.
+            let cpu = entered.1.zip(diag::thread_cpu_ns()).map_or_else(
+                || "?".to_owned(),
+                |(then, now)| format!("{:.0}", now.saturating_sub(then) as f64 / 1e6),
+            );
             diag::info!(
                 Launch,
-                "system spike: {:>8.3} ms at {at:>8.3}s  {}{}",
+                "system spike: {:>8.3} ms (cpu {cpu} ms) at {at:>8.3}s  {}{}",
                 ns as f64 / 1e6,
                 name.0,
                 thread_suffix()
@@ -204,8 +215,22 @@ fn report(mut clock: Local<ReportClock>) {
     }
 }
 
+#[cfg(all(windows, target_arch = "x86_64"))]
+use crate::stall_stacks::{enter as stall_enter, exit as stall_exit, intern as stall_intern};
+
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+fn stall_intern(_: &str) -> u32 {
+    0
+}
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+fn stall_enter(_: u32) {}
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+fn stall_exit() {}
+
 /// `LogPlugin::custom_layer`: install the aggregating layer and its reporter.
 pub(crate) fn layer(app: &mut App) -> Option<bevy::log::BoxedLayer> {
     app.add_systems(Last, report);
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    crate::stall_stacks::start();
     Some(Box::new(SystemProfileLayer))
 }

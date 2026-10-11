@@ -593,3 +593,41 @@ macro_rules! event {
         );
     }};
 }
+
+/// CPU time the calling thread has used, in ns: the cycles it actually ran
+/// (`QueryThreadCycleTime`, exact) at the processor's timestamp rate, measured once. Against a
+/// wall interval it tells work from waiting: a slow interval that used little CPU was blocked
+/// or descheduled, not computing. (`GetThreadTimes` would not do: it charges whole clock ticks
+/// to whichever thread a tick lands on, and can report 0 for a thread that ran.)
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[must_use]
+pub fn thread_cpu_ns() -> Option<u64> {
+    use windows_sys::Win32::System::Threading::GetCurrentThread;
+    use windows_sys::Win32::System::WindowsProgramming::QueryThreadCycleTime;
+    let mut cycles = 0u64;
+    // SAFETY: the pseudo-handle of the current thread and a writable u64.
+    if unsafe { QueryThreadCycleTime(GetCurrentThread(), &mut cycles) } == 0 {
+        return None;
+    }
+    Some((cycles as f64 / timestamp_per_ns()) as u64)
+}
+
+/// Timestamp-counter ticks per ns, measured against `Instant` over 20 ms on first use.
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn timestamp_per_ns() -> f64 {
+    static RATE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RATE.get_or_init(|| {
+        let start = std::time::Instant::now();
+        // SAFETY: rdtsc has no preconditions on x86-64.
+        let first = unsafe { core::arch::x86_64::_rdtsc() };
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let ticks = unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(first);
+        (ticks as f64 / start.elapsed().as_nanos().max(1) as f64).max(1e-3)
+    })
+}
+
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+#[must_use]
+pub fn thread_cpu_ns() -> Option<u64> {
+    None
+}

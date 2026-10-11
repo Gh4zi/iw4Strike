@@ -2043,6 +2043,7 @@ dependencies = [
  "sha2",
  "sim",
  "ui",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
