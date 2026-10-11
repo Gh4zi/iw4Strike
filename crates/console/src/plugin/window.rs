@@ -21,8 +21,8 @@ use super::{ConsoleInputText, ConsoleState, style::Cs2Frame};
 
 const FONT_SIZE: f32 = super::style::CS2.font_size;
 
-/// The header: the title's 18 px line and its 3 px padding above and below.
-pub(super) const TITLE_HEIGHT: f32 = 28.0;
+/// The header: the title's line and 3-4 px above and below it.
+pub(super) const TITLE_HEIGHT: f32 = 24.0;
 /// The input: a 14 px line, 4 px padding and its 1 px top border.
 pub(super) const INPUT_HEIGHT: f32 = 26.0;
 pub(super) const SCROLLBAR_WIDTH: f32 = 8.0;

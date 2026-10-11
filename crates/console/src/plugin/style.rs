@@ -354,7 +354,10 @@ fn spawn_cs2(
                                     Node {
                                         position_type: PositionType::Absolute,
                                         left: px(4.0 + nudge),
-                                        top: px(3),
+                                        top: px(
+                                            ((window::TITLE_HEIGHT - CS2_TITLE_SIZE * 1.2) / 2.0)
+                                                .round(),
+                                        ),
                                         ..default()
                                     },
                                     Pickable::IGNORE,

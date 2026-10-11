@@ -26,6 +26,7 @@ use crate::{
     suggest::{SuggestSpan, SuggestTone, suggestion_spans},
 };
 
+mod context_menu;
 mod dispatch_state;
 mod os_cursor;
 mod state;
@@ -75,6 +76,7 @@ impl Plugin for ConsolePlugin {
         crate::startup::install_stdin(app);
         app.init_resource::<ConsoleSettings>()
             .init_resource::<ConsoleState>()
+            .init_resource::<context_menu::ContextMenuState>()
             .init_resource::<frame::HudInputView>()
             .init_resource::<ConsoleInputState>()
             .init_resource::<KeyBinds>()
@@ -110,6 +112,7 @@ impl Plugin for ConsolePlugin {
                     window::follow_console_log,
                     window::update_console_scrollbar,
                     window::highlight_console_controls,
+                    context_menu::highlight_context_menu,
                 )
                     .chain()
                     .before(bevy::ui::UiSystems::Layout),
@@ -140,6 +143,7 @@ impl Plugin for ConsolePlugin {
                     window::drag_console_window,
                     window::drag_console_scrollbar,
                     window::close_console_button,
+                    context_menu::console_context_menu,
                     window::scroll_console_log,
                     copy_console_selection_on_release,
                     isolate_gameplay_input,
@@ -1408,6 +1412,7 @@ fn copy_console_selection_on_release(
     mut state: ResMut<ConsoleState>,
     settings: Res<ConsoleSettings>,
     mut clipboard: ResMut<Clipboard>,
+    look: Res<style::ConsoleLook>,
 ) {
     state.clipboard_write = None;
     state.copy_source = None;
@@ -1437,6 +1442,10 @@ fn copy_console_selection_on_release(
     }
     let scroll_gesture = state.scroll_gesture;
     state.scroll_gesture = false;
+    if look.style == style::ConsoleStyle::Cs2 {
+        // CS2 only marks a selection; its right-click menu copies (`context_menu`).
+        return;
+    }
     let result = if scroll_gesture {
         let joined = state.log.join("\n");
         let selected = state.scroll_anchor.and_then(|anchor| {
