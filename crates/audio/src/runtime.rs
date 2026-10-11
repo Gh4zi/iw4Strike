@@ -1098,6 +1098,8 @@ fn admit(
             id: logical.request.instance.id,
             policy: logical.request.admission,
             priority: f32::from_bits(logical.request.instance.priority.load(Ordering::Acquire)),
+            audible: logical.request.instance.audible.load(Ordering::Acquire)
+                && logical.request.instance.status() != InstanceStatus::Virtual,
         })
         .collect();
     let victims = match crate::admission::plan(&policy, &occupants) {

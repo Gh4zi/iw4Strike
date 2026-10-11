@@ -46,6 +46,8 @@ pub(crate) struct Occupant {
     pub id: u64,
     pub policy: AdmissionPolicy,
     pub priority: f32,
+    /// Whether it is heard: a looping emitter out of range is virtual and plays nothing.
+    pub audible: bool,
 }
 
 pub(crate) fn plan(
@@ -114,10 +116,15 @@ pub(crate) fn plan(
         }
     }
     if let Some(channel) = request.channel {
+        // A channel's voices are the ones it plays. Virtual loops do not hold one: counted, a
+        // map's out-of-range ambient emitters (Favela has more than the channel's 52) refused
+        // every other sound on their channel — death cries, entity sounds — with only a few of
+        // them heard.
         let remaining = occupants
             .iter()
             .filter(|occupant| {
                 same_bank(occupant)
+                    && occupant.audible
                     && occupant
                         .policy
                         .channel
