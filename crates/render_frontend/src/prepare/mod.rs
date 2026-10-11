@@ -202,6 +202,13 @@ impl Plugin for RenderPreparePlugin {
             )
             .add_systems(
                 Update,
+                crate::assemble::drawsurf::publish_sun_shadow_caster_volume
+                    .after(stamp_prepared_scene_view)
+                    .after(crate::prepare::scene::sun_stage::update_active_sun_stage)
+                    .before(crate::adapters::anim::script_model::ScriptModelSkinSet),
+            )
+            .add_systems(
+                Update,
                 crate::prepare::scene::sun_stage::update_active_sun_stage
                     .after(stamp_prepared_scene_view)
                     .before(crate::assemble::drawsurf::update_command_context_code_sources)

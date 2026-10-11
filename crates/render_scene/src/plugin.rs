@@ -32,6 +32,7 @@ impl Plugin for RenderScenePlugin {
             .init_resource::<RSubwindowDvar>()
             .init_resource::<RLockPvs>()
             .init_resource::<SmEnableDvar>()
-            .init_resource::<SmSunEnableDvar>();
+            .init_resource::<SmSunEnableDvar>()
+            .init_resource::<crate::SunShadowCasterVolume>();
     }
 }

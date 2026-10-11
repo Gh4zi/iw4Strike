@@ -52,4 +52,6 @@ pub use view_parms::{
     pack_live_view_parms, prepare_scene_view,
 };
 pub use world_instances::{WorldDynEntInstance, WorldScriptModelInstance};
-pub use xmodel_draw::{XModelCasterBound, XModelColourRefusal, XModelSurfaceDraw};
+pub use xmodel_draw::{
+    SunShadowCasterVolume, XModelCasterBound, XModelColourRefusal, XModelSurfaceDraw,
+};

@@ -225,6 +225,17 @@ fn scene_ent_admitted(scene: Option<&crate::GfxScene>, entnum: Option<u32>) -> b
     }
 }
 
+/// A script model out of the camera's walk is drawn only into the sun shadow: its producer
+/// keeps it, colour refused, while it is inside a sun partition.
+#[must_use]
+fn script_draw_admitted(scene: Option<&crate::GfxScene>, draw: &XModelSurfaceDraw) -> bool {
+    scene_ent_admitted(scene, draw.scene_entnum)
+        || (draw.colour_refusal.is_some()
+            && draw
+                .scene_entnum
+                .is_some_and(|n| scene.is_some_and(|s| s.scene_ent_hidden(n))))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct XModelTopologyKey {
     generation: [u64; 8],
@@ -401,7 +412,7 @@ fn xmodel_merge_stamp(
         scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
     }
     for draw in scripts.draws() {
-        scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
+        script_draw_admitted(scene, draw).hash(&mut occupancy);
     }
     for draw in missiles.draws() {
         scene_ent_admitted(scene, draw.scene_entnum).hash(&mut occupancy);
@@ -949,8 +960,14 @@ fn owner_draw_lists(
             caster_bound: None,
         }));
     }
+    script_list.extend(
+        scripts
+            .draws()
+            .iter()
+            .copied()
+            .filter(|d| script_draw_admitted(scene, d)),
+    );
     for (list, draws) in [
-        (script_list, scripts.draws()),
         (missile_list, missiles.draws()),
         (item_list, items.draws()),
     ] {
@@ -1246,7 +1263,7 @@ fn refresh_concat_draws(
             .draws()
             .iter()
             .copied()
-            .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
+            .filter(|d| script_draw_admitted(scene, d)),
     );
     append_concat_owner_draws(
         merged,
@@ -1323,7 +1340,7 @@ fn admitted_mask(
     if scripts
         .draws()
         .iter()
-        .any(|d| scene_ent_admitted(scene, d.scene_entnum))
+        .any(|d| script_draw_admitted(scene, d))
     {
         admitted |= ADMIT_SCRIPT;
     }

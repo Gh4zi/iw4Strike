@@ -75,6 +75,7 @@ struct ScriptModelPoseLocals<'w, 's> {
     remap: Local<'s, Vec<Option<usize>>>,
     lod_skinned: Res<'w, render_scene::LodRampSkinnedDvar>,
     gfx_scene: Res<'w, HostGfxScene>,
+    sun_casters: Res<'w, render_scene::SunShadowCasterVolume>,
 }
 
 #[derive(SystemParam)]
@@ -566,6 +567,7 @@ fn pose_script_models(
         mut remap,
         lod_skinned,
         gfx_scene,
+        sun_casters,
     } = locals;
     live_assets.clear();
     live_ids.clear();
@@ -614,7 +616,11 @@ fn pose_script_models(
         let entnum = owner.gentity_number.map(u32::from);
 
         let slot = entnum.map(|entnum| script_scene_slot(&gfx_scene.scene, entnum));
-        if slot.as_ref().is_some_and(|slot| slot.hidden) {
+        // Out of the camera's walk, a model can still shade what the camera sees (laundry
+        // above the view on the wall below it): it stays, for the sun shadow only, while it is
+        // inside a sun partition.
+        let walk_hidden = entnum.is_some_and(|entnum| gfx_scene.scene.scene_ent_hidden(entnum));
+        if slot.as_ref().is_some_and(|slot| slot.hidden) && !walk_hidden {
             if let Some(id) = focused_owner_id {
                 focus.refuse(id, &owner.current_model.0, "scene_ent_skip");
             }
@@ -627,6 +633,18 @@ fn pose_script_models(
             continue;
         };
         let origin = transform.translation.to_array();
+        let radius = skels
+            .first()
+            .and_then(|skel| skel.radius)
+            .unwrap_or(1.0)
+            .max(1.0);
+        let caster_bound = render_scene::XModelCasterBound { origin, radius };
+        if walk_hidden && !sun_casters.admits(caster_bound) {
+            if let Some(id) = focused_owner_id {
+                focus.refuse(id, &owner.current_model.0, "scene_ent_skip");
+            }
+            continue;
+        }
 
         if lod_culled(skels.iter().copied(), origin, eye, skinned_ramp) {
             if let Some(id) = focused_owner_id {
@@ -716,11 +734,6 @@ fn pose_script_models(
         };
         let box_half =
             crate::script_model_lighting_box_half(&assets, &owner.dobj_state.composition.models);
-        let radius = skels
-            .first()
-            .and_then(|skel| skel.radius)
-            .unwrap_or(1.0)
-            .max(1.0);
         product.rows.push(ScriptOwnerRow {
             entity,
             asset_index,
@@ -728,10 +741,10 @@ fn pose_script_models(
             model: owner.current_model.clone(),
             world_from_local: transform.to_matrix(),
             entnum,
-            camera_hidden: sphere_behind_frustum(origin, radius, &planes),
+            camera_hidden: walk_hidden || sphere_behind_frustum(origin, radius, &planes),
             lighting_origin: owner.lighting_origin,
             lookup_fallback: atpoint.fallback(owner.lighting_origin, box_half),
-            caster_bound: render_scene::XModelCasterBound { origin, radius },
+            caster_bound,
         });
     }
     persist.by_id.retain(|id, _| live_ids.contains(id));
