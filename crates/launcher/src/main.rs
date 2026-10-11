@@ -32,6 +32,7 @@ fn main() {
         }
         return;
     }
+    diag::start_heap_profile();
     let mut args = match updater::startup().unwrap_or_else(|e| diag::exit_launch_error(&e)) {
         Some(args) => args,
         None => return,

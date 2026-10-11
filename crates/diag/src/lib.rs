@@ -1,6 +1,14 @@
 mod alloc_count;
 pub mod gap;
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod heap_profile;
 pub mod wgsl_dump;
+
+/// `IW4L_HEAP_PROFILE=<seconds>[,...]`: start the timed live-heap dumps (Windows x86-64).
+pub fn start_heap_profile() {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    heap_profile::start_dumps();
+}
 
 pub use alloc_count::{
     ProcessAllocationStats, ProcessCountingAllocator, counting_enabled,

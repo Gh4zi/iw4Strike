@@ -279,11 +279,17 @@ fn watch(threshold: Duration) {
                 .unwrap_or_else(|| tid.to_string());
             let stack = modules.describe(&sample.frames);
             let ran = ran.map_or_else(String::new, |ran| format!(", ran {ran:.0}% since the last"));
+            // When the span began, on the wall clock, to line it up with tools outside the
+            // process.
+            let began_unix_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis())
+                .saturating_sub(u128::from(elapsed / 1_000_000));
             // A thread found already suspended was stopped by someone else: a debugger, or an
             // injected overlay hooking the process.
             diag::info!(
                 Launch,
-                "stall stack: {name} @{thread} running {:.0} ms (sample {}{ran}, suspended by others {}, {span_faults} process page faults in it): {stack}",
+                "stall stack: {name} @{thread} running {:.0} ms since unix_ms {began_unix_ms} (sample {}{ran}, suspended by others {}, {span_faults} process page faults in it): {stack}",
                 elapsed as f64 / 1e6,
                 count + 1,
                 sample.suspended_before,

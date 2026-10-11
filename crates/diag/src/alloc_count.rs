@@ -92,7 +92,7 @@ pub fn counting_enabled() -> bool {
     }
 }
 
-fn env_key_present(key_nul: &[u8]) -> bool {
+pub(crate) fn env_key_present(key_nul: &[u8]) -> bool {
     debug_assert_eq!(key_nul.last().copied(), Some(0));
     !unsafe { getenv(key_nul.as_ptr().cast()) }.is_null()
 }
@@ -119,26 +119,46 @@ static BACKING: std::alloc::System = std::alloc::System;
 
 pub struct ProcessCountingAllocator;
 
+#[cfg(all(windows, target_arch = "x86_64"))]
+use crate::heap_profile::{on_alloc as profile_alloc, on_dealloc as profile_dealloc};
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+fn profile_alloc(_: *mut u8, _: usize) {}
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+fn profile_dealloc(_: *mut u8, _: usize) {}
+
 unsafe impl GlobalAlloc for ProcessCountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         record_alloc(layout.size() as u64);
-        unsafe { BACKING.alloc(layout) }
+        let ptr = unsafe { BACKING.alloc(layout) };
+        profile_alloc(ptr, layout.size());
+        ptr
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         record_alloc(layout.size() as u64);
-        unsafe { BACKING.alloc_zeroed(layout) }
+        let ptr = unsafe { BACKING.alloc_zeroed(layout) };
+        profile_alloc(ptr, layout.size());
+        ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         record_dealloc(layout.size() as u64);
+        profile_dealloc(ptr, layout.size());
         unsafe { BACKING.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         record_alloc(new_size as u64);
         record_dealloc(layout.size() as u64);
-        unsafe { BACKING.realloc(ptr, layout, new_size) }
+        profile_dealloc(ptr, layout.size());
+        let moved = unsafe { BACKING.realloc(ptr, layout, new_size) };
+        if moved.is_null() {
+            // The old block stands.
+            profile_alloc(ptr, layout.size());
+        } else {
+            profile_alloc(moved, new_size);
+        }
+        moved
     }
 }
 
