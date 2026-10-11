@@ -300,46 +300,37 @@ fn play_cs_sound_alias(
     }));
 }
 
-/// The CS sounds of a hurting landing: CS:S `Player.FallDamage` (`Player.FallGib` when it
-/// kills); else CS 1.6's, a cry and a body hit together — `pl_fallpain3` (one of `die1-3` when
-/// it kills) over one of `bhit_flesh-1-3` at random (`bhit_kevlar-1` for a player in kevlar who
-/// lives). Empty when neither install is in the bank.
-fn cs_fall_aliases(
+/// The CS sound of a hurting landing (the landing step is its own event): CS:S
+/// `Player.FallDamage` (`Player.FallGib` when it splats); else CS 1.6's — no cry, one of
+/// `bhit_flesh-1-3` at random (`Pain`, never armoured for a fall), or `common/bodysplat.wav` when
+/// the fall does more damage than the player has (whose death cry the death script plays).
+/// `None` when neither install is in the bank.
+fn cs_fall_alias(
     bank: &asset_audio::SoundCatalog,
-    lethal: bool,
-    kevlar: bool,
+    splat: bool,
     player_view: bool,
-) -> Vec<String> {
+) -> Option<String> {
     let suffix = if player_view {
         asset_audio::CS_SOUND_PLAYER_SUFFIX
     } else {
         ""
     };
-    let has = |alias: &String| bank.has_alias(asset_core::AssetNamespace::Iw4, alias);
-    let css = if lethal {
+    let css = if splat {
         "player.fallgib"
     } else {
         "player.falldamage"
     };
-    let css = format!("{}{css}{suffix}", asset_audio::CSS_SOUND_PREFIX);
-    if has(&css) {
-        return vec![css];
-    }
-    let cry = if lethal {
-        asset_audio::CS_FALL_DEATH
-    } else {
-        asset_audio::CS_FALL_PAIN
-    };
-    let hit = if kevlar && !lethal {
-        asset_audio::CS_FALL_BODY_HIT_KEVLAR
+    let cs16 = if splat {
+        asset_audio::CS_FALL_SPLAT
     } else {
         asset_audio::CS_FALL_BODY_HIT
     };
-    [cry, hit]
-        .into_iter()
-        .map(|alias| format!("{alias}{suffix}"))
-        .filter(has)
-        .collect()
+    [
+        format!("{}{css}{suffix}", asset_audio::CSS_SOUND_PREFIX),
+        format!("{cs16}{suffix}"),
+    ]
+    .into_iter()
+    .find(|alias| bank.has_alias(asset_core::AssetNamespace::Iw4, alias))
 }
 
 fn movement_sound(
@@ -369,36 +360,37 @@ fn movement_sound(
     let origin_inches = (!player_view).then_some(sound.event.payload.origin);
     // A hurting CS landing (its parameter is the damage) cries out with CS's fall sounds; the
     // landing thud is a separate event.
-    if movement_iw4::rules::CS_RULES && sound.event.event.is_landing_pain() {
-        let aliases = bank.as_deref().map_or_else(Vec::new, |bank| {
-            let ps = identity.client().and_then(|id| presented.player(id));
-            // The local player hears it predicted, before the hit; others after it.
-            let lethal = match ps.map(|ps| ps.health) {
-                Some(health) if player_view => sound.event.payload.event_parm >= health,
+    if movement_iw4::rules::CS_RULES
+        && sound.event.event.is_landing_pain()
+        && let Some(alias) = bank.as_deref().and_then(|bank| {
+            let health = identity
+                .client()
+                .and_then(|id| presented.player(id))
+                .map(|ps| ps.health);
+            // CS splats a fall that does more damage than the player has. The local player hears
+            // it predicted, before the hit; others after it.
+            let splat = match health {
+                Some(health) if player_view => sound.event.payload.event_parm > health,
                 Some(health) => health <= 0,
                 None => false,
             };
-            let kevlar = ps.is_some_and(|ps| ps.cs_armor > 0);
-            cs_fall_aliases(&bank.0, lethal, kevlar, player_view)
-        });
-        if !aliases.is_empty() {
-            for (ordinal, alias) in (0u16..).zip(aliases) {
-                play.write(crate::AliasCommand::Play(PlayAlias {
-                    event: Some(crate::AudioEvent::from_entity(
-                        *generation,
-                        sound.entity,
-                        &sound.event,
-                        ordinal,
-                    )),
-                    namespace: asset_core::AssetNamespace::Iw4,
-                    alias,
-                    fallback: None,
-                    origin_inches,
-                    snd_ent: Some(u32::from(identity.number())),
-                }));
-            }
-            return;
-        }
+            cs_fall_alias(&bank.0, splat, player_view)
+        })
+    {
+        play.write(crate::AliasCommand::Play(PlayAlias {
+            event: Some(crate::AudioEvent::from_entity(
+                *generation,
+                sound.entity,
+                &sound.event,
+                0,
+            )),
+            namespace: asset_core::AssetNamespace::Iw4,
+            alias,
+            fallback: None,
+            origin_inches,
+            snd_ent: Some(u32::from(identity.number())),
+        }));
+        return;
     }
     if let Some(index) = sound.event.event.landing_surface_index() {
         let surface_flags = (index as u32) << 20;

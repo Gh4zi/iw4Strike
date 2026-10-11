@@ -117,6 +117,19 @@ const PATCHES: &[Patch] = &[
         "no perks: `_hasPerk` is always false (the class perks the scripts still record \
          cancelled fall damage through Commando Pro, among others)",
     ),
+    once(
+        "maps/mp/_utility",
+        "self PlaySound( \"generic_death_russian_\"+ rand );",
+        "self PlaySound( \"cs_death\" );",
+        "death cry: CS's (`DeathSound`: 1.6's die1-3/death6, else CS:S's Player.Death), not MW2's \
+         Russian soldier",
+    ),
+    once(
+        "maps/mp/_utility",
+        "self PlaySound( \"generic_death_american_\"+ rand );",
+        "self PlaySound( \"cs_death\" );",
+        "death cry: CS's, not MW2's American soldier",
+    ),
     // Defusal (Search and Destroy) in CS2's competitive format: first to 13 rounds, sides switch
     // after 12, 1:55 rounds, 3 s plant, 10 s defuse, 40 s bomb. MW2 caps the limits at 12 and 9.
     once(

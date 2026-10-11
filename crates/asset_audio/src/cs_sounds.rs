@@ -67,10 +67,11 @@ fn add_ladder_steps(catalog: &mut SoundCatalog, waves: &[(u32, i32, Vec<u8>)]) -
 /// steps through five sounds.
 pub const CS_C4_PREFIX: &str = "cs_c4_";
 
-/// The CS sounds the bomb mode's script plays by name. The server checks every script sound
-/// against the zones' aliases; these come from the local CS install on each client instead, so
-/// they are added to that list.
-pub const CS_SCRIPT_SOUNDS: [&str; 15] = [
+/// The CS sounds the scripts play by name (the bomb mode's, and every death's cry). The server
+/// checks every script sound against the zones' aliases; these come from the local CS install on
+/// each client instead, so they are added to that list.
+pub const CS_SCRIPT_SOUNDS: [&str; 16] = [
+    CS_DEATH_CRY,
     "cs_c4_plant",
     "cs_c4_disarm",
     "cs_c4_disarmed",
@@ -124,47 +125,35 @@ fn steady_pitch(row: &mut crate::CapturedAlias) {
     row.pitch_max = 1.0;
 }
 
-/// The CS 1.6 player waves read (`sound/player`): the fall pains, the body hits a landing lands
-/// with, and the death cries a deadly one gets.
-const CS16_PLAYER_WAVES: [&str; 4] = ["pl_fallpain", "bhit_flesh", "bhit_kevlar", "die"];
+/// The CS 1.6 player waves read (`sound/player`): the body hits a hurting landing makes, and the
+/// death cries.
+const CS16_PLAYER_WAVES: [&str; 3] = ["bhit_flesh", "die", "death6"];
 
-/// A hurting CS 1.6 landing's cry: `pl_fallpain3`, the only one CS 1.6 plays — its movement code
-/// (`PM_CheckFalling`) picks `pl_fallpain2` or `3` on the voice channel with no `break` between
-/// them, so the second always replaces the first.
-pub const CS_FALL_PAIN: &str = "cs/player/fall_pain";
-/// A deadly one's cry instead, one of `die1-3`.
-pub const CS_FALL_DEATH: &str = "cs/player/death";
-/// The body hit under either cry: one of `bhit_flesh-1-3` at random, or `bhit_kevlar-1` for a
-/// player in kevlar.
+/// A hurting CS 1.6 landing, as CS 1.6 sounds it: its movement code (`PM_CheckFalling`) plays
+/// only the landing step — no cry — and the fall damage (`TakeDamage` → `Pain`, hit group
+/// generic, never armoured: armour does not take fall damage) one of `bhit_flesh-1-3` at random.
 pub const CS_FALL_BODY_HIT: &str = "cs/player/body_hit";
-pub const CS_FALL_BODY_HIT_KEVLAR: &str = "cs/player/body_hit_kevlar";
+/// A deadly landing's splat (`PostThink`, `common/bodysplat.wav`: Half-Life's, CS 1.6 ships no
+/// copy of its own), heard with the death cry.
+pub const CS_FALL_SPLAT: &str = "cs/player/bodysplat";
+/// Every death's cry, under the install-free name the death script plays: CS 1.6's
+/// `DeathSound` (one of `die1-3` and `death6`), else CS:S's `Player.Death`.
+pub const CS_DEATH_CRY: &str = "cs_death";
 
-/// Which landing group a CS 1.6 player wave belongs to (the alias after `cs/player/`).
+/// Which random-variant alias a CS 1.6 player wave belongs to.
 fn player_wave_group(stem: &str) -> Option<&'static str> {
-    let group = if stem == "pl_fallpain3" {
-        CS_FALL_PAIN
-    } else if stem.starts_with("bhit_flesh") {
-        CS_FALL_BODY_HIT
-    } else if stem.starts_with("bhit_kevlar") {
-        CS_FALL_BODY_HIT_KEVLAR
-    } else if stem.starts_with("die") {
-        CS_FALL_DEATH
+    if stem.starts_with("bhit_flesh") {
+        Some(CS_FALL_BODY_HIT)
+    } else if stem.starts_with("die") || stem == "death6" {
+        Some(CS_DEATH_CRY)
     } else {
-        return None;
-    };
-    group.strip_prefix(CS_PLAYER_SOUND_PREFIX)
+        None
+    }
 }
 
-/// The quiet voice waves (fall pains, death cries) that get [`OWN_FALL_CRY_GAIN`]; the body
-/// hits are recorded loud enough at the template's level.
-fn player_wave_is_cry(stem: &str) -> bool {
-    stem.starts_with("pl_fallpain") || stem.starts_with("die")
-}
-
-/// Your own fall cry's gain over the gun template it borrows: that template's 0.40-0.44 suits
-/// gun waves recorded near full scale, and left the quiet cry (CS 1.6's `pl_fallpain3` peaks at
-/// -5 dBFS, -21 dB RMS) under the landing thud. CS plays it at full volume; doubled it sits at
-/// about the level other players' falls get from the world template (0.77-0.81).
+/// CS:S's own fall cry's gain over the gun template it borrows: that template's 0.40-0.44 suits
+/// gun waves recorded near full scale, and left the quieter cry under the landing thud; doubled
+/// it sits at about the level other players' falls get from the world template (0.77-0.81).
 const OWN_FALL_CRY_GAIN: f32 = 2.0;
 
 /// Your own fall cry: louder than the gun template makes it, and at CS's fixed pitch.
@@ -293,6 +282,18 @@ pub fn decode_wav(bytes: &[u8]) -> Option<(u32, i32, Vec<u8>)> {
 const PLAYER_TEMPLATES: &[&str] = &["weap_ak47_fire_plr"];
 const WORLD_TEMPLATES: &[&str] = &["weap_ak47_fire_npc"];
 
+/// MW2's own death cries, whose mixing (a voice's limits, channel and falloff) the CS death cry
+/// takes: modelled on a gunshot, it was refused for the gun's concurrency limit.
+const DEATH_TEMPLATES: &[&str] = &["generic_death_american_1", "generic_death_russian_1"];
+
+/// The template the CS death cry is modelled on: MW2's death cry, else `fallback`.
+fn death_template(catalog: &SoundCatalog, fallback: &str) -> String {
+    DEATH_TEMPLATES
+        .iter()
+        .find(|name| catalog.has_alias(crate::AssetNamespace::Iw4, name))
+        .map_or_else(|| fallback.to_owned(), |name| (*name).to_owned())
+}
+
 fn template(catalog: &SoundCatalog, preferred: &[&str], suffix: &str) -> Option<String> {
     preferred
         .iter()
@@ -383,17 +384,9 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             // The radio voice and the player's own sounds keep their pitch; guns vary theirs as
             // MW2's do.
             let voice = prefix == CS_RADIO_SOUND_PREFIX || prefix == CS_PLAYER_SOUND_PREFIX;
-            let cry = prefix == CS_PLAYER_SOUND_PREFIX && player_wave_is_cry(&stem);
             let tune = |row: &mut crate::CapturedAlias| {
                 if voice {
                     steady_pitch(row);
-                }
-            };
-            let tune_own = |row: &mut crate::CapturedAlias| {
-                if cry {
-                    own_fall_cry(row);
-                } else {
-                    tune(row);
                 }
             };
             if prefix == CS_PLAYER_SOUND_PREFIX
@@ -413,7 +406,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
                 &player,
                 vec![clip(format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"))],
-                tune_own,
+                tune,
             );
             if both {
                 added += 1;
@@ -426,20 +419,41 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             }
         }
     }
-    // A landing's sounds by group, each wave of a group one random variant of it.
-    for (group, mut waves) in player_groups {
+    // A deadly landing's splat: the GoldSrc game's own, else Half-Life's.
+    if let Some((stem, splat)) = goldsrc
+        .0
+        .iter()
+        .chain(&half_life)
+        .map(|game| game.join("sound").join("common").join("bodysplat.wav"))
+        .find_map(|path| std::fs::read(path).ok())
+        .and_then(|bytes| decode_wav(&bytes))
+        .map(|(rate, channels, pcm16)| {
+            (
+                "bodysplat".to_owned(),
+                LooseClip {
+                    name: String::new(),
+                    rate,
+                    channels,
+                    pcm16,
+                },
+            )
+        })
+    {
+        player_groups.entry(CS_FALL_SPLAT).or_default().push((stem, splat));
+    }
+    // The player's sounds by alias, each wave of one a random variant of it, for others
+    // (positional) and for yourself (`/plr`).
+    for (alias, mut waves) in player_groups {
         waves.sort_by(|a, b| a.0.cmp(&b.0));
         diag::info!(
             Audio,
-            "cs sounds: {CS_PLAYER_SOUND_PREFIX}{group} = {}",
+            "cs sounds: {alias} = {}",
             waves
                 .iter()
                 .map(|(stem, _)| format!("{stem}.wav"))
                 .collect::<Vec<_>>()
                 .join(" | ")
         );
-        let cry = player_wave_is_cry(&waves[0].0);
-        let alias = format!("{CS_PLAYER_SOUND_PREFIX}{group}");
         let own = format!("{alias}{CS_SOUND_PLAYER_SUFFIX}");
         let named = |name: &str| -> Vec<LooseClip> {
             waves
@@ -451,14 +465,13 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 })
                 .collect()
         };
-        catalog.add_loose_alias_tuned(&alias, &world, named(&alias), steady_pitch);
-        catalog.add_loose_alias_tuned(&own, &player, named(&own), |row| {
-            if cry {
-                own_fall_cry(row);
-            } else {
-                steady_pitch(row);
-            }
-        });
+        let others = if alias == CS_DEATH_CRY {
+            death_template(catalog, &world)
+        } else {
+            world.clone()
+        };
+        catalog.add_loose_alias_tuned(alias, &others, named(alias), steady_pitch);
+        catalog.add_loose_alias_tuned(&own, &player, named(&own), steady_pitch);
     }
     // The bomb's sounds.
     for (event, wave) in CS16_C4 {
@@ -488,11 +501,10 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     add_ladder_steps(catalog, &ladder);
     diag::info!(
         Audio,
-        "cs sounds: {added} weapon sounds from {:?} (modelled on `{player}` vol {} / `{world}` vol {}; own fall cry vol {})",
+        "cs sounds: {added} weapon sounds from {:?} (modelled on `{player}` vol {} / `{world}` vol {})",
         goldsrc.0,
         alias_volume_range(catalog, &player),
-        alias_volume_range(catalog, &world),
-        alias_volume_range(catalog, &format!("{CS_FALL_PAIN}{CS_SOUND_PLAYER_SUFFIX}"))
+        alias_volume_range(catalog, &world)
     );
     added
 }
@@ -593,6 +605,17 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 .collect();
             (event, clips)
         });
+        // Every death's cry also goes under the name the death script plays.
+        let death_cry = (name == "player.death").then(|| {
+            clips
+                .iter()
+                .enumerate()
+                .map(|(i, c)| LooseClip {
+                    name: format!("{CS_DEATH_CRY}#{i}"),
+                    ..c.clone()
+                })
+                .collect::<Vec<_>>()
+        });
         let player_clips = clips
             .iter()
             .map(|c| LooseClip {
@@ -629,6 +652,10 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         }
         if let Some((event, clips)) = event {
             catalog.add_loose_alias_tuned(&event, &player, clips, steady_pitch);
+        }
+        if let Some(clips) = death_cry {
+            let template = death_template(catalog, &world);
+            catalog.add_loose_alias_tuned(CS_DEATH_CRY, &template, clips, steady_pitch);
         }
     }
     // The bomb's sounds.
