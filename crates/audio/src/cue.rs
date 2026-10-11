@@ -117,6 +117,12 @@ fn alias_admission(
     row: Option<&asset_audio::CapturedAlias>,
     channel: Option<u32>,
 ) -> AdmissionPolicy {
+    let category = crate::admission::SoundCategory::of(
+        channel
+            .and_then(|id| bank.ent_channel(id))
+            .map(|info| info.name.as_str()),
+        bank.name_at(index).unwrap_or_default(),
+    );
     let channel = channel.and_then(|id| {
         bank.ent_channel(id).map(|info| ChannelRule {
             id,
@@ -157,6 +163,7 @@ fn alias_admission(
             limit(27, row.and_then(|row| row.entity_limit_count), true),
         ],
         priority: 0.0,
+        category,
     }
 }
 

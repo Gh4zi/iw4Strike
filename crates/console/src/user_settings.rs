@@ -201,6 +201,11 @@ pub(crate) fn apply_master_volume(
         && let Some(audio) = audio
     {
         audio.set_master_volume(settings.master_volume);
+        audio.set_category_volumes(
+            settings.sfx_volume,
+            settings.music_volume,
+            settings.voice_volume,
+        );
     }
 }
 
@@ -213,6 +218,48 @@ pub(crate) fn apply_audio_device(
         && let Some(audio) = audio
     {
         audio.set_output_device(Some(&settings.audio_device));
+    }
+}
+
+/// The Audio menu's volume rows: the slider's dvar (0-1) and the typed percent box's (0-100).
+const MENU_VOLUMES: [(&str, &str); 6] = [
+    ("ui_volume", "ui_volume_pct"),
+    ("ui_sfx_volume", "ui_sfx_volume_pct"),
+    ("ui_music_volume", "ui_music_volume_pct"),
+    ("ui_voice_volume", "ui_voice_volume_pct"),
+    ("ui_ambient_volume", "ui_ambient_volume_pct"),
+    ("ui_timer_warning_volume", "ui_timer_warning_volume_pct"),
+];
+
+/// The volume row an Audio menu dvar belongs to (its slider's dvar), and whether the dvar is
+/// the typed percent.
+fn menu_volume_row(dvar: &str) -> Option<(&'static str, bool)> {
+    MENU_VOLUMES
+        .iter()
+        .find(|(slider, percent)| dvar == *slider || dvar == *percent)
+        .map(|(slider, _)| (*slider, dvar != *slider))
+}
+
+/// The setting behind a volume row.
+fn menu_volume_mut<'a>(settings: &'a mut frame::GameSettings, slider: &str) -> &'a mut f32 {
+    match slider {
+        "ui_volume" => &mut settings.master_volume,
+        "ui_sfx_volume" => &mut settings.sfx_volume,
+        "ui_music_volume" => &mut settings.music_volume,
+        "ui_voice_volume" => &mut settings.voice_volume,
+        "ui_ambient_volume" => &mut settings.ambient_volume,
+        _ => &mut settings.timer_warning_volume,
+    }
+}
+
+fn menu_volume(settings: &frame::GameSettings, slider: &str) -> f32 {
+    match slider {
+        "ui_volume" => settings.master_volume,
+        "ui_sfx_volume" => settings.sfx_volume,
+        "ui_music_volume" => settings.music_volume,
+        "ui_voice_volume" => settings.voice_volume,
+        "ui_ambient_volume" => settings.ambient_volume,
+        _ => settings.timer_warning_volume,
     }
 }
 
@@ -388,6 +435,10 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
             settings.audio_device.replace(['\n', '\r'], " ")
         ),
         format!("snd_ambient_volume={:.2}", settings.ambient_volume),
+        format!("snd_sfx_volume={:.2}", settings.sfx_volume),
+        format!("snd_music_volume={:.2}", settings.music_volume),
+        format!("snd_voice_volume={:.2}", settings.voice_volume),
+        format!("snd_hrtf={}", u8::from(settings.hrtf)),
         format!(
             "snd_timer_warning_volume={:.2}",
             settings.timer_warning_volume
@@ -537,6 +588,19 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                     settings.ambient_volume = volume.clamp(0.0, 1.0);
                 }
             }
+            "snd_sfx_volume" | "snd_music_volume" | "snd_voice_volume" => {
+                if let Ok(volume) = value.trim().parse::<f32>()
+                    && volume.is_finite()
+                {
+                    let slot = match key {
+                        "snd_sfx_volume" => &mut settings.sfx_volume,
+                        "snd_music_volume" => &mut settings.music_volume,
+                        _ => &mut settings.voice_volume,
+                    };
+                    *slot = volume.clamp(0.0, 1.0);
+                }
+            }
+            "snd_hrtf" => settings.hrtf = value.trim() == "1",
             "sv_destructibles" => settings.destructibles = value.trim() == "1",
             "_vgui_menus" => settings.vgui_menus = value.trim() != "0",
             "cl_roundbanner" => {
@@ -735,6 +799,16 @@ pub(crate) fn native_menu_settings(
         let [name, value, ..] = command.args.as_slice() else {
             continue;
         };
+        // An Audio volume row: its slider (0-1) or its typed percent box (0-100).
+        if let Some((slider, percent)) = menu_volume_row(name) {
+            if let Ok(typed) = value.trim().trim_end_matches('%').trim().parse::<f32>()
+                && typed.is_finite()
+            {
+                let volume = if percent { typed / 100.0 } else { typed };
+                *menu_volume_mut(&mut settings, slider) = volume.clamp(0.0, 1.0);
+            }
+            continue;
+        }
         match name.as_str() {
             "ui_r_mode" => {
                 if let Some((w, h)) = value.split_once('x')
@@ -748,13 +822,7 @@ pub(crate) fn native_menu_settings(
                 settings.exclusive_fullscreen = value == "2";
             }
             "ui_r_vsync" => settings.vsync = value == "1",
-            "ui_volume" => {
-                if let Ok(v) = value.parse::<f32>()
-                    && v.is_finite()
-                {
-                    settings.master_volume = v;
-                }
-            }
+            "ui_hrtf" => settings.hrtf = value.trim() == "1",
             "ui_player_name" => settings.player_name = value.clone(),
             // Audio > Output device: slot 0 is "System default", 1.. the listed devices.
             "ui_snd_device_pick" => {
@@ -767,13 +835,6 @@ pub(crate) fn native_menu_settings(
                     && settings.audio_device != picked
                 {
                     settings.audio_device = picked;
-                }
-            }
-            "ui_timer_warning_volume" => {
-                if let Ok(v) = value.parse::<f32>()
-                    && v.is_finite()
-                {
-                    settings.timer_warning_volume = v.clamp(0.0, 1.0);
                 }
             }
             "ui_round_banner" => {
@@ -906,7 +967,12 @@ pub(crate) fn native_menu_settings(
         dof.enable = settings.depth_of_field;
         glow.enable = settings.bloom;
     }
-    dvars.set("ui_volume", settings.master_volume.to_string());
+    for (slider, percent) in MENU_VOLUMES {
+        let volume = menu_volume(&settings, slider);
+        dvars.set(slider, format!("{volume:.2}"));
+        dvars.set(percent, format!("{:.0}", volume * 100.0));
+    }
+    dvars.set("ui_hrtf", if settings.hrtf { "1" } else { "0" });
     if let Some(audio) = audio.as_deref() {
         *shown_devices = audio.output_devices();
         shown_devices.truncate(MENU_AUDIO_DEVICE_SLOTS);
@@ -951,10 +1017,6 @@ pub(crate) fn native_menu_settings(
     }
     dvars.set("ui_player_name", settings.player_name.clone());
     dvars.set("ui_round_banner", settings.round_banner.clone());
-    dvars.set(
-        "ui_timer_warning_volume",
-        format!("{:.1}", settings.timer_warning_volume),
-    );
     dvars.set("ui_shadows", settings.shadows.to_string());
     dvars.set("ui_dof", if settings.depth_of_field { "1" } else { "0" });
     dvars.set("ui_fsr", settings.fsr_mode.to_string());

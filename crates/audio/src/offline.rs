@@ -99,6 +99,7 @@ impl OfflineRenderer {
             transitions: AtomicU8::new(
                 (1 << InstanceStatus::Accepted as u8) | (1 << InstanceStatus::Scheduled as u8),
             ),
+            category: crate::admission::SoundCategory::Sfx,
         });
         self.next_id += 1;
         let assignment = Assignment {

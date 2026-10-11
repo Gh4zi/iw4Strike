@@ -480,7 +480,9 @@ pub(crate) fn update_script_menus(
                 label.text_key = format!("{displayed:.decimals$}{}", slider.suffix);
                 label.rect.x += item.rect.w + 8.0;
                 label.rect.w = 36.0;
-                slider_parts.push(label);
+                if !slider.hide_value {
+                    slider_parts.push(label);
+                }
                 item.background.clear();
                 item.text_key.clear();
                 item.text_exp.clear();

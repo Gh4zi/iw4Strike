@@ -108,6 +108,10 @@ pub struct MenuSlider {
     pub decimals: u8,
     #[serde(default)]
     pub suffix: String,
+    /// No value drawn beside the bar: the menu puts its own there (the Audio menu's typed
+    /// percent boxes).
+    #[serde(default)]
+    pub hide_value: bool,
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]

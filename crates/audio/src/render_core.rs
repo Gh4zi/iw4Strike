@@ -47,6 +47,8 @@ pub(crate) struct InstanceState {
     pub rendered_at: AtomicU64,
     pub status: AtomicU8,
     pub transitions: AtomicU8,
+    /// Which volume setting (SFX, music, voice) it follows, live.
+    pub category: crate::admission::SoundCategory,
 }
 
 impl InstanceState {
@@ -159,6 +161,9 @@ pub(crate) struct RenderShared {
     pub meter_peak: AtomicU32,
     /// The output device the player picked, and the ones there are to pick from.
     pub device_selection: crate::device::DeviceSelection,
+    /// Each sound category's volume (f32 bits), indexed by `SoundCategory`, applied live to every
+    /// playing sound on top of its own gain.
+    pub category_gain: [AtomicU32; crate::admission::SoundCategory::COUNT],
 }
 
 // The bounded rendering lease exclusively owns RenderState. Slot payload access
@@ -200,6 +205,7 @@ impl RenderShared {
             meter_clipped: AtomicU64::new(0),
             meter_peak: AtomicU32::new(0),
             device_selection: crate::device::DeviceSelection::default(),
+            category_gain: std::array::from_fn(|_| AtomicU32::new(1.0f32.to_bits())),
         }
     }
 
@@ -226,6 +232,10 @@ impl RenderShared {
         let frame = self.frame.load(Ordering::Relaxed);
         let epoch = self.match_epoch.load(Ordering::Acquire);
         let cancelled = self.cancelled.load(Ordering::Acquire);
+        let category_gain = self
+            .category_gain
+            .each_ref()
+            .map(|gain| f32::from_bits(gain.load(Ordering::Relaxed)));
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.phase.load(Ordering::Acquire) != PUBLISHED {
                 continue;
@@ -239,6 +249,7 @@ impl RenderShared {
                     frame,
                     epoch,
                     cancelled,
+                    category_gain,
                     output,
                 )
             };
@@ -315,6 +326,7 @@ fn render_assignment(
     frame: u64,
     epoch: u64,
     cancelled: bool,
+    category_gain: [f32; crate::admission::SoundCategory::COUNT],
     output: &mut [[f32; 2]; QUANTUM],
 ) -> bool {
     let instance = &assignment.instance;
@@ -358,7 +370,8 @@ fn render_assignment(
         return false;
     }
     instance.set_status(InstanceStatus::Started);
-    let gain = f32::from_bits(instance.gain.load(Ordering::Relaxed));
+    let gain = f32::from_bits(instance.gain.load(Ordering::Relaxed))
+        * category_gain[instance.category as usize];
     let frames = assignment.media.frames();
     let gains = assignment.media.gains(&mut cursor.gains);
     for (offset, target) in output[first..].iter_mut().enumerate() {

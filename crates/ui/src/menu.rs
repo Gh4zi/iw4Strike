@@ -93,6 +93,7 @@ pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(
                     display_range: None,
                     decimals: 2,
                     suffix: String::new(),
+                    hide_value: false,
                 }),
                 ..template.clone()
             };
@@ -288,6 +289,7 @@ fn mouse_rows(items: &mut Vec<asset_game::MenuItem>) {
             display_range: None,
             decimals: 2,
             suffix: String::new(),
+            hide_value: false,
         }),
         ..slider
     };

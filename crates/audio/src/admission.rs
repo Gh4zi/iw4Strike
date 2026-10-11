@@ -21,6 +21,41 @@ pub(crate) struct ChannelRule {
     pub restricted: bool,
 }
 
+/// What a sound is, for the Audio menu's volume it follows (on top of the master volume).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SoundCategory {
+    /// Everything else: weapons, bodies, impacts, effects, the menus, the map's ambience.
+    #[default]
+    Sfx = 0,
+    /// MW2's `music` and `musicnopause` channels.
+    Music = 1,
+    /// Speech: MW2's `voice`, `announcer` and `mission` channels, CS's radio and round voices.
+    Voice = 2,
+}
+
+impl SoundCategory {
+    pub const COUNT: usize = 3;
+
+    /// A sound's category from its entity channel's name and its alias name.
+    #[must_use]
+    pub fn of(channel: Option<&str>, alias: &str) -> Self {
+        const VOICE_ALIASES: [&str; 5] = [
+            "cs/radio/",
+            "cs_event_",
+            "css/radio.",
+            "css/event.",
+            "css/bot.",
+        ];
+        match channel.map(str::to_ascii_lowercase).as_deref() {
+            Some("music" | "musicnopause") => Self::Music,
+            Some("voice" | "announcer" | "mission") => Self::Voice,
+            _ if VOICE_ALIASES.iter().any(|prefix| alias.starts_with(prefix)) => Self::Voice,
+            _ => Self::Sfx,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AdmissionPolicy {
     pub bank_revision: u64,
@@ -29,6 +64,7 @@ pub(crate) struct AdmissionPolicy {
     pub channel: Option<ChannelRule>,
     pub limits: [AliasLimit; 2],
     pub priority: f32,
+    pub category: SoundCategory,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

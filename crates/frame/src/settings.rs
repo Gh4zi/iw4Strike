@@ -67,6 +67,15 @@ pub struct GameSettings {
     pub ambient_volume: f32,
     /// `snd_timer_warning_volume`: the round timer's last-seconds countdown ticks, 0-1.
     pub timer_warning_volume: f32,
+    /// Audio > SFX / Music / Voice volume (`snd_sfx_volume`, `snd_music_volume`,
+    /// `snd_voice_volume`), 0-1, each on top of the master volume: speech is MW2's voice,
+    /// announcer and mission channels and CS's radio, music its music channels, SFX the rest.
+    pub sfx_volume: f32,
+    pub music_volume: f32,
+    pub voice_volume: f32,
+    /// Audio > HRTF (`snd_hrtf`): positional sounds rendered for headphones, each ear hearing
+    /// what it would from where the sound is.
+    pub hrtf: bool,
     /// `_vgui_menus`: the buy menu as a window you click (CS:S, or CS 1.6 VGUI), or 0 for
     /// CS 1.6's old numbered text menu.
     pub vgui_menus: bool,
@@ -148,6 +157,10 @@ impl Default for GameSettings {
             audio_device: String::new(),
             ambient_volume: Self::AMBIENT_VOLUME_DEFAULT,
             timer_warning_volume: 1.0,
+            sfx_volume: 1.0,
+            music_volume: 1.0,
+            voice_volume: 1.0,
+            hrtf: false,
             vgui_menus: true,
             round_banner: "css".to_owned(),
             brightness: 0.0,

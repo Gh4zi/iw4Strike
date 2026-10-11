@@ -192,6 +192,18 @@ impl AudioRuntime {
         self.shared.master.store(gain.to_bits(), Ordering::Release);
     }
 
+    /// The SFX, music and voice volumes (0-1), applied live to every playing sound of each kind.
+    pub fn set_category_volumes(&self, sfx: f32, music: f32, voice: f32) {
+        for (gain, volume) in self.shared.category_gain.iter().zip([sfx, music, voice]) {
+            let volume = if volume.is_finite() {
+                volume.clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            gain.store(volume.to_bits(), Ordering::Release);
+        }
+    }
+
     /// Play through the output device of this name; `None` or `""` follows the system default.
     /// Takes effect at once, mid-match included; a device that is not there falls back to the
     /// system default until it is.
@@ -1055,6 +1067,7 @@ fn make_instance(
         rendered_at: AtomicU64::new(0),
         status: AtomicU8::new(InstanceStatus::Requested as u8),
         transitions: AtomicU8::new(1 << InstanceStatus::Requested as u8),
+        category: policy.category,
     })
 }
 
