@@ -1,9 +1,11 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
 pub struct LivePan {
     channels: Arc<AtomicU64>,
+    /// The HRTF direction the sound is heard from (`hrtf::NO_DIRECTION`: panned instead).
+    direction: Arc<AtomicU32>,
 }
 
 impl LivePan {
@@ -16,7 +18,19 @@ impl LivePan {
             channels: Arc::new(AtomicU64::new(
                 u64::from(left.to_bits()) | (u64::from(right.to_bits()) << 32),
             )),
+            direction: Arc::new(AtomicU32::new(crate::hrtf::NO_DIRECTION)),
         }
+    }
+
+    pub(crate) fn set_direction(&self, direction: Option<u16>) {
+        self.direction.store(
+            direction.map_or(crate::hrtf::NO_DIRECTION, u32::from),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub(crate) fn direction(&self) -> u32 {
+        self.direction.load(Ordering::Relaxed)
     }
 
     pub fn set(&self, left: f32, right: f32) {

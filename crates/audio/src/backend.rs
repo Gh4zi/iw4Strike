@@ -110,6 +110,8 @@ fn publish_audio_context(
     runtime.set_listener(pose.map(|pose| crate::spatial::ListenerSnapshot {
         origin_inches: crate::transform_inches(pose.translation),
         right: (pose.rotation * Vec3::X).to_array(),
+        forward: (pose.rotation * Vec3::NEG_Z).to_array(),
+        up: (pose.rotation * Vec3::Y).to_array(),
     }));
 }
 
@@ -165,6 +167,8 @@ fn submit_presented_audio(
     runtime.set_listener(pose.map(|pose| crate::spatial::ListenerSnapshot {
         origin_inches: crate::transform_inches(pose.translation),
         right: (pose.rotation * Vec3::X).to_array(),
+        forward: (pose.rotation * Vec3::NEG_Z).to_array(),
+        up: (pose.rotation * Vec3::Y).to_array(),
     }));
     if let Some(settings) = settings {
         runtime.set_master_volume(settings.master_volume);
@@ -174,6 +178,7 @@ fn submit_presented_audio(
             settings.voice_volume,
         );
         crate::ambient::set_ambient_volume(settings.ambient_volume);
+        crate::hrtf::set_enabled(settings.hrtf);
         asset_audio::set_timer_warning_volume(settings.timer_warning_volume);
     }
     let mut desired = Vec::new();

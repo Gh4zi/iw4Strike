@@ -984,6 +984,7 @@ fn update_spatial(request: &StartRequest, listener: Option<ListenerSnapshot>) {
         let parameters = spatial.evaluate(listener);
         if let Some(pan) = &request.media.pan {
             pan.set(parameters.gains[0], parameters.gains[1]);
+            pan.set_direction(parameters.direction);
         }
         request.instance.priority.store(
             if parameters.priority.is_finite() {

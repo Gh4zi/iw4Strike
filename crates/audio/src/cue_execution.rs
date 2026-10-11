@@ -292,6 +292,7 @@ impl CueWork {
                 priority = parameters.priority;
                 let pan = LivePan::unity();
                 pan.set(parameters.gains[0], parameters.gains[1]);
+                pan.set_direction(parameters.direction);
                 media.pan = Some(pan);
                 (Some(source), 1.0)
             }

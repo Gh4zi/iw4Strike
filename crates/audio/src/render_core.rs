@@ -137,6 +137,8 @@ struct Cursor {
 
 struct RenderState {
     cursors: [Cursor; PHYSICAL_VOICES],
+    /// Each voice's HRTF filter state, beside its cursor.
+    hrtf: Box<[crate::hrtf::HrtfVoice]>,
 }
 
 pub(crate) struct RenderShared {
@@ -189,6 +191,9 @@ impl RenderShared {
                     position: 0.0,
                     gains: [crate::media::GainEnvelope::default(); 3],
                 }; PHYSICAL_VOICES],
+                hrtf: (0..PHYSICAL_VOICES)
+                    .map(|_| crate::hrtf::HrtfVoice::default())
+                    .collect(),
             }),
             frame: AtomicU64::new(0),
             match_epoch: AtomicU64::new(0),
@@ -246,6 +251,7 @@ impl RenderShared {
                 render_assignment(
                     assignment,
                     &mut state.cursors[index],
+                    &mut state.hrtf[index],
                     frame,
                     epoch,
                     cancelled,
@@ -323,6 +329,7 @@ impl RenderShared {
 fn render_assignment(
     assignment: &Assignment,
     cursor: &mut Cursor,
+    hrtf_voice: &mut crate::hrtf::HrtfVoice,
     frame: u64,
     epoch: u64,
     cancelled: bool,
@@ -347,6 +354,7 @@ fn render_assignment(
         cursor.voice = assignment.voice;
         cursor.position = assignment.start_cursor;
         cursor.gains = [crate::media::GainEnvelope::default(); 3];
+        hrtf_voice.reset();
         if assignment.looping && !instance.paused.load(Ordering::Relaxed) {
             cursor.position += frame.saturating_sub(assignment.start_frame) as f64 * step;
         }
@@ -374,6 +382,18 @@ fn render_assignment(
         * category_gain[instance.category as usize];
     let frames = assignment.media.frames();
     let gains = assignment.media.gains(&mut cursor.gains);
+    // With HRTF, a positional sound is collected mono (its gains are then the distance gain
+    // alone) and run through its direction's ear responses once the block is done.
+    let hrtf = assignment
+        .media
+        .pan
+        .as_ref()
+        .map(crate::media::LivePan::direction)
+        .filter(|&direction| direction != crate::hrtf::NO_DIRECTION)
+        .and_then(|direction| crate::hrtf::data().map(|hrtf| (hrtf, direction)));
+    let mut mono = [0.0f32; QUANTUM];
+    let mut rendered = 0;
+    let mut ended = false;
     for (offset, target) in output[first..].iter_mut().enumerate() {
         let audio_frame = frame + first as u64 + offset as u64;
         if assignment
@@ -387,7 +407,8 @@ fn render_assignment(
                 .store(cursor.position.to_bits(), Ordering::Release);
             instance.rendered_at.store(audio_frame, Ordering::Release);
             instance.set_status(InstanceStatus::Finished);
-            return true;
+            ended = true;
+            break;
         }
         if cursor.position >= frames as f64 {
             if assignment.looping {
@@ -397,16 +418,33 @@ fn render_assignment(
                     .cursor
                     .store(cursor.position.to_bits(), Ordering::Release);
                 instance.set_status(InstanceStatus::SourceEnded);
-                return true;
+                ended = true;
+                break;
             }
         }
         let sample = assignment
             .media
             .interpolate(cursor.position, assignment.looping);
         let gains = gains.sample(audio_frame);
-        target[0] += sample[0] * gain * gains[0];
-        target[1] += sample[1] * gain * gains[1];
+        if hrtf.is_some() {
+            mono[offset] = (sample[0] * gains[0] + sample[1] * gains[1]) * 0.5 * gain;
+        } else {
+            target[0] += sample[0] * gain * gains[0];
+            target[1] += sample[1] * gain * gains[1];
+        }
+        rendered = offset + 1;
         cursor.position += step;
+    }
+    if let Some((hrtf, direction)) = hrtf {
+        hrtf_voice.render(
+            hrtf,
+            direction,
+            &mono[..rendered],
+            &mut output[first..first + rendered],
+        );
+    }
+    if ended {
+        return true;
     }
     instance
         .cursor

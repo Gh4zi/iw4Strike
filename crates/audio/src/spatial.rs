@@ -8,6 +8,10 @@ use crate::attenuation::distance_attenuation;
 pub(crate) struct ListenerSnapshot {
     pub origin_inches: [f32; 3],
     pub right: [f32; 3],
+    /// Where the listener faces and which way is up for them: what HRTF needs beyond `right`
+    /// to tell front from back and above from below.
+    pub forward: [f32; 3],
+    pub up: [f32; 3],
 }
 
 #[derive(Default)]
@@ -20,6 +24,8 @@ impl ListenerState {
                 .origin_inches
                 .iter()
                 .chain(&listener.right)
+                .chain(&listener.forward)
+                .chain(&listener.up)
                 .all(|value| value.is_finite())
         });
     }
@@ -43,6 +49,9 @@ pub(crate) struct SpatialSource {
 pub(crate) struct SpatialParameters {
     pub gains: [f32; 2],
     pub priority: f32,
+    /// With HRTF on, the measured direction the sound is heard from; `gains` are then the
+    /// distance gain alone, the same for both ears.
+    pub direction: Option<u16>,
 }
 
 impl SpatialSource {
@@ -67,13 +76,29 @@ impl SpatialSource {
         } else {
             0.0
         };
-        let (left, right) = channel_gains(
-            listener.origin_inches,
-            listener.right,
-            self.origin_inches,
-            gain,
-        );
+        let direction = crate::hrtf::enabled()
+            .then(crate::hrtf::data)
+            .flatten()
+            .and_then(|hrtf| {
+                let along = |axis: [f32; 3]| (0..3).map(|i| offset[i] * axis[i]).sum::<f32>();
+                hrtf.nearest(
+                    along(listener.right),
+                    along(listener.up),
+                    along(listener.forward),
+                )
+            });
+        let (left, right) = if direction.is_some() {
+            (gain, gain)
+        } else {
+            channel_gains(
+                listener.origin_inches,
+                listener.right,
+                self.origin_inches,
+                gain,
+            )
+        };
         SpatialParameters {
+            direction,
             gains: [left, right],
             priority: if distance.is_finite() {
                 self.priority

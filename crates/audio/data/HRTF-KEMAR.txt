@@ -1,0 +1,14 @@
+hrtf_kemar.bin: head-related impulse responses for Audio > HRTF.
+
+Source: "HRTF Measurements of a KEMAR Dummy-Head Microphone", Bill Gardner and Keith Martin,
+MIT Media Lab, 1994 — the "compact" set (https://sound.media.mit.edu/resources/KEMAR.html).
+The MIT Media Lab provides the data free, with no restrictions on its use, provided the
+authors are cited.
+
+Converted for the mixer: each 128-tap 44.1 kHz response resampled to 48 kHz (Lanczos-8),
+cut to 128 taps with an 8-tap fade, and scaled so the straight-ahead response carries the
+energy of a centred pan (0.5 per ear). 368 directions: elevations -40 to 90 degrees, azimuths
+0 (front) to 180, 90 being the right; the left half is the mirror image.
+
+Format (little endian): "HRIR", u32 rate, u32 taps, u32 count, then count times
+{ f32 elevation, f32 azimuth, f32[taps] left ear, f32[taps] right ear }.

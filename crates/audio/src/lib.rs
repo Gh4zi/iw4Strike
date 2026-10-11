@@ -8,6 +8,7 @@ mod decode_budget;
 mod emit;
 mod entity_events;
 mod frontend;
+mod hrtf;
 mod messages;
 mod pcm;
 mod pcm_budget;
