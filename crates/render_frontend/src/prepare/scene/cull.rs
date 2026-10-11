@@ -136,6 +136,38 @@ pub(crate) fn smodel_cull_dist_skips_slot(
     smodel_cull_dist_hides(cull_dist, dx * dx + dy * dy + dz * dz, scale_last)
 }
 
+/// What the camera cull reads that can change while a map is up.
+#[derive(Clone, PartialEq)]
+struct DpvsCullKey {
+    eye: [u32; 3],
+    fov_aspect: [u32; 2],
+    frustum: Vec<[u32; 4]>,
+    forward: [u32; 3],
+    bevels: String,
+    single_cell: bool,
+    lock_pvs: u8,
+    world: (usize, usize, usize, usize),
+}
+
+/// The cull's outputs as it left them, kept once its key held for a second frame.
+struct DpvsCullSaved {
+    stats: DpvsFrameStats,
+    published: render_scene::PublishedCellVis,
+    surface_vis: Vec<u8>,
+    smodel_vis: Vec<u8>,
+    draw_items: Vec<WorldDrawItem>,
+    g0_surfs: Vec<u16>,
+    cell_vis: Vec<u32>,
+    cell_vis_all: bool,
+    draw_items_id: u64,
+}
+
+#[derive(Default)]
+pub struct DpvsCullCache {
+    key: Option<DpvsCullKey>,
+    saved: Option<DpvsCullSaved>,
+}
+
 pub fn apply_dpvs_cull(
     mut scene: ResMut<WorldScene>,
     mut stats: ResMut<DpvsFrameStats>,
@@ -145,6 +177,7 @@ pub fn apply_dpvs_cull(
     // The portal walk resets what it reads of this at the start of every walk; building a fresh
     // one each frame was a copy of its whole fixed-size pool.
     mut walk_scratch: Local<Box<WalkScratch>>,
+    mut cull_cache: Local<DpvsCullCache>,
 ) {
     let _cull = perf::Span::RenderCullCpuMs.enter();
     stats.frustum_planes.clear();
@@ -181,6 +214,48 @@ pub fn apply_dpvs_cull(
 
     let frustum = lock_pvs.dpvs_frustum(&prepared).to_vec();
     stats.frustum_planes.clone_from(&frustum);
+
+    // A still camera culls to the same answer every frame, and the cull reads only the view and
+    // the map: while this key holds, the outputs it left last time are put back (later systems
+    // still add to them each frame, as after a fresh cull). Outputs are kept only once the key
+    // held for a second frame, so a moving camera never pays for the copy.
+    let key = DpvsCullKey {
+        eye: eye.map(f32::to_bits),
+        fov_aspect: [fov.to_bits(), aspect.to_bits()],
+        frustum: frustum
+            .iter()
+            .map(|plane| plane.map(f32::to_bits))
+            .collect(),
+        forward: lock_pvs
+            .dpvs_forward(&prepared)
+            .to_array()
+            .map(f32::to_bits),
+        bevels: format!("{:?}", lock_pvs.dpvs_portal_bevels(&prepared)),
+        single_cell: single_cell_from_env(),
+        lock_pvs: stats.lock_pvs,
+        world: (
+            std::ptr::from_ref(&*cull) as usize,
+            dpvs.cell_count,
+            cull.surface_batch_ranges.len(),
+            cull.static_model_entities.len(),
+        ),
+    };
+    let held = cull_cache.key.as_ref() == Some(&key);
+    if held && let Some(saved) = cull_cache.saved.as_ref() {
+        cull.surface_vis.clone_from(&saved.surface_vis);
+        cull.smodel_vis.clone_from(&saved.smodel_vis);
+        cull.draw_items.clone_from(&saved.draw_items);
+        cull.g0_surfs.clone_from(&saved.g0_surfs);
+        cull.cell_vis.clone_from(&saved.cell_vis);
+        cull.cell_vis_all = saved.cell_vis_all;
+        cull.draw_items_id = saved.draw_items_id;
+        stats.clone_from(&saved.stats);
+        published_vis.clone_from(&saved.published);
+        perf::Counter::CounterSubmittedBatches.emit(f64::from(saved.stats.submitted_batches));
+        return;
+    }
+    cull_cache.key = Some(key);
+    cull_cache.saved = None;
 
     let planes = DpvsPlanes {
         planes: &dpvs.planes,
@@ -480,6 +555,19 @@ pub fn apply_dpvs_cull(
     let mut smodel_vis_id = crate::assemble::drawsurf::list::CONTENT_ID_SEED;
     crate::assemble::drawsurf::list::mix_content_bytes(&mut smodel_vis_id, &cull.smodel_vis);
     stats.smodel_vis_id = smodel_vis_id;
+    if held {
+        cull_cache.saved = Some(DpvsCullSaved {
+            stats: stats.clone(),
+            published: published_vis.clone(),
+            surface_vis: cull.surface_vis.clone(),
+            smodel_vis: cull.smodel_vis.clone(),
+            draw_items: cull.draw_items.clone(),
+            g0_surfs: cull.g0_surfs.clone(),
+            cell_vis: cull.cell_vis.clone(),
+            cell_vis_all: cull.cell_vis_all,
+            draw_items_id: cull.draw_items_id,
+        });
+    }
 }
 
 pub(crate) fn log_script_model_gaps_once(
