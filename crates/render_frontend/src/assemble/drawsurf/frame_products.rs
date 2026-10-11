@@ -1471,18 +1471,16 @@ pub(crate) fn bake_sun_shadow_casters(
     near.smodel_ids = std::mem::take(&mut casters.smodel_ids);
     near.bsp_ids_far = std::mem::take(&mut casters.bsp_ids_far);
     near.smodel_ids_far = std::mem::take(&mut casters.smodel_ids_far);
-    let (mut ordered0, ordered1) = super::retained_list::merge_sun_shadow_caster_partitions(
+    let (ordered, sun_near_n) = super::retained_list::merge_sun_shadow_caster_partitions(
         &mut near,
         &mut far,
         xmodel_plan.as_deref(),
         &generation.catalog,
         [planes0.as_slice(), planes1.as_slice()],
     );
-    let sun_near_n = ordered0.len();
-    ordered0.extend(ordered1);
     *casters = near;
     casters.sun_near_n = sun_near_n;
-    casters.items = ordered0;
+    casters.items = ordered;
     casters.world_eligible = casters.world_eligible.saturating_add(far.world_eligible);
     casters.world_missing_key = casters
         .world_missing_key

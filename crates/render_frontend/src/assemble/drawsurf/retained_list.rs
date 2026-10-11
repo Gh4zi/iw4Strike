@@ -995,33 +995,25 @@ fn smodel_descriptor_pick(
     })
 }
 
-fn merge_presorted_retained(
+/// Appends the merge of two lists sorted by `(host_sort_key, retained_draw_order_tie)`; on equal
+/// keys the static item goes first. The static items before each dynamic one are copied as a run.
+fn merge_presorted_into<'a>(
+    out: &mut Vec<RetainedDrawItem>,
     static_items: &[RetainedDrawItem],
-    dynamic: &[RetainedDrawItem],
-) -> Vec<RetainedDrawItem> {
-    let mut out = Vec::with_capacity(static_items.len() + dynamic.len());
+    dynamic: impl Iterator<Item = &'a RetainedDrawItem>,
+) {
+    let key = |item: &RetainedDrawItem| (item.host_sort_key(), retained_draw_order_tie(&item.kind));
     let mut i = 0;
-    let mut j = 0;
-    while i < static_items.len() && j < dynamic.len() {
-        let a = (
-            static_items[i].host_sort_key(),
-            retained_draw_order_tie(&static_items[i].kind),
-        );
-        let b = (
-            dynamic[j].host_sort_key(),
-            retained_draw_order_tie(&dynamic[j].kind),
-        );
-        if a <= b {
-            out.push(static_items[i]);
+    for item in dynamic {
+        let item_key = key(item);
+        let start = i;
+        while i < static_items.len() && key(&static_items[i]) <= item_key {
             i += 1;
-        } else {
-            out.push(dynamic[j]);
-            j += 1;
         }
+        out.extend_from_slice(&static_items[start..i]);
+        out.push(*item);
     }
     out.extend_from_slice(&static_items[i..]);
-    out.extend_from_slice(&dynamic[j..]);
-    out
 }
 
 fn materialize_world_runs(items: &mut Vec<RetainedDrawItem>, table: &mut Vec<u16>) -> u32 {
@@ -3180,20 +3172,6 @@ struct DynamicSunCaster {
     bound: Option<render_scene::XModelCasterBound>,
 }
 
-/// The dynamic casters a partition keeps, in the order `merge_presorted_retained`
-/// needs. Filtering a sorted slice preserves the order, so the sort happens once
-/// for both partitions.
-fn partition_dynamic_casters(
-    dynamic: &[DynamicSunCaster],
-    planes: &[[f32; 4]],
-) -> Vec<RetainedDrawItem> {
-    dynamic
-        .iter()
-        .filter(|caster| dynamic_caster_kept(caster.bound, planes))
-        .map(|caster| caster.item)
-        .collect()
-}
-
 /// A caster is kept unless its own sphere is wholly outside the partition.
 /// No planes and no bound both mean "kept": the partition that states nothing
 /// and the producer that states nothing each widen the volume rather than
@@ -3214,7 +3192,7 @@ pub(crate) fn merge_sun_shadow_caster_partitions(
     xmodel: Option<&XModelDrawPlan>,
     catalog: &super::RuntimeMaterialCatalog,
     partition_planes: [&[[f32; 4]]; 2],
-) -> (Vec<RetainedDrawItem>, Vec<RetainedDrawItem>) {
+) -> (Vec<RetainedDrawItem>, usize) {
     near.xmodel_eligible = 0;
     near.xmodel_skipped_viewmodel = 0;
     near.xmodel_missing_key = 0;
@@ -3228,10 +3206,10 @@ pub(crate) fn merge_sun_shadow_caster_partitions(
     far.xmodel_missing_key = near.xmodel_missing_key;
     far.xmodel_no_technique = near.xmodel_no_technique;
     if dynamic.is_empty() {
-        return (
-            std::mem::take(&mut near.items),
-            std::mem::take(&mut far.items),
-        );
+        let mut items = std::mem::take(&mut near.items);
+        let near_n = items.len();
+        items.append(&mut far.items);
+        return (items, near_n);
     }
     // As in sort_retained_items: a caster carries a whole draw item, so the keys are sorted
     // beside the indices and each caster moves once (sorting the casters in place moved each
@@ -3248,19 +3226,26 @@ pub(crate) fn merge_sun_shadow_caster_partitions(
         })
         .collect();
     order.sort_unstable();
-    let dynamic: Vec<DynamicSunCaster> = {
-        let mut slots: Vec<Option<DynamicSunCaster>> = dynamic.into_iter().map(Some).collect();
-        order
-            .iter()
-            .filter_map(|&(_, _, i)| slots.get_mut(i as usize).and_then(Option::take))
-            .collect()
-    };
-    let near_dynamic = partition_dynamic_casters(&dynamic, partition_planes[0]);
-    let far_dynamic = partition_dynamic_casters(&dynamic, partition_planes[1]);
-    (
-        merge_presorted_retained(&near.items, &near_dynamic),
-        merge_presorted_retained(&far.items, &far_dynamic),
-    )
+    // Both partitions merge into one list (near first) through the sorted index list: filtering
+    // a sorted sequence keeps it sorted, and each kept caster is copied once, into its place.
+    let sorted = || order.iter().map(|&(_, _, i)| &dynamic[i as usize]);
+    let mut items = Vec::with_capacity(near.items.len() + far.items.len() + 2 * dynamic.len());
+    merge_presorted_into(
+        &mut items,
+        &near.items,
+        sorted()
+            .filter(|caster| dynamic_caster_kept(caster.bound, partition_planes[0]))
+            .map(|caster| &caster.item),
+    );
+    let near_n = items.len();
+    merge_presorted_into(
+        &mut items,
+        &far.items,
+        sorted()
+            .filter(|caster| dynamic_caster_kept(caster.bound, partition_planes[1]))
+            .map(|caster| &caster.item),
+    );
+    (items, near_n)
 }
 
 fn collect_xmodel_sun_shadow_casters(
