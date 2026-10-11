@@ -65,6 +65,54 @@ pub struct XModelDrawPlan {
     last_admitted: u8,
 
     packed_owner_vertices: [[u64; 8]; super::SHARE_BANKS],
+
+    /// Where the last full merge put each producer (producer order as in
+    /// `concat_packed_owners`), so a merge whose topology and materials held can redo just
+    /// the draws and the packed rows of a compacted layout.
+    owner_layouts: [OwnerLayout; 8],
+    owner_draws: [Vec<XModelSurfaceDraw>; 8],
+    compact_ready: bool,
+    /// Bumped by every full merge; a bank is patched only if it was written under the
+    /// current layout.
+    layout_epoch: u64,
+    bank_layout: [u64; super::SHARE_BANKS],
+}
+
+const UNMAPPED: u32 = u32::MAX;
+
+#[derive(Clone, Debug, Default)]
+struct OwnerLayout {
+    appended: bool,
+    /// Every surface was drawn: the producer went in whole at these bases.
+    whole: bool,
+    range_base: u32,
+    mat_base: u32,
+    /// Packed rows copied whole, or the source rows gathered in order (compacted).
+    whole_rows: usize,
+    rows: Vec<u32>,
+    /// One past the highest gathered source row.
+    need: usize,
+    /// Compacted: source surface / material -> merged index, `UNMAPPED` where unused.
+    surf_map: Vec<u32>,
+    mat_map: Vec<u32>,
+}
+
+impl OwnerLayout {
+    fn packed_len(&self) -> usize {
+        self.whole_rows + self.rows.len()
+    }
+
+    fn reset(&mut self) {
+        self.appended = false;
+        self.whole = false;
+        self.range_base = 0;
+        self.mat_base = 0;
+        self.whole_rows = 0;
+        self.rows.clear();
+        self.need = 0;
+        self.surf_map.clear();
+        self.mat_map.clear();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -99,6 +147,7 @@ impl XModelDrawPlan {
         self.concat_layout = false;
         self.last_admitted = 0;
         self.packed_owner_vertices = [[0; 8]; super::SHARE_BANKS];
+        self.compact_ready = false;
         self.packed_vertices = asset_world::PackedVertexPayload::Unavailable {
             source_layout: XMODEL_PACKED_UNAVAILABLE,
         };
@@ -469,6 +518,55 @@ pub fn merge_xmodel_draw_plan(
             append_ms: 0.0,
         };
     }
+    // A compacted layout (some producer only partly drawn) whose topology and materials
+    // held: indices, ranges and materials are last frame's, the draws go back through the
+    // last merge's surface and material maps, and the packed rows are gathered again.
+    let owners = concat_packed_owners(
+        fpv, bodies, scripts, missiles, items, fx_models, dynents, sky,
+    );
+    if merged.compact_ready
+        && !merged.concat_layout
+        && merged.last_topology == Some(stamp.topology)
+        && let Some(prev) = merged.last_input
+        && prev.materials == stamp.materials
+        && packed_layouts_fit(&merged.owner_layouts, &owners)
+        && (!concat_draws_changed(prev, &stamp)
+            || refresh_compact_draws(
+                merged, &owners, fpv, bodies, scripts, missiles, items, fx_models, dynents, scene,
+                sky,
+            ))
+    {
+        let packed_started = Instant::now();
+        let prev_packed = merged.packed_share.take();
+        let (mut packed, fresh) = merged.packed_banks.take_write_keep();
+        let write = merged.packed_banks.write_index();
+        let patch = !fresh && merged.bank_layout[write] == merged.layout_epoch;
+        regather_packed_bank(
+            &mut packed,
+            patch,
+            &mut merged.packed_owner_vertices[write],
+            stamp.vertices,
+            &merged.owner_layouts,
+            &owners,
+            &mut merged.packed_segments,
+        );
+        merged.bank_layout[write] = merged.layout_epoch;
+        let key = PackedContentKey::new(&stamp, merged.last_admitted, packed.len());
+        let payload = install_retained_packed(
+            true,
+            packed,
+            merged.decoded_n,
+            XMODEL_PACKED_EMPTY_PLAN,
+            XMODEL_PACKED_UNAVAILABLE,
+        );
+        publish_packed_payload(merged, prev_packed, payload, Some(key));
+        merged.last_input = Some(stamp);
+        return XModelMergeStamps {
+            concatenated: false,
+            packed_ms: packed_started.elapsed().as_secs_f32() * 1000.0,
+            append_ms: 0.0,
+        };
+    }
     let prev_packed = merged.packed_share.take();
     let prev_index = merged.index_share.take();
     let prev_range = merged.range_share.take();
@@ -497,172 +595,25 @@ pub fn merge_xmodel_draw_plan(
     );
     let mut packed_ok = true;
     let append_started = Instant::now();
-    let mut next_body_object = XMODEL_OBJECT_ID_BODY_BASE;
-    let (fx_draws, fx_object_id_exhausted) = dense_fx_object_ids(
-        fx_models.draws(),
-        merged
-            .draws
-            .iter()
-            .chain(dynents.draws().iter())
-            .map(|draw| draw.object_id)
-            .max(),
+    merged.layout_epoch = merged.layout_epoch.wrapping_add(1);
+    let mut layouts = std::mem::take(&mut merged.owner_layouts);
+    let mut lists = std::mem::take(&mut merged.owner_draws);
+    merged.fx_object_id_exhausted = owner_draw_lists(
+        &mut lists, fpv, bodies, scripts, missiles, items, fx_models, dynents, scene, sky,
     );
-    merged.fx_object_id_exhausted = fx_object_id_exhausted;
-    append_admitted_source(
-        merged,
-        &mut packed,
-        &mut packed_ok,
-        bodies.decoded_n(),
-        bodies.indices(),
-        bodies.surface_ranges(),
-        bodies.materials(),
-        bodies.packed_vertices(),
-        bodies.draws().iter().filter_map(|d| {
-            scene_ent_admitted(scene, d.scene_entnum).then(|| {
-                let object_id = next_body_object;
-                next_body_object = next_body_object.saturating_add(1);
-                XModelSurfaceDraw {
-                    surface: d.surface,
-                    material: d.material,
-                    world_from_local: d.world_from_local,
-                    lighting_handle: d.lighting_handle,
-
-                    pending_lighting: None,
-                    colour_refusal: None,
-                    object_id,
-                    scene_light_index: d.scene_light_index,
-                    reflection_probe_index: d.reflection_probe_index,
-                    packed_lighting: None,
-                    is_scope: false,
-                    scene_entnum: d.scene_entnum,
-                    body_client: d.scene_entnum,
-                    // Remote bodies carry no radius here; unbounded keeps
-                    // every player caster in both partitions.
-                    caster_bound: None,
-                }
-            })
-        }),
-    );
-
-    if fpv_scene_colour(fpv, scene) {
-        append_admitted_source(
-            merged,
-            &mut packed,
-            &mut packed_ok,
-            fpv.decoded_n(),
-            fpv.indices(),
-            fpv.surface_ranges(),
-            fpv.materials(),
-            fpv.packed_vertices(),
-            fpv.draws().iter().map(|d| XModelSurfaceDraw {
-                surface: d.surface,
-                material: d.material,
-                world_from_local: fpv.world_from_local,
-                lighting_handle: fpv.lighting_handle,
-                pending_lighting: None,
-                colour_refusal: None,
-                object_id: XMODEL_OBJECT_ID_VIEWMODEL,
-                scene_light_index: fpv.scene_light_index,
-                reflection_probe_index: fpv.reflection_probe_index,
-                packed_lighting: None,
-                is_scope: d.is_scope,
-                scene_entnum: Some(crate::SCENE_VIEWMODEL_ENTNUM),
-                body_client: None,
-                caster_bound: None,
-            }),
-        );
+    for ((layout, owner), draws) in layouts.iter_mut().zip(&owners).zip(lists.iter_mut()) {
+        layout.reset();
+        append_admitted_source(merged, &mut packed, &mut packed_ok, layout, owner, draws);
     }
-
-    append_admitted_source(
-        merged,
-        &mut packed,
-        &mut packed_ok,
-        scripts.vertices().len(),
-        scripts.indices(),
-        scripts.surface_ranges(),
-        scripts.materials(),
-        scripts.packed_vertices(),
-        scripts
-            .draws()
-            .iter()
-            .copied()
-            .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
-    );
-
-    append_admitted_source(
-        merged,
-        &mut packed,
-        &mut packed_ok,
-        missiles.vertices().len(),
-        missiles.indices(),
-        missiles.surface_ranges(),
-        missiles.materials(),
-        missiles.packed_vertices(),
-        missiles
-            .draws()
-            .iter()
-            .copied()
-            .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
-    );
-
-    append_admitted_source(
-        merged,
-        &mut packed,
-        &mut packed_ok,
-        items.vertices().len(),
-        items.indices(),
-        items.surface_ranges(),
-        items.materials(),
-        items.packed_vertices(),
-        items
-            .draws()
-            .iter()
-            .copied()
-            .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
-    );
-    append_admitted_source(
-        merged,
-        &mut packed,
-        &mut packed_ok,
-        fx_models.vertices().len(),
-        fx_models.indices(),
-        fx_models.surface_ranges(),
-        fx_models.materials(),
-        fx_models.packed_vertices(),
-        fx_draws,
-    );
-    append_admitted_source(
-        merged,
-        &mut packed,
-        &mut packed_ok,
-        dynents.vertices().len(),
-        dynents.indices(),
-        dynents.surface_ranges(),
-        dynents.materials(),
-        dynents.packed_vertices(),
-        dynents.draws().iter().copied(),
-    );
-    if let Some((sky, eye)) = sky {
-        append_admitted_source(
-            merged,
-            &mut packed,
-            &mut packed_ok,
-            sky.geometry.decoded_vertices().len(),
-            sky.geometry.indices(),
-            sky.geometry.surface_ranges(),
-            &sky.geometry.materials,
-            &sky.geometry.packed_vertices,
-            sky.draws.iter().map(|draw| XModelSurfaceDraw {
-                world_from_local: Mat4::from_translation(eye),
-                ..*draw
-            }),
-        );
-    }
+    merged.owner_layouts = layouts;
+    merged.owner_draws = lists;
     let append_ms = append_started.elapsed().as_secs_f32() * 1000.0;
     let packed_started = Instant::now();
     if packed_ok {
         merged.packed_owner_vertices[packed_write] = stamp.vertices;
     }
+    merged.compact_ready = packed_ok && !merged.concat_layout;
+    merged.bank_layout[packed_write] = merged.layout_epoch;
     merged.last_admitted = admitted_mask(
         fpv, bodies, scripts, missiles, items, fx_models, dynents, scene, sky,
     );
@@ -744,6 +695,9 @@ struct ConcatPackedOwner<'a> {
     rev_i: usize,
     payload: &'a asset_world::PackedVertexPayload,
     decoded_n: usize,
+    indices: &'a [u32],
+    surface_ranges: &'a [(u32, u32)],
+    materials: &'a [SmodelPassMaterial],
 }
 
 fn concat_packed_owners<'a>(
@@ -763,42 +717,63 @@ fn concat_packed_owners<'a>(
             rev_i: 1,
             payload: bodies.packed_vertices(),
             decoded_n: bodies.decoded_n(),
+            indices: bodies.indices(),
+            surface_ranges: bodies.surface_ranges(),
+            materials: bodies.materials(),
         },
         ConcatPackedOwner {
             admit: ADMIT_FPV,
             rev_i: 0,
             payload: fpv.packed_vertices(),
             decoded_n: fpv.decoded_n(),
+            indices: fpv.indices(),
+            surface_ranges: fpv.surface_ranges(),
+            materials: fpv.materials(),
         },
         ConcatPackedOwner {
             admit: ADMIT_SCRIPT,
             rev_i: 2,
             payload: scripts.packed_vertices(),
             decoded_n: scripts.vertices().len(),
+            indices: scripts.indices(),
+            surface_ranges: scripts.surface_ranges(),
+            materials: scripts.materials(),
         },
         ConcatPackedOwner {
             admit: ADMIT_MISSILE,
             rev_i: 3,
             payload: missiles.packed_vertices(),
             decoded_n: missiles.vertices().len(),
+            indices: missiles.indices(),
+            surface_ranges: missiles.surface_ranges(),
+            materials: missiles.materials(),
         },
         ConcatPackedOwner {
             admit: ADMIT_ITEM,
             rev_i: 4,
             payload: items.packed_vertices(),
             decoded_n: items.vertices().len(),
+            indices: items.indices(),
+            surface_ranges: items.surface_ranges(),
+            materials: items.materials(),
         },
         ConcatPackedOwner {
             admit: ADMIT_FX,
             rev_i: 5,
             payload: fx_models.packed_vertices(),
             decoded_n: fx_models.vertices().len(),
+            indices: fx_models.indices(),
+            surface_ranges: fx_models.surface_ranges(),
+            materials: fx_models.materials(),
         },
         ConcatPackedOwner {
             admit: ADMIT_DYNENT,
             rev_i: 6,
             payload: dynents.packed_vertices(),
             decoded_n: dynents.vertices().len(),
+            indices: dynents.indices(),
+            surface_ranges: dynents.surface_ranges(),
+            materials: dynents.materials(),
         },
         ConcatPackedOwner {
             admit: ADMIT_SKY,
@@ -807,6 +782,9 @@ fn concat_packed_owners<'a>(
                 .map(|g| &g.packed_vertices)
                 .unwrap_or(bodies.packed_vertices()),
             decoded_n: sky_geom.map(|g| g.decoded_vertices().len()).unwrap_or(0),
+            indices: sky_geom.map(|g| g.indices()).unwrap_or(&[]),
+            surface_ranges: sky_geom.map(|g| g.surface_ranges()).unwrap_or(&[]),
+            materials: sky_geom.map(|g| g.materials.as_slice()).unwrap_or(&[]),
         },
     ]
 }
@@ -897,6 +875,267 @@ fn recopy_concat_packed_bank(
     }
     *bank_vertices = stamp_vertices;
     published.publish(concat_packed_segments(counts, stamp_vertices, &owners));
+}
+
+/// Each producer's admitted draws as the full merge appends them (producer order as in
+/// `concat_packed_owners`), before any remap. Returns how many FX draws ran out of object
+/// ids.
+fn owner_draw_lists(
+    lists: &mut [Vec<XModelSurfaceDraw>; 8],
+    fpv: &FpvDrawPlan,
+    bodies: &RemoteBodyDrawPlan,
+    scripts: &ScriptModelDrawPlan,
+    missiles: &MissileDrawPlan,
+    items: &ItemDrawPlan,
+    fx_models: &FxModelDrawPlan,
+    dynents: &DynEntDrawPlan,
+    scene: Option<&crate::GfxScene>,
+    sky: Option<(&super::sky::SkyModelDrawPlan, Vec3)>,
+) -> u32 {
+    for list in lists.iter_mut() {
+        list.clear();
+    }
+    let [
+        body_list,
+        fpv_list,
+        script_list,
+        missile_list,
+        item_list,
+        fx_list,
+        dynent_list,
+        sky_list,
+    ] = lists;
+    let mut next_body_object = XMODEL_OBJECT_ID_BODY_BASE;
+    body_list.extend(bodies.draws().iter().filter_map(|d| {
+        scene_ent_admitted(scene, d.scene_entnum).then(|| {
+            let object_id = next_body_object;
+            next_body_object = next_body_object.saturating_add(1);
+            XModelSurfaceDraw {
+                surface: d.surface,
+                material: d.material,
+                world_from_local: d.world_from_local,
+                lighting_handle: d.lighting_handle,
+
+                pending_lighting: None,
+                colour_refusal: None,
+                object_id,
+                scene_light_index: d.scene_light_index,
+                reflection_probe_index: d.reflection_probe_index,
+                packed_lighting: None,
+                is_scope: false,
+                scene_entnum: d.scene_entnum,
+                body_client: d.scene_entnum,
+                // Remote bodies carry no radius here; unbounded keeps
+                // every player caster in both partitions.
+                caster_bound: None,
+            }
+        })
+    }));
+    if fpv_scene_colour(fpv, scene) {
+        fpv_list.extend(fpv.draws().iter().map(|d| XModelSurfaceDraw {
+            surface: d.surface,
+            material: d.material,
+            world_from_local: fpv.world_from_local,
+            lighting_handle: fpv.lighting_handle,
+            pending_lighting: None,
+            colour_refusal: None,
+            object_id: XMODEL_OBJECT_ID_VIEWMODEL,
+            scene_light_index: fpv.scene_light_index,
+            reflection_probe_index: fpv.reflection_probe_index,
+            packed_lighting: None,
+            is_scope: d.is_scope,
+            scene_entnum: Some(crate::SCENE_VIEWMODEL_ENTNUM),
+            body_client: None,
+            caster_bound: None,
+        }));
+    }
+    for (list, draws) in [
+        (script_list, scripts.draws()),
+        (missile_list, missiles.draws()),
+        (item_list, items.draws()),
+    ] {
+        list.extend(
+            draws
+                .iter()
+                .copied()
+                .filter(|d| scene_ent_admitted(scene, d.scene_entnum)),
+        );
+    }
+    let (fx_draws, fx_object_id_exhausted) = dense_fx_object_ids(
+        fx_models.draws(),
+        dynents.draws().iter().map(|draw| draw.object_id).max(),
+    );
+    *fx_list = fx_draws;
+    dynent_list.extend_from_slice(dynents.draws());
+    if let Some((sky, eye)) = sky {
+        sky_list.extend(sky.draws.iter().map(|draw| XModelSurfaceDraw {
+            world_from_local: Mat4::from_translation(eye),
+            ..*draw
+        }));
+    }
+    fx_object_id_exhausted
+}
+
+/// Rebuilds the draws of a compacted layout through the last full merge's maps. Refuses
+/// (leaving the plan as it was) when any producer now draws a different set of surfaces or
+/// materials, since that changes the compaction itself.
+fn refresh_compact_draws(
+    merged: &mut XModelDrawPlan,
+    owners: &[ConcatPackedOwner<'_>; 8],
+    fpv: &FpvDrawPlan,
+    bodies: &RemoteBodyDrawPlan,
+    scripts: &ScriptModelDrawPlan,
+    missiles: &MissileDrawPlan,
+    items: &ItemDrawPlan,
+    fx_models: &FxModelDrawPlan,
+    dynents: &DynEntDrawPlan,
+    scene: Option<&crate::GfxScene>,
+    sky: Option<(&super::sky::SkyModelDrawPlan, Vec3)>,
+) -> bool {
+    let mut lists = std::mem::take(&mut merged.owner_draws);
+    let fx_object_id_exhausted = owner_draw_lists(
+        &mut lists, fpv, bodies, scripts, missiles, items, fx_models, dynents, scene, sky,
+    );
+    let fits = merged
+        .owner_layouts
+        .iter()
+        .zip(owners)
+        .zip(lists.iter())
+        .all(|((layout, owner), draws)| owner_draws_fit(layout, owner, draws));
+    if fits {
+        merged.draws.clear();
+        for (layout, draws) in merged.owner_layouts.iter().zip(lists.iter_mut()) {
+            if layout.whole {
+                merged.draws.extend(draws.drain(..).map(|mut d| {
+                    d.surface = d.surface.saturating_add(layout.range_base);
+                    d.material = d.material.saturating_add(layout.mat_base);
+                    d
+                }));
+            } else {
+                merged.draws.extend(
+                    draws
+                        .drain(..)
+                        .map(|d| compact_draw(d, &layout.surf_map, &layout.mat_map)),
+                );
+            }
+        }
+        merged.fx_object_id_exhausted = fx_object_id_exhausted;
+    }
+    merged.owner_draws = lists;
+    fits
+}
+
+/// Whether a producer's current draws use exactly the surfaces and materials its layout
+/// was built for.
+fn owner_draws_fit(
+    layout: &OwnerLayout,
+    owner: &ConcatPackedOwner<'_>,
+    draws: &[XModelSurfaceDraw],
+) -> bool {
+    if layout.appended == draws.is_empty() {
+        return false;
+    }
+    if !layout.appended {
+        return true;
+    }
+    let surface_n = owner.surface_ranges.len();
+    let mut used = vec![false; surface_n];
+    for d in draws {
+        if let Some(slot) = used.get_mut(d.surface as usize) {
+            *slot = true;
+        }
+    }
+    if layout.whole {
+        return surface_n > 0 && used.iter().all(|&live| live);
+    }
+    if layout.surf_map.len() != surface_n || layout.mat_map.len() != owner.materials.len() {
+        return false;
+    }
+    if used
+        .iter()
+        .zip(&layout.surf_map)
+        .any(|(&live, &mapped)| live != (mapped != UNMAPPED))
+    {
+        return false;
+    }
+    let mut used_mat = vec![false; owner.materials.len()];
+    for d in draws {
+        if let Some(slot) = used_mat.get_mut(d.material as usize) {
+            *slot = true;
+        }
+    }
+    used_mat
+        .iter()
+        .zip(&layout.mat_map)
+        .all(|(&live, &mapped)| live == (mapped != UNMAPPED))
+}
+
+fn packed_layouts_fit(layouts: &[OwnerLayout; 8], owners: &[ConcatPackedOwner<'_>; 8]) -> bool {
+    owners.iter().zip(layouts).all(|(owner, layout)| {
+        if layout.packed_len() == 0 {
+            return true;
+        }
+        match owner.payload {
+            asset_world::PackedVertexPayload::Iw4(rows) => {
+                rows.len() == owner.decoded_n
+                    && (layout.whole_rows == 0 || layout.whole_rows == rows.len())
+                    && layout.need <= rows.len()
+            }
+            asset_world::PackedVertexPayload::Unavailable { .. } => false,
+        }
+    })
+}
+
+/// Gathers a compacted layout's packed rows again from the producers' payloads (checked by
+/// `packed_layouts_fit`). A bank already holding this layout only takes the producers whose
+/// vertices moved since it was written.
+fn regather_packed_bank(
+    packed: &mut Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
+    patch: bool,
+    bank_vertices: &mut [u64; 8],
+    stamp_vertices: [u64; 8],
+    layouts: &[OwnerLayout; 8],
+    owners: &[ConcatPackedOwner<'_>; 8],
+    published: &mut render_frame::PackedSegments,
+) {
+    let total: usize = layouts.iter().map(OwnerLayout::packed_len).sum();
+    let patch = patch && packed.len() == total;
+    if !patch {
+        packed.clear();
+        packed.reserve(total);
+    }
+    let mut off = 0usize;
+    for (owner, layout) in owners.iter().zip(layouts) {
+        let n = layout.packed_len();
+        if n == 0 {
+            continue;
+        }
+        if patch && bank_vertices[owner.rev_i] == stamp_vertices[owner.rev_i] {
+            off += n;
+            continue;
+        }
+        let asset_world::PackedVertexPayload::Iw4(rows) = owner.payload else {
+            unreachable!("packed_layouts_fit admits only Iw4 payloads");
+        };
+        if patch {
+            let dst = &mut packed[off..off + n];
+            if layout.whole_rows > 0 {
+                dst.copy_from_slice(rows);
+            } else {
+                for (dst, &src) in dst.iter_mut().zip(&layout.rows) {
+                    *dst = rows[src as usize];
+                }
+            }
+        } else if layout.whole_rows > 0 {
+            packed.extend_from_slice(rows);
+        } else {
+            packed.extend(layout.rows.iter().map(|&src| rows[src as usize]));
+        }
+        off += n;
+    }
+    *bank_vertices = stamp_vertices;
+    let counts = std::array::from_fn(|i| layouts[i].packed_len());
+    published.publish(concat_packed_segments(counts, stamp_vertices, owners));
 }
 
 fn append_concat_owner_draws(
@@ -1217,63 +1456,54 @@ fn append_admitted_source(
     merged: &mut XModelDrawPlan,
     packed: &mut Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
     packed_ok: &mut bool,
-    decoded_n: usize,
-    indices: &[u32],
-    surface_ranges: &[(u32, u32)],
-    materials: &[SmodelPassMaterial],
-    packed_payload: &asset_world::PackedVertexPayload,
-    draws: impl IntoIterator<Item = XModelSurfaceDraw>,
+    layout: &mut OwnerLayout,
+    owner: &ConcatPackedOwner<'_>,
+    draws: &mut Vec<XModelSurfaceDraw>,
 ) {
-    let draws: Vec<XModelSurfaceDraw> = draws.into_iter().collect();
     if draws.is_empty() {
         return;
     }
-    let mut used = vec![false; surface_ranges.len()];
-    for d in &draws {
+    layout.appended = true;
+    let mut used = vec![false; owner.surface_ranges.len()];
+    for d in draws.iter() {
         if let Some(slot) = used.get_mut(d.surface as usize) {
             *slot = true;
         }
     }
     let all_surfaces_live = !used.is_empty() && used.iter().all(|&live| live);
     if all_surfaces_live {
+        layout.whole = true;
+        layout.range_base = merged.surface_ranges.len() as u32;
+        layout.mat_base = merged.materials.len() as u32;
+        layout.whole_rows = owner.decoded_n;
         append_source_plan(
             merged,
-            decoded_n,
-            indices,
-            surface_ranges,
-            materials,
-            draws.into_iter(),
+            owner.decoded_n,
+            owner.indices,
+            owner.surface_ranges,
+            owner.materials,
+            draws.drain(..),
         );
-        append_packed_source(packed, packed_ok, packed_payload, decoded_n);
+        append_packed_source(packed, packed_ok, owner.payload, owner.decoded_n);
         return;
     }
-    compact_admitted_source(
-        merged,
-        packed,
-        packed_ok,
-        decoded_n,
-        indices,
-        surface_ranges,
-        materials,
-        packed_payload,
-        &used,
-        draws,
-    );
+    compact_admitted_source(merged, packed, packed_ok, layout, owner, &used, draws);
 }
 
 fn compact_admitted_source(
     merged: &mut XModelDrawPlan,
     packed: &mut Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
     packed_ok: &mut bool,
-    decoded_n: usize,
-    indices: &[u32],
-    surface_ranges: &[(u32, u32)],
-    materials: &[SmodelPassMaterial],
-    packed_payload: &asset_world::PackedVertexPayload,
+    layout: &mut OwnerLayout,
+    owner: &ConcatPackedOwner<'_>,
     used_surfaces: &[bool],
-    draws: Vec<XModelSurfaceDraw>,
+    draws: &mut Vec<XModelSurfaceDraw>,
 ) {
-    let source_rows = match packed_payload {
+    let decoded_n = owner.decoded_n;
+    let indices = owner.indices;
+    let surface_ranges = owner.surface_ranges;
+    let materials = owner.materials;
+    let source_rows = match owner.payload {
         asset_world::PackedVertexPayload::Iw4(rows) if rows.len() == decoded_n => {
             Some(rows.as_slice())
         }
@@ -1285,9 +1515,10 @@ fn compact_admitted_source(
             None
         }
     };
-    const UNMAPPED: u32 = u32::MAX;
     let mut vert_remap = vec![UNMAPPED; decoded_n];
-    let mut surf_remap = vec![UNMAPPED; surface_ranges.len()];
+    let surf_remap = &mut layout.surf_map;
+    surf_remap.clear();
+    surf_remap.resize(surface_ranges.len(), UNMAPPED);
     let vert_base = merged.decoded_n as u32;
     let mut new_verts = 0u32;
     for (si, &(start, count)) in surface_ranges.iter().enumerate() {
@@ -1312,6 +1543,8 @@ fn compact_admitted_source(
                         packed.push(rows[old]);
                     }
                 }
+                layout.rows.push(old as u32);
+                layout.need = layout.need.max(old + 1);
                 new_verts = new_verts.saturating_add(1);
             }
             merged.indices.push(*slot);
@@ -1319,9 +1552,11 @@ fn compact_admitted_source(
         surf_remap[si] = merged.surface_ranges.len() as u32;
         merged.surface_ranges.push((new_start, count));
     }
-    let mut mat_remap = vec![UNMAPPED; materials.len()];
+    let mat_remap = &mut layout.mat_map;
+    mat_remap.clear();
+    mat_remap.resize(materials.len(), UNMAPPED);
     let mut used_mat = vec![false; materials.len()];
-    for d in &draws {
+    for d in draws.iter() {
         if let Some(slot) = used_mat.get_mut(d.material as usize) {
             *slot = true;
         }
@@ -1335,19 +1570,25 @@ fn compact_admitted_source(
     }
     merged.decoded_n = merged.decoded_n.saturating_add(new_verts as usize);
     merged.concat_layout = false;
-    for mut d in draws {
-        if let Some(&mapped) = surf_remap.get(d.surface as usize)
-            && mapped != UNMAPPED
-        {
-            d.surface = mapped;
-        }
-        if let Some(&mapped) = mat_remap.get(d.material as usize)
-            && mapped != UNMAPPED
-        {
-            d.material = mapped;
-        }
-        merged.draws.push(d);
+    for d in draws.drain(..) {
+        merged
+            .draws
+            .push(compact_draw(d, &layout.surf_map, &layout.mat_map));
     }
+}
+
+fn compact_draw(mut d: XModelSurfaceDraw, surf_map: &[u32], mat_map: &[u32]) -> XModelSurfaceDraw {
+    if let Some(&mapped) = surf_map.get(d.surface as usize)
+        && mapped != UNMAPPED
+    {
+        d.surface = mapped;
+    }
+    if let Some(&mapped) = mat_map.get(d.material as usize)
+        && mapped != UNMAPPED
+    {
+        d.material = mapped;
+    }
+    d
 }
 
 fn append_source_plan(
