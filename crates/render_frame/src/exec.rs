@@ -15,6 +15,8 @@ pub struct MaterialExecFrame {
     pub view_origin: Vec3,
     pub float_time: f32,
     pub clip_from_world: Option<Mat4>,
+    /// `clip_from_world` without FSR's camera jitter, for motion vectors.
+    pub unjittered_clip_from_world: Option<Mat4>,
     pub view_from_world: Option<Mat4>,
     pub clip_from_view: Option<Mat4>,
     pub outdoor: Option<OutdoorLookup>,

@@ -73,7 +73,9 @@ pub use colour_submit::{
     colour_world_smodel_static, dump_shader_program_names, dump_sorted_material_names,
     emit_focused_owner_submit, vertex_layouts_from_contract,
 };
+pub(crate) use cs_viewmodel::CsViewmodelSet;
 pub(crate) use draw::register_drawsurf_render;
+pub(crate) use postfx::PostFxSet;
 pub use geometry_diagnostic::{ExtractedDiagnosticGeometry, geometry_diagnostic_enabled};
 pub use gpu_resources::*;
 pub use model_lighting_tiles::{ModelLightingTileUpload, ModelLightingTileUploads};

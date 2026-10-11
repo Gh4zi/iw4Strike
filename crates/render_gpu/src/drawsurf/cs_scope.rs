@@ -125,6 +125,7 @@ fn extract_cs_scope(
 #[allow(clippy::too_many_arguments)]
 fn draw_cs_scope(
     view: ViewQuery<&ViewTarget>,
+    fsr: Res<crate::fsr::FsrOutput>,
     extracted: Res<ExtractedCsScope>,
     pipeline: Option<Res<CsScopePipeline>>,
     mut specialized: ResMut<SpecializedRenderPipelines<CsScopePipeline>>,
@@ -143,11 +144,19 @@ fn draw_cs_scope(
         return;
     };
     let lens = frame.lens.as_ref().and_then(|handle| images.get(handle));
-    let size = target.main_texture().size();
+    // While FSR is on, the scope draws on its full-size frame, after the upscale.
+    let size = fsr
+        .0
+        .as_ref()
+        .map_or_else(|| target.main_texture().size(), |out| out.size());
     if size.width == 0 || size.height == 0 {
         return;
     }
-    let id = specialized.specialize(&cache, &pipeline, target.main_texture_format());
+    let format = fsr
+        .0
+        .as_ref()
+        .map_or_else(|| target.main_texture_format(), |out| out.format());
+    let id = specialized.specialize(&cache, &pipeline, format);
     let Some(gpu_pipeline) = cache.get_render_pipeline(id) else {
         return;
     };
@@ -185,7 +194,10 @@ fn draw_cs_scope(
             &arc.sampler,
         )),
     );
-    let attachments = [Some(target.get_unsampled_color_attachment())];
+    let attachments = [Some(match fsr.0.as_ref() {
+        Some(out) => out.color_attachment(),
+        None => target.get_unsampled_color_attachment(),
+    })];
     let mut pass =
         context.begin_tracked_render_pass(bevy::render::render_resource::RenderPassDescriptor {
             label: Some("cs_scope_pass"),

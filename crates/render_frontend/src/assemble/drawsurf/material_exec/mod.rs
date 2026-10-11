@@ -10,6 +10,7 @@ pub fn refresh(
     frame.view_origin = res.view_origin;
     frame.float_time = res.float_time;
     frame.clip_from_world = res.clip_from_world;
+    frame.unjittered_clip_from_world = res.unjittered_clip_from_world;
     frame.view_from_world = res.view_from_world;
     frame.clip_from_view = res.clip_from_view;
     frame.outdoor = res.outdoor.map(|outdoor| OutdoorLookup {

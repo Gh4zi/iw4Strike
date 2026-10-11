@@ -895,6 +895,7 @@ pub(crate) fn update_command_context_code_sources(
     let mat_frame = &mut *runtime;
     mat_frame.view_origin = eye;
     mat_frame.clip_from_world = Some(clip_from_world);
+    mat_frame.unjittered_clip_from_world = Some(prepared.unjittered_clip_from_world);
     mat_frame.view_from_world = Some(view);
     mat_frame.clip_from_view = Some(clip_from_view);
     mat_frame.viewmodel_clip_from_world = Some(viewmodel_clip_from_world);

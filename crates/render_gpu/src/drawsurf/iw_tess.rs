@@ -449,15 +449,23 @@ fn draw_iw_tess(
     mut temporal_pipeline: ResMut<super::shellshock_screen::TemporalScreenPipeline>,
     queue: Res<RenderQueue>,
     mut context: RenderContext,
-    stages: Option<Res<SharedRenderStagesSlot>>,
+    (stages, fsr): (
+        Option<Res<SharedRenderStagesSlot>>,
+        Res<crate::fsr::FsrOutput>,
+    ),
 ) {
     let (target, _extracted_view) = view.into_inner();
-    let format = target.main_texture_format();
-    let scene_size = target.main_texture().size();
+    // While FSR is on, the HUD draws on its full-size frame, after the upscale.
+    let (scene_texture, scene_view) = match fsr.0.as_ref() {
+        Some(out) => (&out.texture, &out.view),
+        None => (target.main_texture(), target.main_texture_view()),
+    };
+    let format = scene_texture.format();
+    let scene_size = scene_texture.size();
     temporal.draw(super::shellshock_screen::TemporalScreenDraw {
         frame: extracted.0.shellshock_screen,
-        texture: target.main_texture(),
-        view: target.main_texture_view(),
+        texture: scene_texture,
+        view: scene_view,
         format,
         device: &device,
         queue: &queue,
@@ -473,7 +481,7 @@ fn draw_iw_tess(
             .filter(|copy| copy.format == format && copy.size == scene_size)
         {
             context.command_encoder().copy_texture_to_texture(
-                target.main_texture().as_image_copy(),
+                scene_texture.as_image_copy(),
                 copy.texture.as_image_copy(),
                 scene_size,
             );
@@ -581,7 +589,10 @@ fn draw_iw_tess(
         }
         return;
     }
-    let attachments = [Some(target.get_unsampled_color_attachment())];
+    let attachments = [Some(match fsr.0.as_ref() {
+        Some(out) => out.color_attachment(),
+        None => target.get_unsampled_color_attachment(),
+    })];
     let mut pass =
         context.begin_tracked_render_pass(bevy::render::render_resource::RenderPassDescriptor {
             label: Some("iw_tess_stretchpic_pass"),
@@ -652,12 +663,15 @@ fn prepare_saved_screen(
     pipeline: Res<IwTessPipeline>,
     mut specialized: ResMut<SpecializedRenderPipelines<IwTessPipeline>>,
     mut saved: ResMut<SavedScreenGpu>,
+    fsr: Res<crate::fsr::FsrOutput>,
 ) {
     let Some(target) = views.iter().next() else {
         return;
     };
-    let format = target.main_texture_format();
-    let size = target.main_texture().size();
+    let (format, size) = match fsr.0.as_ref() {
+        Some(out) => (out.format(), out.size()),
+        None => (target.main_texture_format(), target.main_texture().size()),
+    };
     specialized.specialize(
         &cache,
         &pipeline,
@@ -769,7 +783,9 @@ pub(super) fn register(app: &mut App) {
             (
                 prepare_iw_tess.in_set(RenderSystems::PrepareResources),
                 prepare_hud_blood.in_set(RenderSystems::PrepareResources),
-                prepare_saved_screen.in_set(RenderSystems::PrepareResources),
+                prepare_saved_screen
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(crate::fsr::prepare_fsr),
             ),
         )
         .add_systems(

@@ -267,6 +267,8 @@ pub struct MaterialFrameInputs {
 
     pub clip_from_world: Option<Mat4>,
 
+    pub unjittered_clip_from_world: Option<Mat4>,
+
     pub view_from_world: Option<Mat4>,
 
     pub clip_from_view: Option<Mat4>,

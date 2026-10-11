@@ -929,7 +929,7 @@ fn draw_postfx(
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) struct PostFxSet;
+pub(crate) struct PostFxSet;
 
 pub(super) fn register(app: &mut App) {
     if app.get_sub_app(RenderApp).is_none() {
