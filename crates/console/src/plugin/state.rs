@@ -15,7 +15,7 @@ impl Default for ConsoleSettings {
     fn default() -> Self {
         Self {
             log_capacity: 1000,
-            height: 780.0,
+            height: 800.0,
             width: 1000.0,
         }
     }

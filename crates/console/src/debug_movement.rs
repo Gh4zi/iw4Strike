@@ -36,6 +36,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "smoke_mode [cs2|csgo] — how smoke grenades look on the server you host: CS2's volumetric smoke that fills the room (default) or the particle smoke",
         ));
     }
+    if registry.resolve("console_style").is_none() {
+        registry.register(crate::CommandSpec::new("console_style").usage(
+            "console_style [0|1] — the console's look: 0 the original panel, 1 the CS2-style window",
+        ));
+    }
     if registry.resolve("sv_destructibles").is_none() {
         registry.register(crate::CommandSpec::new("sv_destructibles").usage(
             "sv_destructibles [0|1] — cars, barrels and breakable walls take damage (default 0)",
@@ -194,6 +199,18 @@ pub(crate) fn route_movement_commands(
                     format!("smoke_quality = {}", game.smoke_quality)
                 }
                 _ => "usage: smoke_quality [high|medium|low]".to_owned(),
+            },
+            "console_style" => match cmd.args.as_slice() {
+                [] => format!(
+                    "console_style = {} (0: the original panel; 1: the CS2-style window)",
+                    game.console_style
+                ),
+                [arg] if arg == "0" || arg == "1" => {
+                    game.console_style = u8::from(arg == "1");
+                    game.touch();
+                    format!("console_style = {arg}")
+                }
+                _ => "usage: console_style [0|1]".to_owned(),
             },
             "smoke_mode" => match cmd.args.as_slice() {
                 [] => format!(

@@ -1,10 +1,11 @@
-//! The console window: a CS2-style frame around the scrollback and the prompt. It is dragged by
-//! its title strip, resized from the grip in its bottom-right corner and closed from its X; the
-//! mouse wheel and the scrollbar move through the scrollback, which follows new lines while it
-//! sits at the bottom.
+//! The CS2-style console window (`console_style 1`), after CS2's own console: its layout
+//! (`panorama/layout/console.vxml`) and its sizes and colours (`panorama/styles/console.vcss`,
+//! `gameconsole.vcss`, and Panorama's scrollbar in `panorama_base.vcss`). It is dragged by its
+//! header, resized from the corner mark at its bottom right and closed from its X; the mouse wheel
+//! and the scrollbar move through the scrollback, which follows new lines while it sits at the
+//! bottom.
 
 use bevy::{
-    asset::RenderAssetUsages,
     input::mouse::{MouseScrollUnit, MouseWheel},
     input_focus::InputFocus,
     picking::{
@@ -12,30 +13,37 @@ use bevy::{
         pointer::PointerButton,
     },
     prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     text::EditableText,
     window::PrimaryWindow,
 };
 
-use super::{ConsoleInputText, ConsolePanel, ConsoleState, FONT_SIZE};
+use super::{ConsoleInputText, ConsoleState, style::Cs2Frame};
 
-pub(super) const TITLE_HEIGHT: f32 = 20.0;
-pub(super) const INPUT_HEIGHT: f32 = 30.0;
-pub(super) const SCROLLBAR_WIDTH: f32 = 18.0;
-pub(super) const LOG_PADDING_LEFT: f32 = 8.0;
-pub(super) const INPUT_PADDING: f32 = 7.0;
-const GRIP_SIZE: u32 = 16;
-const MIN_SIZE: Vec2 = Vec2::new(420.0, 240.0);
-const THUMB_MIN: f32 = 20.0;
+const FONT_SIZE: f32 = super::style::CS2.font_size;
+
+/// The header: the title's 18 px line and its 3 px padding above and below.
+pub(super) const TITLE_HEIGHT: f32 = 28.0;
+/// The input: a 14 px line, 4 px padding and its 1 px top border.
+pub(super) const INPUT_HEIGHT: f32 = 26.0;
+pub(super) const SCROLLBAR_WIDTH: f32 = 8.0;
+pub(super) const INPUT_PADDING: f32 = 4.0;
+pub(super) const DEFAULT_POS: Vec2 = Vec2::new(20.0, 20.0);
+const RESIZE_SIZE: f32 = 10.0;
+const MIN_SIZE: Vec2 = Vec2::new(300.0, 300.0);
+const THUMB_MIN: f32 = 32.0;
 /// Lines one wheel detent moves the scrollback by.
 const WHEEL_LINES: f32 = 3.0;
 
-pub(super) const COLOR_WINDOW: Color = Color::srgb(0.14, 0.14, 0.14);
-pub(super) const COLOR_TITLE: Color = Color::srgb(0.204, 0.204, 0.204);
-pub(super) const COLOR_INPUT_BG: Color = Color::srgb(0.08, 0.08, 0.08);
-pub(super) const COLOR_SCROLL_GRAB: Color = Color::srgb(0.34, 0.41, 0.41);
-const COLOR_GRIP: Color = Color::srgb(0.408, 0.408, 0.408);
-const COLOR_GRIP_HOT: Color = Color::srgb(0.608, 0.608, 0.608);
+pub(super) const COLOR_WINDOW: Color = Color::srgb(0.133, 0.133, 0.133);
+pub(super) const COLOR_BORDER: Color = Color::srgb(0.2, 0.2, 0.2);
+pub(super) const COLOR_TITLE: Color = Color::srgb(0.2, 0.2, 0.2);
+pub(super) const COLOR_INPUT_BG: Color = Color::BLACK;
+pub(super) const COLOR_SCROLL_GRAB: Color = Color::srgb(0.337, 0.404, 0.404);
+pub(super) const COLOR_CLOSE: Color = Color::srgb(0.8, 0.8, 0.8);
+const COLOR_CLOSE_HOT: Color = Color::WHITE;
+const COLOR_CLOSE_DOWN: Color = Color::srgb(0.6, 0.6, 0.6);
+const COLOR_RESIZE: Color = Color::srgb(0.4, 0.4, 0.4);
+const COLOR_RESIZE_HOT: Color = Color::srgb(0.6, 0.6, 0.6);
 
 /// Where the console window sits and how big it is, in UI pixels.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
@@ -74,31 +82,9 @@ pub(super) struct ConsoleScrollTrack;
 #[derive(Component)]
 pub(super) struct ConsoleScrollThumb;
 
-/// A lower-right triangle, the shape of the resize grip (tinted by `ImageNode::color`).
-pub(super) fn grip_image() -> Image {
-    let n = GRIP_SIZE as usize;
-    let mut data = vec![0u8; n * n * 4];
-    for y in 0..n {
-        for x in 0..n {
-            if x + y >= n - 1 {
-                data[(y * n + x) * 4..][..4].copy_from_slice(&[255, 255, 255, 255]);
-            }
-        }
-    }
-    Image::new(
-        Extent3d {
-            width: GRIP_SIZE,
-            height: GRIP_SIZE,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    )
-}
-
-pub(super) fn grip_bundle(image: Handle<Image>) -> impl Bundle {
+/// The resize mark: the bottom-right corner of a 10 px square drawn by its right and bottom
+/// borders (CS2's `#ResizeDragTarget`).
+pub(super) fn resize_bundle() -> impl Bundle {
     (
         ConsoleResizeGrip,
         Interaction::default(),
@@ -106,15 +92,16 @@ pub(super) fn grip_bundle(image: Handle<Image>) -> impl Bundle {
             position_type: PositionType::Absolute,
             right: px(0),
             bottom: px(0),
-            width: px(GRIP_SIZE as f32),
-            height: px(GRIP_SIZE as f32),
+            width: px(RESIZE_SIZE),
+            height: px(RESIZE_SIZE),
+            border: UiRect {
+                right: px(2),
+                bottom: px(2),
+                ..default()
+            },
             ..default()
         },
-        ImageNode {
-            image,
-            color: COLOR_GRIP,
-            ..default()
-        },
+        BorderColor::all(COLOR_RESIZE),
     )
 }
 
@@ -206,7 +193,7 @@ pub(super) fn apply_console_window(
     console_window: Res<ConsoleWindow>,
     windows: Query<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
-    mut panels: Query<&mut Node, With<ConsolePanel>>,
+    mut panels: Query<&mut Node, With<Cs2Frame>>,
 ) {
     let ConsoleWindow { pos, size } =
         shown_window(*console_window, screen_size(&windows, ui_scale.0));
@@ -342,17 +329,31 @@ pub(super) fn update_console_scrollbar(
     }
 }
 
-/// The grip lightens under the pointer, as ImGui's does.
-pub(super) fn highlight_console_grip(
+/// The resize mark and the X light up under the pointer, as CS2's do.
+pub(super) fn highlight_console_controls(
     mut grips: Query<
-        (&Interaction, &mut ImageNode),
+        (&Interaction, &mut BorderColor),
         (With<ConsoleResizeGrip>, Changed<Interaction>),
     >,
+    closes: Query<(&Interaction, &Children), (With<ConsoleCloseButton>, Changed<Interaction>)>,
+    mut labels: Query<&mut TextColor>,
 ) {
-    for (interaction, mut image) in &mut grips {
-        image.color = match interaction {
-            Interaction::None => COLOR_GRIP,
-            Interaction::Hovered | Interaction::Pressed => COLOR_GRIP_HOT,
+    for (interaction, mut border) in &mut grips {
+        *border = BorderColor::all(match interaction {
+            Interaction::None => COLOR_RESIZE,
+            Interaction::Hovered | Interaction::Pressed => COLOR_RESIZE_HOT,
+        });
+    }
+    for (interaction, children) in &closes {
+        let color = match interaction {
+            Interaction::None => COLOR_CLOSE,
+            Interaction::Hovered => COLOR_CLOSE_HOT,
+            Interaction::Pressed => COLOR_CLOSE_DOWN,
         };
+        for child in children {
+            if let Ok(mut text) = labels.get_mut(*child) {
+                text.0 = color;
+            }
+        }
     }
 }

@@ -52,6 +52,8 @@ pub struct GameSettings {
     /// Map destructibles (cars, barrels) take damage (`sv_destructibles`); off for CS play.
     pub destructibles: bool,
     pub third_person: bool,
+    /// The console's look: 0 the original panel, 1 the CS2-style window.
+    pub console_style: u8,
     pub master_volume: f32,
     /// `snd_ambient_volume`: the map's own ambience (background bed and looping emitters), 0-1.
     pub ambient_volume: f32,
@@ -131,6 +133,7 @@ impl Default for GameSettings {
             smoke_quality: "high".to_owned(),
             destructibles: false,
             third_person: false,
+            console_style: 0,
             master_volume: 1.0,
             ambient_volume: Self::AMBIENT_VOLUME_DEFAULT,
             timer_warning_volume: 1.0,

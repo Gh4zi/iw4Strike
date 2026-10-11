@@ -352,6 +352,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("smoke_quality={}", settings.smoke_quality),
         format!("sv_destructibles={}", u8::from(settings.destructibles)),
         format!("third_person={}", settings.third_person),
+        format!("console_style={}", settings.console_style),
         format!("shadows={}", settings.shadows),
         format!("depth_of_field={}", settings.depth_of_field),
         format!("bloom={}", settings.bloom),
@@ -501,6 +502,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "smoke_mode" => {
                 if weapon_iw4::cs::smoke_mode_from_name(value).is_some() {
                     settings.smoke_mode = value.trim().to_ascii_lowercase();
+                }
+            }
+            "console_style" => {
+                if let Ok(style @ (0 | 1)) = value.trim().parse::<u8>() {
+                    settings.console_style = style;
                 }
             }
             "smoke_quality" => {

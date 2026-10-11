@@ -9,7 +9,7 @@ use bevy::{
         pointer::PointerButton,
     },
     prelude::*,
-    text::{EditableText, FontCx, LayoutCx, TextCursorStyle, TextEdit, TextLayoutInfo},
+    text::{EditableText, FontCx, LayoutCx, TextEdit, TextLayoutInfo},
     ui::{ComputedUiRenderTargetInfo, UiGlobalTransform},
     window::{CursorEntered, CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused},
 };
@@ -17,7 +17,6 @@ use frame::{AppScreen, HasWorld};
 use input_iw4::{SCRIPT_KEYNUM, command_names, input_cmd, key_event, key_up_command_id};
 use net::{ClientActionInput, ClientSet, PresentedSnapshot, frame_time_msec, key_frame_msec};
 use render_frontend::prepare::scene::world::WorldScene;
-use ui::UiLayer;
 
 use crate::{
     BINDABLE_KEYS, BindButton, ConsoleCommand, ConsoleEditor, ConsoleInputState, KeyBinds,
@@ -30,6 +29,7 @@ use crate::{
 mod dispatch_state;
 mod os_cursor;
 mod state;
+mod style;
 mod window;
 
 pub use dispatch_state::{ConsoleCommandQueue, ConsoleDispatch, WaitMovePose};
@@ -40,20 +40,6 @@ const EMBEDDED_FONT: &[u8] = include_bytes!("../../assets/FreeMono.otf");
 /// The console's face when the system has it (Windows ships Consolas); FreeMono otherwise.
 const SYSTEM_CONSOLE_FONT: &str = "consola.ttf";
 const PROMPT: &str = "> ";
-const FONT_SIZE: f32 = 14.0;
-/// Typed text, and the echo of a submitted line in the scrollback.
-const COLOR_BODY: Color = Color::WHITE;
-/// Everything else the console prints.
-const COLOR_OUTPUT: Color = Color::srgb(0.0, 0.90, 0.85);
-
-const COLOR_MATCHED: Color = Color::srgb(0.55, 0.62, 0.62);
-
-const COLOR_REST_SELECTED: Color = Color::srgb(0.95, 0.78, 0.35);
-
-const COLOR_REST_MUTED: Color = Color::srgb(0.62, 0.66, 0.66);
-const COLOR_PANEL: Color = window::COLOR_WINDOW;
-
-const COLOR_SUGGEST_BG: Color = window::COLOR_INPUT_BG;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ConsoleDispatchSet;
@@ -116,13 +102,14 @@ impl Plugin for ConsolePlugin {
                     .chain(),
             )
             .add_systems(PreUpdate, feed_console_keyboard.before(InputSystems))
+            .add_systems(Update, style::apply_console_style.after(ConsoleDispatchSet))
             .add_systems(
                 PostUpdate,
                 (
                     window::apply_console_window,
                     window::follow_console_log,
                     window::update_console_scrollbar,
-                    window::highlight_console_grip,
+                    window::highlight_console_controls,
                 )
                     .chain()
                     .before(bevy::ui::UiSystems::Layout),
@@ -734,7 +721,6 @@ fn sync_cursor_grab(
 fn setup_console(
     mut commands: Commands,
     mut fonts: ResMut<Assets<Font>>,
-    mut images: ResMut<Assets<Image>>,
     settings: Res<ConsoleSettings>,
     mut registry: ResMut<ConsoleRegistry>,
     mut binds: ResMut<KeyBinds>,
@@ -869,221 +855,43 @@ fn setup_console(
     crate::frontend::register(&mut registry);
     crate::class_menu::register(&mut registry);
     crate::barracks_menu::register(&mut registry);
-    let showpos_font = fonts.add(Font::from_bytes(EMBEDDED_FONT.to_vec()));
-    let font = system_console_font()
-        .map(|bytes| fonts.add(Font::from_bytes(bytes)))
-        .unwrap_or_else(|| showpos_font.clone());
-    commands.insert_resource(ConsoleFont(font.clone()));
-    let console_window = window::ConsoleWindow {
-        pos: Vec2::ZERO,
-        size: Vec2::new(settings.width, settings.height),
-    };
+    let classic_font = fonts.add(Font::from_bytes(EMBEDDED_FONT.to_vec()));
+    let mut load_font =
+        |bytes: Option<Vec<u8>>| bytes.map(|bytes| fonts.add(Font::from_bytes(bytes)));
+    let cs2_font = load_font(cs2_panorama_font(CS2_CONSOLE_FONT))
+        .or_else(|| load_font(system_console_font()))
+        .unwrap_or_else(|| classic_font.clone());
+    let cs2_title_font =
+        load_font(cs2_panorama_font(CS2_CONSOLE_TITLE_FONT)).unwrap_or_else(|| cs2_font.clone());
+    let console_window = style::initial_window(&settings);
     commands.insert_resource(console_window);
     commands.insert_resource(window::ConsoleScroll::default());
-    let grip = images.add(window::grip_image());
-    let text_font = |size: f32| TextFont {
-        font: font.clone().into(),
-        font_size: FontSize::Px(size),
-        ..default()
-    };
+    // The saved `console_style` is read after start-up; `style::apply_console_style` swaps
+    // the panel then if it asks for the other look.
+    let mut look = style::new_look(classic_font.clone(), cs2_font, cs2_title_font);
+    let spawned = style::spawn_panel(
+        &mut commands,
+        style::ConsoleStyle::Classic,
+        &look,
+        console_window,
+    );
+    look.panel = spawned.panel;
+    commands.insert_resource(ConsoleFont(classic_font.clone()));
+    commands.insert_resource(ConsolePrompt(spawned.prompt));
+    commands.insert_resource(ConsoleLog(spawned.log));
+    commands.insert_resource(look);
+    crate::debug_move::spawn_showpos_hud(&mut commands, classic_font);
+}
 
-    let mut prompt_entity = None;
-    let mut log_entity = None;
-    commands
-        .spawn((
-            ConsolePanel,
-            UiLayer::Overlay,
-            Visibility::Hidden,
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(console_window.pos.x),
-                top: px(console_window.pos.y),
-                width: px(console_window.size.x),
-                height: px(console_window.size.y),
-                ..default()
-            },
-            BackgroundColor(COLOR_PANEL),
-            GlobalZIndex(20_000),
-            ZIndex(100),
-        ))
-        .with_children(|panel| {
-            panel
-                .spawn((
-                    window::ConsoleTitleBar,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(0),
-                        top: px(0),
-                        right: px(window::TITLE_HEIGHT),
-                        height: px(window::TITLE_HEIGHT),
-                        ..default()
-                    },
-                    BackgroundColor(window::COLOR_TITLE),
-                ))
-                .with_children(|bar| {
-                    bar.spawn((
-                        Text::new("CONSOLE"),
-                        text_font(13.0),
-                        TextColor(Color::WHITE),
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: px(5),
-                            top: px(2),
-                            ..default()
-                        },
-                        Pickable::IGNORE,
-                    ));
-                });
-            panel
-                .spawn((
-                    window::ConsoleCloseButton,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        right: px(0),
-                        top: px(0),
-                        width: px(window::TITLE_HEIGHT),
-                        height: px(window::TITLE_HEIGHT),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BackgroundColor(window::COLOR_TITLE),
-                ))
-                .with_children(|close| {
-                    close.spawn((
-                        Text::new("x"),
-                        text_font(13.0),
-                        TextColor(Color::WHITE),
-                        Pickable::IGNORE,
-                    ));
-                });
-            panel
-                .spawn((
-                    window::ConsoleLogViewport,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(0),
-                        right: px(window::SCROLLBAR_WIDTH),
-                        top: px(window::TITLE_HEIGHT),
-                        bottom: px(window::INPUT_HEIGHT),
-                        padding: UiRect::left(px(window::LOG_PADDING_LEFT)),
-                        flex_direction: FlexDirection::Column,
-                        overflow: Overflow::scroll_y(),
-                        ..default()
-                    },
-                    ScrollPosition::default(),
-                ))
-                .with_children(|clip| {
-                    log_entity = Some(
-                        clip.spawn((
-                            ConsoleLogText,
-                            Text::new(""),
-                            text_font(FONT_SIZE),
-                            TextColor(COLOR_OUTPUT),
-                            TextCursorStyle {
-                                color: Color::NONE,
-                                selection_color: Color::srgba(0.35, 0.55, 0.85, 0.45),
-                                unfocused_selection_color: Color::srgba(0.35, 0.55, 0.85, 0.45),
-                                selected_text_color: None,
-                            },
-                        ))
-                        .id(),
-                    );
-                });
-            panel
-                .spawn((
-                    window::ConsoleScrollTrack,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        right: px(0),
-                        top: px(window::TITLE_HEIGHT),
-                        bottom: px(window::INPUT_HEIGHT),
-                        width: px(window::SCROLLBAR_WIDTH),
-                        ..default()
-                    },
-                    BackgroundColor(COLOR_PANEL),
-                ))
-                .with_children(|track| {
-                    track.spawn((
-                        window::ConsoleScrollThumb,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: px(0),
-                            right: px(0),
-                            top: px(0),
-                            height: px(0),
-                            ..default()
-                        },
-                        BackgroundColor(window::COLOR_SCROLL_GRAB),
-                        Visibility::Hidden,
-                    ));
-                });
+/// The CS2 console's face is Valve's licensed Stratum2 Mono, which CS2 ships encrypted; its
+/// open fallback, Noto Mono (SIL Open Font License), sits beside it in CS2's `panorama/fonts`.
+const CS2_CONSOLE_FONT: &str = "notomono-regular.ttf";
+const CS2_CONSOLE_TITLE_FONT: &str = "notosans-bold.ttf";
 
-            panel.spawn((
-                ConsoleSuggestionText,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(window::INPUT_PADDING),
-                    bottom: px(window::INPUT_HEIGHT),
-                    padding: UiRect::axes(px(0), px(2)),
-                    ..default()
-                },
-                BackgroundColor(COLOR_SUGGEST_BG),
-                Visibility::Hidden,
-                Text::new(""),
-                text_font(FONT_SIZE),
-                TextColor(COLOR_REST_MUTED),
-            ));
-            panel
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(0),
-                        right: px(3),
-                        bottom: px(0),
-                        height: px(window::INPUT_HEIGHT),
-                        padding: UiRect::horizontal(px(window::INPUT_PADDING)),
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        overflow: Overflow::clip(),
-                        ..default()
-                    },
-                    BackgroundColor(window::COLOR_INPUT_BG),
-                ))
-                .with_children(|row| {
-                    prompt_entity = Some(
-                        row.spawn((
-                            ConsoleInputText,
-                            EditableText {
-                                allow_newlines: false,
-                                visible_lines: Some(1.0),
-                                ..default()
-                            },
-                            TextLayout::no_wrap(),
-                            text_font(FONT_SIZE),
-                            TextColor(COLOR_BODY),
-                            TextCursorStyle {
-                                color: COLOR_BODY,
-                                selection_color: Color::srgba(0.35, 0.55, 0.85, 0.45),
-                                unfocused_selection_color: Color::srgba(0.35, 0.55, 0.85, 0.2),
-                                selected_text_color: None,
-                            },
-                            Node {
-                                flex_grow: 1.0,
-                                min_width: px(8),
-                                height: px(18),
-                                overflow: Overflow::clip(),
-                                ..default()
-                            },
-                        ))
-                        .id(),
-                    );
-                });
-            panel.spawn(window::grip_bundle(grip));
-        });
-    commands.insert_resource(ConsolePrompt(prompt_entity.expect("console prompt entity")));
-    commands.insert_resource(ConsoleLog(log_entity.expect("console log entity")));
-    crate::debug_move::spawn_showpos_hud(&mut commands, showpos_font);
+/// A font from the player's CS2 install (`game/csgo/panorama/fonts`), read at start-up.
+fn cs2_panorama_font(name: &str) -> Option<Vec<u8>> {
+    let pak = asset_transport::find_cs2_pak()?;
+    std::fs::read(pak.parent()?.join("panorama").join("fonts").join(name)).ok()
 }
 
 /// The system's Consolas, read at start-up (it is the user's font, so it is not shipped).
@@ -1379,6 +1187,7 @@ fn handle_console_input(
     mut focus: ResMut<InputFocus>,
     prompt: Option<Res<ConsolePrompt>>,
     mut editables: Query<&mut EditableText, With<ConsoleInputText>>,
+    look: Res<style::ConsoleLook>,
 ) {
     let prompt_entity = prompt.map(|p| p.0);
     if keys.just_pressed(KeyCode::Backquote) {
@@ -1515,7 +1324,12 @@ fn handle_console_input(
         } else {
             let len = console_suggestions(&state, &registry).len();
             if len > 0 {
-                state.editor.selected = (state.editor.selected + 1) % len;
+                // The classic list grows upward from the prompt; CS2's drops below it.
+                state.editor.selected = if look.style == style::ConsoleStyle::Cs2 {
+                    (state.editor.selected + len - 1) % len
+                } else {
+                    (state.editor.selected + 1) % len
+                };
                 state.suggestion_picked = true;
             }
         }
@@ -1527,7 +1341,11 @@ fn handle_console_input(
         } else {
             let len = console_suggestions(&state, &registry).len();
             if len > 0 {
-                state.editor.selected = (state.editor.selected + len - 1) % len;
+                state.editor.selected = if look.style == style::ConsoleStyle::Cs2 {
+                    (state.editor.selected + 1) % len
+                } else {
+                    (state.editor.selected + len - 1) % len
+                };
                 state.suggestion_picked = true;
             }
         }
@@ -2524,6 +2342,7 @@ fn update_console_ui(
     state: Res<ConsoleState>,
     registry: Res<ConsoleRegistry>,
     font: Res<ConsoleFont>,
+    look: Res<style::ConsoleLook>,
     mut visibilities: ParamSet<(
         Query<&mut Visibility, (With<ConsolePanel>, Without<ConsoleSuggestionText>)>,
         Query<
@@ -2545,8 +2364,18 @@ fn update_console_ui(
             Without<ConsoleSuggestionText>,
         ),
     >,
-    mut shown_log: Local<Vec<String>>,
+    mut shown_log: Local<(Option<Entity>, Vec<String>)>,
+    mut cs2_lists: Query<
+        (Entity, &mut Visibility),
+        (
+            With<style::Cs2Suggestions>,
+            Without<ConsolePanel>,
+            Without<ConsoleSuggestionText>,
+        ),
+    >,
+    mut shown_cs2: Local<Option<(Entity, Vec<String>, usize)>>,
 ) {
+    let palette = look.style.palette();
     for mut visibility in &mut visibilities.p0() {
         let want = if state.open {
             Visibility::Visible
@@ -2558,6 +2387,11 @@ fn update_console_ui(
         }
     }
     if !state.open {
+        for (_, mut visibility) in &mut cs2_lists {
+            if *visibility != Visibility::Hidden {
+                *visibility = Visibility::Hidden;
+            }
+        }
         for (entity, mut visibility, mut text) in &mut visibilities.p1() {
             if *visibility != Visibility::Hidden {
                 *visibility = Visibility::Hidden;
@@ -2573,22 +2407,45 @@ fn update_console_ui(
     }
 
     let suggestions = console_suggestions(&state, &registry);
-    if *shown_log != state.log {
-        shown_log.clone_from(&state.log);
+    for (list, mut visibility) in &mut cs2_lists {
+        let want = if suggestions.is_empty() {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if *visibility != want {
+            *visibility = want;
+        }
+        let shown = Some((list, suggestions.clone(), state.editor.selected));
+        if *shown_cs2 != shown {
+            style::fill_cs2_suggestions(
+                &mut commands,
+                list,
+                &suggestions,
+                state.editor.selected,
+                &font.0,
+            );
+            *shown_cs2 = shown;
+        }
+    }
+    let log_entity = log_texts.iter().next().map(|(entity, _)| entity);
+    if shown_log.0 != log_entity || shown_log.1 != state.log {
+        shown_log.0 = log_entity;
+        shown_log.1.clone_from(&state.log);
         for (entity, mut text) in &mut log_texts {
             if !text.is_empty() {
                 text.clear();
             }
             commands.entity(entity).despawn_related::<Children>();
             let font = font.0.clone();
-            let runs = log_color_runs(&state.log);
+            let runs = log_color_runs(&state.log, palette);
             commands.entity(entity).with_children(|root| {
                 for (run, color) in runs {
                     root.spawn((
                         TextSpan::new(run),
                         TextFont {
                             font: font.clone().into(),
-                            font_size: FontSize::Px(FONT_SIZE),
+                            font_size: FontSize::Px(palette.font_size),
                             ..default()
                         },
                         TextColor(color),
@@ -2599,7 +2456,11 @@ fn update_console_ui(
     }
 
     let (token_start, _, token) = state.editor.token_at_caret();
-    let indent_cols = token_start;
+    let indent_cols = if palette.prompt_glyph {
+        PROMPT.chars().count() + token_start
+    } else {
+        token_start
+    };
     let spans = suggestion_spans(&suggestions, state.editor.selected, &token, indent_cols);
     let font = font.0.clone();
     for (entity, mut visibility, mut text) in &mut visibilities.p1() {
@@ -2612,7 +2473,7 @@ fn update_console_ui(
         *visibility = Visibility::Visible;
         commands.entity(entity).with_children(|root| {
             for span in &spans {
-                root.spawn(suggest_span_bundle(span, font.clone()));
+                root.spawn(suggest_span_bundle(span, font.clone(), palette));
             }
         });
     }
@@ -2621,13 +2482,13 @@ fn update_console_ui(
 /// The scrollback as runs of one colour (a submitted line's echo in the typed-text colour,
 /// everything else in the output colour), whose texts join to exactly `log.join("\n")` — the
 /// selection and copy code index that string by glyph.
-fn log_color_runs(log: &[String]) -> Vec<(String, Color)> {
+fn log_color_runs(log: &[String], palette: &style::Palette) -> Vec<(String, Color)> {
     let mut runs: Vec<(String, Color)> = Vec::new();
     for (index, line) in log.iter().enumerate() {
         let color = if line.starts_with(PROMPT) {
-            COLOR_BODY
+            palette.body
         } else {
-            COLOR_OUTPUT
+            palette.output
         };
         let newline = if index + 1 < log.len() { "\n" } else { "" };
         match runs.last_mut() {
@@ -2641,20 +2502,24 @@ fn log_color_runs(log: &[String]) -> Vec<(String, Color)> {
     runs
 }
 
-fn suggest_span_bundle(span: &SuggestSpan, font: Handle<Font>) -> impl Bundle {
+fn suggest_span_bundle(
+    span: &SuggestSpan,
+    font: Handle<Font>,
+    palette: &style::Palette,
+) -> impl Bundle {
     (
         TextSpan::new(span.text.clone()),
         TextFont {
             font: font.into(),
-            font_size: FontSize::Px(FONT_SIZE),
+            font_size: FontSize::Px(palette.font_size),
             ..default()
         },
         TextColor(match span.tone {
-            SuggestTone::Indent | SuggestTone::Ellipsis => COLOR_REST_MUTED,
-            SuggestTone::Matched => COLOR_MATCHED,
-            SuggestTone::RestSelected => COLOR_REST_SELECTED,
-            SuggestTone::RestMuted => COLOR_REST_MUTED,
+            SuggestTone::Indent | SuggestTone::Ellipsis => palette.rest_muted,
+            SuggestTone::Matched => palette.matched,
+            SuggestTone::RestSelected => palette.rest_selected,
+            SuggestTone::RestMuted => palette.rest_muted,
         }),
-        TextBackgroundColor(COLOR_SUGGEST_BG),
+        TextBackgroundColor(palette.suggest_bg),
     )
 }
