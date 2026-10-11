@@ -144,7 +144,12 @@ fn apply_fsr_target(
     mut commands: Commands,
     settings: Res<frame::GameSettings>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    cameras: Query<(Entity, &Camera, Option<&RenderTarget>), With<Camera3d>>,
+    // The world's camera only: the main menu's camera is a 3D camera too, but it also draws the
+    // UI, so taking it sent the whole menu into FSR's image and left the window black.
+    cameras: Query<
+        (Entity, &Camera, Option<&RenderTarget>),
+        (With<Camera3d>, Without<frame::UiCamera>),
+    >,
     mut images: ResMut<Assets<Image>>,
     mut target: ResMut<FsrTarget>,
     mut frame: ResMut<FsrFrame>,
@@ -152,7 +157,15 @@ fn apply_fsr_target(
 ) {
     let mode = FsrMode::from_setting(settings.fsr_mode);
     let Ok((camera_entity, camera, render_target)) = cameras.single() else {
+        // No world (main menu): nothing to show, and a frame left from a match must not cover it.
         frame.active = false;
+        if let Some((_, mut visibility)) = target
+            .present
+            .and_then(|present| presents.get_mut(present).ok())
+            && *visibility != Visibility::Hidden
+        {
+            *visibility = Visibility::Hidden;
+        }
         return;
     };
     if mode == FsrMode::Off {
