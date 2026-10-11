@@ -245,6 +245,12 @@ fn evict_bots_claiming_local_client(mut roster: ResMut<BotRoster>, local: Res<Lo
     );
 }
 
+/// A bot booted here waits for the one before it to be through the server (its actions
+/// retired by the tick that ran them) before it goes: `bot add 9` is then nine ticks of one
+/// connect and one class pick each, not one tick running the scripts' connect and menu
+/// callbacks nine times over (~25 ms of script on that tick). Past this, the next goes anyway.
+const BOOT_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(2);
+
 fn boot_bots(
     mut roster: ResMut<BotRoster>,
     mut actions: ResMut<ClientActionInbox>,
@@ -252,6 +258,7 @@ fn boot_bots(
     installed: Option<Res<HasWorld>>,
     world: Option<ResMut<AuthorityWorld>>,
     local: Res<LocalPresentClient>,
+    mut last_boot: Local<Option<(sim::ClientId, std::time::Instant)>>,
 ) {
     let Some(mut world) = world else {
         return;
@@ -266,6 +273,12 @@ fn boot_bots(
         Some(entity_iw4::TEAM_ALLIES) => Some(("allies", "axis")),
         _ => None,
     };
+    if let Some((last, at)) = *last_boot
+        && at.elapsed() < BOOT_WAIT_CAP
+        && actions.pending_for(last).next().is_some()
+    {
+        return;
+    }
     for bot in &mut roster.bots {
         if bot.joined {
             continue;
@@ -355,6 +368,8 @@ fn boot_bots(
             "bots: JoinMatch+changeclass client={} pick={index} request_id={class_request}",
             bot.id.0,
         );
+        *last_boot = Some((bot.id, std::time::Instant::now()));
+        break;
     }
 }
 
