@@ -692,7 +692,10 @@ fn sync_cursor_grab(
                 *last_regrab = now;
                 cursor.grab_mode = CursorGrabMode::None;
                 *held_frames = 0;
-                diag::info!(Input, "cursor: confinement lost behind the game's back; re-taken");
+                diag::info!(
+                    Input,
+                    "cursor: confinement lost behind the game's back; re-taken"
+                );
                 return;
             }
         }
