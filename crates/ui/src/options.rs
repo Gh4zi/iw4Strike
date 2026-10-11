@@ -2,6 +2,7 @@ use bevy::{
     prelude::*,
     window::{
         Monitor, MonitorSelection, PresentMode, PrimaryMonitor, PrimaryWindow, VideoModeSelection,
+        WindowFocused,
     },
 };
 use std::collections::BTreeMap;
@@ -25,14 +26,47 @@ impl BindingView {
 #[derive(Resource)]
 pub struct PresentModeOverride(pub PresentMode);
 
+/// Exclusive fullscreen holds the monitor at the game's display mode and keeps the window on
+/// top of everything, so a window that loses focus (Alt+Tab, Win+D) would go on covering the
+/// desktop at the game's resolution. While it is away it steps down instead, as other games do:
+/// borderless (the desktop's own mode back) and minimized, and it takes the exclusive mode
+/// again when the player returns to it.
+#[derive(Default)]
+pub(crate) struct ExclusiveAway {
+    away: bool,
+    /// When exclusive fullscreen was last taken; focus lost in the switch itself doesn't count.
+    entered_at: Option<f64>,
+}
+
+/// How long after taking exclusive fullscreen a lost focus is taken for the mode switch.
+const EXCLUSIVE_SETTLE_SECS: f64 = 1.0;
+
 pub(crate) fn apply_window_settings(
     settings: Res<frame::GameSettings>,
     present_override: Option<Res<PresentModeOverride>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     monitors: Query<&Monitor, With<PrimaryMonitor>>,
-    mut applied: Local<Option<(frame::DisplayResolution, bool, bool, PresentMode)>>,
+    (mut focus, time): (MessageReader<WindowFocused>, Res<Time<Real>>),
+    mut exclusive_away: Local<ExclusiveAway>,
+    mut applied: Local<Option<(frame::DisplayResolution, bool, bool, PresentMode, bool)>>,
     mut listed: Local<bool>,
 ) {
+    let now = time.elapsed_secs_f64();
+    let exclusive_wanted = settings.fullscreen && settings.exclusive_fullscreen;
+    for event in focus.read() {
+        if event.focused {
+            exclusive_away.away = false;
+        } else if exclusive_wanted
+            && exclusive_away
+                .entered_at
+                .is_some_and(|entered| now - entered >= EXCLUSIVE_SETTLE_SECS)
+        {
+            exclusive_away.away = true;
+        }
+    }
+    if !exclusive_wanted {
+        exclusive_away.away = false;
+    }
     let present_mode = present_override.map_or_else(
         || {
             if settings.vsync {
@@ -48,6 +82,7 @@ pub(crate) fn apply_window_settings(
         settings.fullscreen,
         settings.exclusive_fullscreen,
         present_mode,
+        exclusive_away.away,
     );
     if applied.as_ref() == Some(&display) {
         return;
@@ -104,12 +139,24 @@ pub(crate) fn apply_window_settings(
     }
     window.mode = match (settings.fullscreen, exclusive) {
         (false, _) => bevy::window::WindowMode::Windowed,
+        (true, Some(_)) if exclusive_away.away => {
+            window.set_minimized(true);
+            bevy::window::WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+        }
         (true, Some(mode)) => bevy::window::WindowMode::Fullscreen(
             MonitorSelection::Current,
             VideoModeSelection::Specific(mode),
         ),
         (true, None) => bevy::window::WindowMode::BorderlessFullscreen(MonitorSelection::Current),
     };
+    exclusive_away.entered_at =
+        matches!(window.mode, bevy::window::WindowMode::Fullscreen(..)).then_some(now);
+    if exclusive_away.away {
+        diag::info!(
+            Ui,
+            "exclusive fullscreen: lost focus, minimized at the desktop's mode"
+        );
+    }
     window.present_mode = present_mode;
     *applied = Some(display);
 }
