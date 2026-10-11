@@ -1,4 +1,5 @@
 mod lifecycle;
+mod slow;
 mod state;
 
 use super::{
@@ -844,12 +845,14 @@ fn instruction(
                 Callee::Native(index) => {
                     let native = world.resource::<Runtime>().natives[index as usize];
                     let name = &program.natives[index as usize].name;
+                    let started = slow::clock();
                     // A defect in one builtin costs its caller an undefined result, not the match.
                     let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         native(world, &receiver, &args)
                     }))
-                    .unwrap_or_else(|_| Err("builtin panicked".into()))
-                    .map_err(|m| format!("{name}: {m}"))?;
+                    .unwrap_or_else(|_| Err("builtin panicked".into()));
+                    slow::builtin_ran(started, index as usize, name);
+                    let value = value.map_err(|m| format!("{name}: {m}"))?;
                     thread.stack.push(value);
                     deliver_pending(world, thread, now)?;
                 }
@@ -1285,9 +1288,15 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         return;
     }
     world.resource_mut::<Runtime>().last_tick = Some(tick);
+    let pass = slow::begin();
     let now = i64::from(tick.0) * i64::from(crate::MATCH_TICK_MS);
+    let started = slow::clock();
     super::host::mechanics::deliver_finished(world);
+    slow::phase_ran(started, "deliver_finished");
+    let started = slow::clock();
     deliver_external(world, now);
+    slow::phase_ran(started, "deliver_external");
+    let started = slow::clock();
     let doomed = threads_waiting_on_deleted(world);
     let dead: Vec<_> = if doomed.is_empty() {
         Vec::new()
@@ -1314,7 +1323,11 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         }
         runtime.buckets.insert(now, current);
     }
+    slow::phase_ran(started, "sweep");
+    let started = slow::clock();
     run_ready(world, &program, now);
+    slow::phase_ran(started, "run_ready");
+    let started = slow::clock();
     let deletes = std::mem::take(&mut world.resource_mut::<Runtime>().pending_deletes);
     for object in deletes {
         world.resource_mut::<Runtime>().delete_entity(object);
@@ -1329,11 +1342,15 @@ pub(crate) fn advance_scheduler(world: &mut World) {
         runtime.buckets.remove(&now);
     }
     runtime.loading = false;
+    slow::phase_ran(started, "deletes");
     // A full mark and sweep every script frame cost more than the scripts it ran; garbage only
     // needs reclaiming, not reclaiming promptly.
     if now_ms.is_multiple_of(HEAP_COLLECT_PERIOD_MS) {
+        let started = slow::clock();
         collect_heap(world);
+        slow::phase_ran(started, "collect_heap");
     }
+    slow::end(pass, tick.0);
 }
 
 /// Game time between script heap collections. A multiple of `SCRIPT_FRAME_MS`, so a collection
@@ -1363,7 +1380,15 @@ fn run_ready(world: &mut World, program: &Program, now: i64) {
         let mut thread = world.entity_mut(entity).take::<Thread>().unwrap();
         thread.state = ThreadState::Runnable;
         world.resource_mut::<Runtime>().budget = INSTRUCTION_BUDGET;
+        let resumed_in = thread.frames.last().map(|frame| frame.function);
+        let started = slow::clock();
         execute(world, program, &mut thread, now);
+        if let Some(function) = resumed_in {
+            slow::thread_ran(started, function, || {
+                let at = &program.functions[function].location;
+                format!("{}::{}", at.module, at.function)
+            });
+        }
         if thread.state == ThreadState::Complete {
             kill(world, entity, serial);
         } else {
