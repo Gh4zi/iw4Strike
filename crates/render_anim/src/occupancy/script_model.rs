@@ -347,16 +347,18 @@ fn apply_presented_script_model_dobjs(
         by_owner.entry(*owner).or_insert(state);
     }
     for (mut owner, mut visibility) in &mut owners {
+        // `set_if_neq`: an unchanged visibility written every frame marks every script model
+        // changed for the visibility passes behind this.
         let Some(authority_owner) = owner.authority_owner else {
-            *visibility = Visibility::Hidden;
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         let Some(state) = by_owner.get(&authority_owner).copied() else {
-            *visibility = Visibility::Hidden;
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         let Some(base) = state.composition.models.first() else {
-            *visibility = Visibility::Hidden;
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         if owner.current_model.0 != base.model {
@@ -366,7 +368,7 @@ fn apply_presented_script_model_dobjs(
             owner.dobj_state = state.clone();
         }
 
-        *visibility = Visibility::Inherited;
+        visibility.set_if_neq(Visibility::Inherited);
     }
 }
 
@@ -484,10 +486,8 @@ fn occupy_script_model_scene_ents(
         let Some(skels) = presented_skel_arcs(&assets, &owner.dobj_state) else {
             continue;
         };
-        let skel_refs: Vec<&asset_model::ModelSkel> =
-            skels.iter().map(|skel| skel.as_ref()).collect();
         if lod_culled(
-            &skel_refs,
+            skels.iter().map(|skel| skel.as_ref()),
             transform.translation.to_array(),
             eye,
             skinned_ramp,
@@ -504,16 +504,13 @@ fn occupy_script_model_scene_ents(
             eye: eye.map(Vec3::from_array),
             ramp: skinned_ramp,
         });
-        let camera_lods: Vec<Option<u8>> = skels
-            .iter()
-            .map(|skel| submodel_camera_lod(skel, lod_view))
-            .collect();
         let hide = *owner.dobj_state.hide_part_bits.words();
         let models: Vec<AnimDObjSceneModel> = skels
             .iter()
-            .zip(camera_lods.iter())
-            .map(|(skel, lod)| AnimDObjSceneModel {
-                lod: lod.map(|lod| i8::try_from(lod).unwrap_or(-1)).unwrap_or(-1),
+            .map(|skel| AnimDObjSceneModel {
+                lod: submodel_camera_lod(skel, lod_view)
+                    .map(|lod| i8::try_from(lod).unwrap_or(-1))
+                    .unwrap_or(-1),
                 bone_count: u8::try_from(skel.bones.len()).unwrap_or(u8::MAX),
                 skel: std::sync::Arc::clone(skel),
             })
@@ -625,7 +622,7 @@ fn pose_script_models(
         };
         let origin = transform.translation.to_array();
 
-        if lod_culled(&skels, origin, eye, skinned_ramp) {
+        if lod_culled(skels.iter().copied(), origin, eye, skinned_ramp) {
             if let Some(id) = focused_owner_id {
                 focus.refuse(id, &owner.current_model.0, "lod_culled");
             }
@@ -1118,6 +1115,35 @@ pub fn collect_presented_models<'a>(
     Some((models, skels))
 }
 
+/// Whether `collect_presented_models` would succeed, without building its lists: every model
+/// is in the catalog with a pose, and every attachment names an earlier model and a tag.
+fn presented_models_available(
+    catalog: &asset_world::MapXModelSceneCatalog,
+    state: &xmodel_runtime::DObjSemanticState,
+) -> bool {
+    state
+        .composition
+        .models
+        .iter()
+        .enumerate()
+        .all(|(index, descriptor)| {
+            let skel = match catalog.get_name(&descriptor.model) {
+                Some(
+                    asset_world::MapXModelSceneAsset::Iw4(skel)
+                    | asset_world::MapXModelSceneAsset::Iw5(skel)
+                    | asset_world::MapXModelSceneAsset::T5(skel),
+                ) => skel,
+                _ => return false,
+            };
+            let attached = match (descriptor.parent_model, descriptor.attach_tag.as_ref()) {
+                (None, None) => index == 0,
+                (Some(parent), Some(_)) => usize::from(parent) < index,
+                _ => false,
+            };
+            attached && skel.pose.is_some()
+        })
+}
+
 fn compose_or_reuse_script_dobj(
     persist: &mut ScriptModelDobjs,
     id: u32,
@@ -1224,8 +1250,8 @@ pub(crate) fn submodel_camera_lod(
     smodel_camera_lod(skel.lod, view.origin, 1.0, view.eye, view.ramp)
 }
 
-fn lod_culled(
-    skels: &[&asset_model::ModelSkel],
+fn lod_culled<'a>(
+    skels: impl ExactSizeIterator<Item = &'a asset_model::ModelSkel>,
     origin: [f32; 3],
     eye: Option<[f32; 3]>,
     ramp: LodRampArgs,
@@ -1233,10 +1259,11 @@ fn lod_culled(
     let Some(eye) = eye else {
         return false;
     };
-    if skels.is_empty() {
+    if skels.len() == 0 {
         return false;
     }
-    skels.iter().all(|skel| {
+    let mut skels = skels;
+    skels.all(|skel| {
         smodel_camera_lod(skel.lod, origin, 1.0, Some(Vec3::from_array(eye)), ramp).is_none()
     })
 }
@@ -1263,7 +1290,7 @@ fn publish_script_model_dobjs(
         ) else {
             continue;
         };
-        if collect_presented_models(&assets, &owner.dobj_state).is_some()
+        if presented_models_available(&assets, &owner.dobj_state)
             && compose_or_reuse_script_dobj(
                 &mut persist,
                 id.to_wire(),
