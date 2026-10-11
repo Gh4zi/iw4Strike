@@ -124,6 +124,19 @@ fn steady_pitch(row: &mut crate::CapturedAlias) {
     row.pitch_max = 1.0;
 }
 
+/// Your own fall cry's gain over the gun template it borrows: that template's 0.40-0.44 suits
+/// gun waves recorded near full scale, and left the quiet cry (CS 1.6's `pl_fallpain3` peaks at
+/// -5 dBFS, -21 dB RMS) under the landing thud. CS plays it at full volume; doubled it sits at
+/// about the level other players' falls get from the world template (0.77-0.81).
+const OWN_FALL_CRY_GAIN: f32 = 2.0;
+
+/// Your own fall cry: louder than the gun template makes it, and at CS's fixed pitch.
+fn own_fall_cry(row: &mut crate::CapturedAlias) {
+    steady_pitch(row);
+    row.vol_min *= OWN_FALL_CRY_GAIN;
+    row.vol_max *= OWN_FALL_CRY_GAIN;
+}
+
 /// How far a bomb beep carries (units). CS 1.6 (`C4Think`) beeps quietly at first and louder
 /// as the timer runs out (attenuation 1.5, 1.0, 0.8, 0.5, 0.2: a GoldSrc sound fades out at
 /// 1000 / attenuation units). CS:S (`C_PlantedC4::ClientThink`) gives each beep the attenuation
@@ -323,9 +336,17 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             };
             // The radio voice keeps its pitch; guns vary theirs as MW2's do.
             let voice = prefix == CS_RADIO_SOUND_PREFIX;
+            let fall_cry = prefix == CS_PLAYER_SOUND_PREFIX;
             let tune = |row: &mut crate::CapturedAlias| {
-                if voice {
+                if voice || fall_cry {
                     steady_pitch(row);
+                }
+            };
+            let tune_own = |row: &mut crate::CapturedAlias| {
+                if fall_cry {
+                    own_fall_cry(row);
+                } else {
+                    tune(row);
                 }
             };
             let both = catalog.add_loose_alias_tuned(
@@ -337,7 +358,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
                 &player,
                 vec![clip(format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"))],
-                tune,
+                tune_own,
             );
             if both {
                 added += 1;
@@ -378,10 +399,27 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     add_ladder_steps(catalog, &ladder);
     diag::info!(
         Audio,
-        "cs sounds: {added} weapon sounds from {:?} (modelled on `{player}` / `{world}`)",
-        goldsrc.0
+        "cs sounds: {added} weapon sounds from {:?} (modelled on `{player}` vol {} / `{world}` vol {}; own fall cry vol {})",
+        goldsrc.0,
+        alias_volume_range(catalog, &player),
+        alias_volume_range(catalog, &world),
+        alias_volume_range(
+            catalog,
+            &format!("{CS_PLAYER_SOUND_PREFIX}pl_fallpain3{CS_SOUND_PLAYER_SUFFIX}")
+        )
     );
     added
+}
+
+/// An alias's volume range for the log, `?` when the bank has no such alias.
+fn alias_volume_range(catalog: &SoundCatalog, alias: &str) -> String {
+    catalog
+        .sound_in(crate::AssetNamespace::Iw4, alias)
+        .and_then(|sound| sound.aliases.first())
+        .map_or_else(
+            || "?".to_owned(),
+            |row| format!("{:.2}-{:.2}", row.vol_min, row.vol_max),
+        )
 }
 
 /// Add Counter-Strike: Source's weapon sound script entries (`weapon_*`, `default.*`) from its
@@ -480,9 +518,17 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         let voice = ["radio.", "event.", "c4.", "bot."]
             .iter()
             .any(|group| name.starts_with(group));
+        let fall_cry = name.starts_with("player.fall");
         let tune = |row: &mut crate::CapturedAlias| {
-            if voice {
+            if voice || fall_cry {
                 steady_pitch(row);
+            }
+        };
+        let tune_own = |row: &mut crate::CapturedAlias| {
+            if fall_cry {
+                own_fall_cry(row);
+            } else {
+                tune(row);
             }
         };
         if catalog.add_loose_alias_tuned(&alias, &world, clips, tune)
@@ -490,7 +536,7 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
                 &player,
                 player_clips,
-                tune,
+                tune_own,
             )
         {
             added += 1;
@@ -528,9 +574,13 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     }
     diag::info!(
         Audio,
-        "css sounds: {added} entries ({:.1} MB PCM, {skipped} waves not PCM) from {}",
+        "css sounds: {added} entries ({:.1} MB PCM, {skipped} waves not PCM) from {}; own fall cry vol {}",
         bytes as f64 / 1_048_576.0,
-        pak.display()
+        pak.display(),
+        alias_volume_range(
+            catalog,
+            &format!("{CSS_SOUND_PREFIX}player.falldamage{CS_SOUND_PLAYER_SUFFIX}")
+        )
     );
     added
 }

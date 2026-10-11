@@ -166,8 +166,18 @@ pub struct StartDecisions {
     entries: VecDeque<StartDecision>,
 }
 
+/// `IW4L_AUDIO_TRACE=1` logs every start decision as it is made: which alias and variant a
+/// sound event resolved to, and whether it played.
+fn trace_starts() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("IW4L_AUDIO_TRACE").is_some_and(|v| v != "0"))
+}
+
 impl StartDecisions {
     pub fn record(&mut self, decision: StartDecision) {
+        if trace_starts() {
+            diag::info!(Audio, "audio start: {}", decision.line());
+        }
         if self.entries.len() == START_DECISION_CAP {
             self.entries.pop_front();
         }
