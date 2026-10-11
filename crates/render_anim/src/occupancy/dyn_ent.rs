@@ -442,18 +442,54 @@ fn link_dyn_ent_cells(
     }
 }
 
+/// What the prop cull reads besides the props themselves.
+#[derive(PartialEq)]
+struct DynEntCullKey {
+    planes: Vec<[u32; 4]>,
+    words: Vec<u32>,
+    cell_count: usize,
+    vis_all: bool,
+    membership: (usize, usize, u32, bool),
+    instances: usize,
+}
+
 fn cull_dyn_ent_cell_models(
     catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<FpvLens>>,
     cell_vis: Res<PublishedCellVis>,
     membership: Res<DynEntCellBits>,
     mut instances: Query<
-        (&WorldDynEntInstance, &Transform, &mut Visibility),
+        (Ref<WorldDynEntInstance>, Ref<Transform>, &mut Visibility),
         With<DynEntModelEntity>,
     >,
     mut radii: Local<bevy::platform::collections::HashMap<String, f32>>,
+    mut last: Local<Option<DynEntCullKey>>,
 ) {
     let planes = fpv_frustum_planes(&cameras);
+    // A still camera over props that did not move gets the same answer as last frame: the
+    // visibilities it set then still stand. Its own writes do not count as changes here.
+    let key = DynEntCullKey {
+        planes: planes.iter().map(|plane| plane.map(f32::to_bits)).collect(),
+        words: cell_vis.words.clone(),
+        cell_count: cell_vis.cell_count,
+        vis_all: cell_vis.vis_all,
+        membership: (
+            membership.word_count,
+            membership.cell_count,
+            membership.client_count,
+            membership.is_ready(),
+        ),
+        instances: instances.iter().len(),
+    };
+    let catalog_changed = catalog.as_ref().is_some_and(|catalog| catalog.is_changed());
+    // Change ticks only: reading them through `Mut` does not mark anything changed.
+    let props_changed = instances.iter_mut().any(|(inst, transform, visibility)| {
+        inst.is_changed() || transform.is_changed() || visibility.is_changed()
+    });
+    if !props_changed && !catalog_changed && last.as_ref() == Some(&key) {
+        return;
+    }
+    *last = Some(key);
     let vis = admitted_vis(&cell_vis);
     // The catalog is ordered by name; a thousand props a frame each walking it by string compare
     // is most of this system, and a map holds a few dozen distinct models.
@@ -490,6 +526,15 @@ fn cull_dyn_ent_cell_models(
     }
 }
 
+/// What the prop pose reads besides the props themselves.
+#[derive(PartialEq)]
+struct DynEntPoseKey {
+    eye: Option<[u32; 3]>,
+    ramp: String,
+    shadows: Option<bool>,
+    instances: usize,
+}
+
 fn pose_dyn_ents(
     catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
     instances: Query<(Entity, &WorldDynEntInstance, &Transform, &Visibility)>,
@@ -498,7 +543,37 @@ fn pose_dyn_ents(
     prepared: Res<crate::anim::model_materials::PreparedModelMaterials>,
     sm_enable: Res<render_scene::SmEnableDvar>,
     mut product: ResMut<DynEntPoseProduct>,
+    changed: Query<
+        (),
+        (
+            With<WorldDynEntInstance>,
+            Or<(
+                Changed<WorldDynEntInstance>,
+                Changed<Transform>,
+                Changed<Visibility>,
+            )>,
+        ),
+    >,
+    mut last: Local<Option<DynEntPoseKey>>,
 ) {
+    // The product is a function of the props, the eye (LOD), the ramp and the shadow setting:
+    // while none of them moved, last frame's product is this frame's.
+    let key = DynEntPoseKey {
+        eye: cameras
+            .single()
+            .ok()
+            .map(|(xf, _, _)| xf.translation().to_array().map(f32::to_bits)),
+        ramp: format!("{:?}", lod_skinned.args()),
+        shadows: sm_enable.enabled,
+        instances: instances.iter().len(),
+    };
+    let inputs_changed = catalog.as_ref().is_none_or(|catalog| catalog.is_changed())
+        || prepared.is_changed()
+        || !changed.is_empty();
+    if !inputs_changed && last.as_ref() == Some(&key) {
+        return;
+    }
+    *last = Some(key);
     // A prop the camera cannot see is posed only to cast a shadow; with shadow maps off it is
     // nothing but per-frame work.
     let pose_hidden = sm_enable.enabled != Some(false);
