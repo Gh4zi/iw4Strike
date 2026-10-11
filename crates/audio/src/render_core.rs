@@ -157,6 +157,8 @@ pub(crate) struct RenderShared {
     pub meter_samples: AtomicU64,
     pub meter_clipped: AtomicU64,
     pub meter_peak: AtomicU32,
+    /// The output device the player picked, and the ones there are to pick from.
+    pub device_selection: crate::device::DeviceSelection,
 }
 
 // The bounded rendering lease exclusively owns RenderState. Slot payload access
@@ -197,6 +199,7 @@ impl RenderShared {
             meter_samples: AtomicU64::new(0),
             meter_clipped: AtomicU64::new(0),
             meter_peak: AtomicU32::new(0),
+            device_selection: crate::device::DeviceSelection::default(),
         }
     }
 

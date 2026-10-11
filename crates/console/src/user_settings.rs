@@ -204,6 +204,55 @@ pub(crate) fn apply_master_volume(
     }
 }
 
+/// Hand the picked output device to the audio runtime, which switches to it at once.
+pub(crate) fn apply_audio_device(
+    settings: Res<frame::GameSettings>,
+    audio: Option<Res<audio::AudioRuntime>>,
+) {
+    if settings.is_changed()
+        && let Some(audio) = audio
+    {
+        audio.set_output_device(Some(&settings.audio_device));
+    }
+}
+
+/// How many devices the Audio > Output device list shows, after "System default".
+pub(crate) const MENU_AUDIO_DEVICE_SLOTS: usize = 8;
+
+/// The list's device names, one dvar per slot (empty hides the slot).
+const MENU_AUDIO_DEVICE_DVARS: [&str; MENU_AUDIO_DEVICE_SLOTS] = [
+    "ui_snd_device_1",
+    "ui_snd_device_2",
+    "ui_snd_device_3",
+    "ui_snd_device_4",
+    "ui_snd_device_5",
+    "ui_snd_device_6",
+    "ui_snd_device_7",
+    "ui_snd_device_8",
+];
+
+/// The Audio menu's row text for a picked device name.
+fn audio_device_label(name: &str) -> String {
+    if name.is_empty() {
+        "System default".to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// Characters an options row value has room for before it runs into the row's label.
+const MENU_ROW_VALUE_CHARS: usize = 32;
+
+/// A value cut to fit its options row, with an ellipsis when it was cut.
+fn menu_row_text(text: &str) -> String {
+    if text.chars().count() <= MENU_ROW_VALUE_CHARS {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(MENU_ROW_VALUE_CHARS - 1).collect();
+    cut.push('…');
+    cut
+}
+
 pub(crate) fn sync_player_name(
     settings: Res<frame::GameSettings>,
     generation: Res<frame::WorldGeneration>,
@@ -334,6 +383,10 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("exclusive_fullscreen={}", settings.exclusive_fullscreen),
         format!("vsync={}", settings.vsync),
         format!("master_volume={:.3}", settings.master_volume),
+        format!(
+            "audio_device={}",
+            settings.audio_device.replace(['\n', '\r'], " ")
+        ),
         format!("snd_ambient_volume={:.2}", settings.ambient_volume),
         format!(
             "snd_timer_warning_volume={:.2}",
@@ -562,6 +615,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                     settings.master_volume = value;
                 }
             }
+            "audio_device" => settings.audio_device = value.trim().to_owned(),
             "sensitivity" => {
                 if let Ok(value) = value.parse() {
                     settings.sensitivity = value;
@@ -670,6 +724,9 @@ pub(crate) fn native_menu_settings(
     mut glow: ResMut<render_frontend::assemble::drawsurf::dof::GlowDvars>,
     mut test_rumble: MessageWriter<frame::TestControllerRumble>,
     mut code_status: Local<Option<(String, frame::Crosshair)>>,
+    audio: Option<Res<audio::AudioRuntime>>,
+    // The output devices as the Audio menu's list last showed them: a pick is a slot in it.
+    mut shown_devices: Local<Vec<String>>,
 ) {
     for command in events.read() {
         if !matches!(command.name.as_str(), "set" | "seta") {
@@ -699,6 +756,19 @@ pub(crate) fn native_menu_settings(
                 }
             }
             "ui_player_name" => settings.player_name = value.clone(),
+            // Audio > Output device: slot 0 is "System default", 1.. the listed devices.
+            "ui_snd_device_pick" => {
+                let picked = match value.trim().parse::<usize>() {
+                    Ok(0) => Some(String::new()),
+                    Ok(slot) => shown_devices.get(slot - 1).cloned(),
+                    Err(_) => None,
+                };
+                if let Some(picked) = picked
+                    && settings.audio_device != picked
+                {
+                    settings.audio_device = picked;
+                }
+            }
             "ui_timer_warning_volume" => {
                 if let Ok(v) = value.parse::<f32>()
                     && v.is_finite()
@@ -837,6 +907,31 @@ pub(crate) fn native_menu_settings(
         glow.enable = settings.bloom;
     }
     dvars.set("ui_volume", settings.master_volume.to_string());
+    if let Some(audio) = audio.as_deref() {
+        *shown_devices = audio.output_devices();
+        shown_devices.truncate(MENU_AUDIO_DEVICE_SLOTS);
+        // Following the system default shows which device that is now.
+        let label = match (settings.audio_device.is_empty(), audio.output_device()) {
+            (true, Some(now)) => format!("Auto: {now}"),
+            _ => audio_device_label(&settings.audio_device),
+        };
+        dvars.set("ui_snd_device_name", menu_row_text(&label));
+    }
+    let selected = if settings.audio_device.is_empty() {
+        Some(0)
+    } else {
+        shown_devices
+            .iter()
+            .position(|name| *name == settings.audio_device)
+            .map(|index| index + 1)
+    };
+    dvars.set(
+        "ui_snd_device_selected",
+        selected.map_or_else(|| "-1".to_owned(), |slot| slot.to_string()),
+    );
+    for (slot, dvar) in MENU_AUDIO_DEVICE_DVARS.iter().enumerate() {
+        dvars.set(dvar, shown_devices.get(slot).cloned().unwrap_or_default());
+    }
     dvars.set("ui_brightness", settings.brightness.to_string());
     dvars.set("ui_fov", settings.fov.to_string());
     dvars.set("ui_sensitivity", settings.sensitivity.to_string());

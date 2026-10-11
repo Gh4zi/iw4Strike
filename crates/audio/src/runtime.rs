@@ -192,6 +192,23 @@ impl AudioRuntime {
         self.shared.master.store(gain.to_bits(), Ordering::Release);
     }
 
+    /// Play through the output device of this name; `None` or `""` follows the system default.
+    /// Takes effect at once, mid-match included; a device that is not there falls back to the
+    /// system default until it is.
+    pub fn set_output_device(&self, name: Option<&str>) {
+        self.shared.device_selection.pick(name);
+    }
+
+    /// Every output device's name, as of the last refresh (about once a second).
+    pub fn output_devices(&self) -> Vec<String> {
+        self.shared.device_selection.devices()
+    }
+
+    /// The device the sound plays on now; `None` while there is no output stream.
+    pub fn output_device(&self) -> Option<String> {
+        self.shared.device_selection.current()
+    }
+
     pub fn set_match_epoch(&self, epoch: u64) {
         self.shared.match_epoch.store(epoch, Ordering::Release);
         self.source_publisher

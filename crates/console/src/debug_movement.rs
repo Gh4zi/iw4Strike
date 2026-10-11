@@ -36,6 +36,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "smoke_mode [cs2|csgo] — how smoke grenades look on the server you host: CS2's volumetric smoke that fills the room (default) or the particle smoke",
         ));
     }
+    if registry.resolve("snd_device").is_none() {
+        registry.register(crate::CommandSpec::new("snd_device").usage(
+            "snd_device [default|<number>|<name>] — the sound output device: with no argument, lists them; switches at once, mid-match included",
+        ));
+    }
     if registry.resolve("r_fsr").is_none() {
         registry.register(crate::CommandSpec::new("r_fsr").usage(
             "r_fsr [0-5] — AMD FSR 3 upscaling: 0 off, 1 Native AA, 2 Quality, 3 Balanced, 4 Performance, 5 Ultra Performance",
@@ -155,16 +160,65 @@ pub(crate) fn sync_movement_mode(game: Res<frame::GameSettings>) {
     }
 }
 
+/// `snd_device`: list the output devices, or pick one by its number in the list, by name, or
+/// `default` to follow the system's.
+fn snd_device(
+    args: &[String],
+    game: &mut frame::GameSettings,
+    audio: Option<&audio::AudioRuntime>,
+) -> String {
+    let devices = audio.map(audio::AudioRuntime::output_devices).unwrap_or_default();
+    let wanted = args.join(" ");
+    let picked = match wanted.trim() {
+        "" => None,
+        "default" | "0" => Some(String::new()),
+        arg => match arg.parse::<usize>() {
+            Ok(number) => match devices.get(number.wrapping_sub(1)) {
+                Some(name) => Some(name.clone()),
+                None => return format!("snd_device: no device {number} (snd_device lists them)"),
+            },
+            Err(_) => Some(arg.to_owned()),
+        },
+    };
+    if let Some(picked) = picked
+        && game.audio_device != picked
+    {
+        game.audio_device = picked;
+        game.touch();
+    }
+    let playing = audio
+        .and_then(audio::AudioRuntime::output_device)
+        .unwrap_or_else(|| "no device yet".to_owned());
+    let listed = devices
+        .iter()
+        .enumerate()
+        .map(|(index, name)| format!("{}: {name}", index + 1))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let message = format!(
+        "snd_device = {} (playing on {playing}) | 0: default | {listed}",
+        if game.audio_device.is_empty() {
+            "default"
+        } else {
+            &game.audio_device
+        }
+    );
+    diag::info!(Audio, "{message}");
+    message
+}
+
 pub(crate) fn route_movement_commands(
     mut events: MessageReader<ConsoleCommand>,
     mut console: ResMut<ConsoleState>,
     settings: Res<ConsoleSettings>,
     mut line: ResMut<ConsoleLine>,
     mut game: ResMut<frame::GameSettings>,
+    audio: Option<Res<audio::AudioRuntime>>,
 ) {
     let capacity = settings.log_capacity;
     for cmd in events.read() {
         let message = match cmd.name.as_str() {
+            "snd_device" => snd_device(&cmd.args, &mut game, audio.as_deref()),
             "mv_stamina" => match cmd.args.as_slice() {
                 [] => format!("mv_stamina = {}", movement_iw4::source::stamina_scale()),
                 [arg] => match arg.parse::<f32>() {

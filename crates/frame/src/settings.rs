@@ -60,6 +60,9 @@ pub struct GameSettings {
     /// FSR 3's sharpening, 0 (none) to 1 (most).
     pub fsr_sharpness: f32,
     pub master_volume: f32,
+    /// The output device to play through, by name (`audio_device`, Audio > Output device);
+    /// empty follows the system default.
+    pub audio_device: String,
     /// `snd_ambient_volume`: the map's own ambience (background bed and looping emitters), 0-1.
     pub ambient_volume: f32,
     /// `snd_timer_warning_volume`: the round timer's last-seconds countdown ticks, 0-1.
@@ -142,6 +145,7 @@ impl Default for GameSettings {
             fsr_mode: 0,
             fsr_sharpness: 0.8,
             master_volume: 1.0,
+            audio_device: String::new(),
             ambient_volume: Self::AMBIENT_VOLUME_DEFAULT,
             timer_warning_volume: 1.0,
             vgui_menus: true,
