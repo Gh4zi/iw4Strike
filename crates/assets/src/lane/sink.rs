@@ -1433,6 +1433,7 @@ impl AssetLinkSink for CommonWalkSink {
             self.tracers.note_loaded(slot, insert_slot);
         }
         if ty == AssetType::XModel {
+            let mut shared = None;
             if let Some(geometry) = stream.xmodel()
                 && let Some(name) = geometry.name.and_then(|p| stream.cstr(p).ok())
             {
@@ -1443,13 +1444,15 @@ impl AssetLinkSink for CommonWalkSink {
                     Some(&self.materials),
                 )
                 .map(std::sync::Arc::new);
-                // One decode for the scene catalog and the FX catalog: each is
-                // pruned only after the map walk, so separate copies of every
-                // common_mp XModel would both be live at the load's peak.
+                // One decode for the scene, FX, first-person and world-weapon catalogs:
+                // each is pruned only after the map walk, so separate copies of every
+                // common_mp XModel would all be live at the load's peak (the view and world
+                // weapon copies alone were ~0.9 GB).
                 if let Some(skel) = &skel {
                     self.shared_surfaces.retain(stream, geometry, skel.clone());
                     self.fx_models.capture_shared(skel.clone(), &self.materials);
                 }
+                shared = skel.clone();
                 let asset = skel.map(asset_world::MapXModelSceneAsset::Iw4).unwrap_or(
                     asset_world::MapXModelSceneAsset::Unavailable {
                         reason: "common XModel skeleton capture failed",
@@ -1458,10 +1461,11 @@ impl AssetLinkSink for CommonWalkSink {
                 self.scene_models
                     .insert(asset_world::MapXModelAssetKey(name.to_owned()), asset);
             }
-            self.fpv_meshes.capture(stream, &self.materials);
-            self.world_weapons.capture(stream, &self.materials);
-            self.projectile_meshes
-                .capture_unclassified(stream, &self.materials);
+            if let Some(skel) = &shared {
+                self.fpv_meshes.capture_shared(skel, &self.materials);
+                self.world_weapons.capture_shared(skel, &self.materials);
+                self.projectile_meshes.capture_shared(skel, &self.materials);
+            }
             self.models.capture(stream);
         }
         Ok(())

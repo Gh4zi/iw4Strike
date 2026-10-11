@@ -282,6 +282,15 @@ impl FpvMeshBuild {
         self.insert_captured(skel, Some(materials));
     }
 
+    /// [`Self::capture`] for a model whose skeleton the walk already captured (same stream,
+    /// strings and materials): the one `ModelSkel` is shared rather than captured again.
+    pub fn capture_shared(&mut self, skel: &std::sync::Arc<FpvSkel>, materials: &MaterialCatalog) {
+        if model_kind(&skel.name) != Some(ModelKind::Fpv) {
+            return;
+        }
+        self.insert_in(self.capture_ns, skel.clone(), Some(materials));
+    }
+
     pub fn capture_t5(
         &mut self,
         stream: &fastfile_t5::ZoneStream<'_>,

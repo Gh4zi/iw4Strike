@@ -42,14 +42,14 @@ pub struct ProjectileMeshEntry {
 impl ProjectileMeshEntry {
     fn from_skel(
         namespace: AssetNamespace,
-        skel: ModelSkel,
+        skel: std::sync::Arc<ModelSkel>,
         materials: Option<&MaterialCatalog>,
     ) -> Self {
         let (material_keys, material_edges) =
             capture_xmodel_material_slots(&skel.surface_materials, materials.map(|c| &**c));
         Self {
             namespace,
-            skel: std::sync::Arc::new(skel),
+            skel,
             material_keys,
             material_edges,
         }
@@ -135,6 +135,20 @@ impl ProjectileMeshBuild {
         self.insert_in(self.capture_ns, skel, Some(materials));
     }
 
+    /// [`Self::capture_unclassified`] for a model whose skeleton the walk already captured
+    /// (same stream, strings and materials): the one `ModelSkel` is shared rather than captured
+    /// again.
+    pub fn capture_shared(
+        &mut self,
+        skel: &std::sync::Arc<ModelSkel>,
+        materials: &MaterialCatalog,
+    ) {
+        if model_kind(&skel.name).is_some() {
+            return;
+        }
+        self.insert_in(self.capture_ns, skel.clone(), Some(materials));
+    }
+
     pub fn capture_t5(
         &mut self,
         stream: &fastfile_t5::ZoneStream<'_>,
@@ -187,10 +201,10 @@ impl ProjectileMeshBuild {
     fn insert_in(
         &mut self,
         ns: AssetNamespace,
-        skel: ModelSkel,
+        skel: impl Into<std::sync::Arc<ModelSkel>>,
         materials: Option<&MaterialCatalog>,
     ) {
-        let entry = ProjectileMeshEntry::from_skel(ns, skel, materials);
+        let entry = ProjectileMeshEntry::from_skel(ns, skel.into(), materials);
         let key = entry.key();
         if self.catalog.entries.contains_key(&key) {
             return;
