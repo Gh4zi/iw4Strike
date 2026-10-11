@@ -35,6 +35,18 @@ const MENU_CODE: [&str; 2] = ["mouse_over", "mouse_click"];
 
 const MATCH_CLOCK: &[&str] = &["ui_mp_timer_countdown"];
 
+/// The aliases `asset_audio::append_cs_weapon_sounds` / `append_css_weapon_sounds` add: guns,
+/// grenades, the bomb, player and radio sounds of CS 1.6 / Condition Zero and CS:S.
+const CS_PREPARE_PREFIXES: [&str; 7] = [
+    asset_audio::CS_SOUND_PREFIX,
+    asset_audio::CSS_SOUND_PREFIX,
+    asset_audio::CS_PLAYER_SOUND_PREFIX,
+    asset_audio::CS_RADIO_SOUND_PREFIX,
+    asset_audio::CS_EVENT_PREFIX,
+    asset_audio::CS_C4_PREFIX,
+    asset_audio::CS_DEATH_CRY,
+];
+
 #[derive(Default)]
 struct MatchRequests {
     required: HashSet<ClipKey>,
@@ -231,6 +243,16 @@ fn queue_match_clips(
         .chain(crate::weapon_lock::ALIASES.iter())
         .chain([&gamemode_iw4::damage_feedback::HIT_ALERT_ALIAS])
         .chain(MATCH_CLOCK)
+    {
+        aliases += 1;
+        request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
+    }
+    // Counter-Strike's own sounds, from the local installs: any gun can be bought or picked up
+    // mid-round, so all of them are ready before the match, as retail registers every weapon's
+    // sounds when the map loads rather than on first use.
+    for alias in bank
+        .0
+        .alias_names_with_prefixes(AssetNamespace::Iw4, &CS_PREPARE_PREFIXES)
     {
         aliases += 1;
         request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);

@@ -812,6 +812,21 @@ impl SoundCatalog {
             .cloned()
     }
 
+    /// Names of the aliases in `ns` that start with any of `prefixes`, in catalog order.
+    pub fn alias_names_with_prefixes<'a>(
+        &'a self,
+        ns: AssetNamespace,
+        prefixes: &'a [&'a str],
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        self.sounds
+            .iter()
+            .filter(move |sound| {
+                ns_of(sound.game) == ns
+                    && prefixes.iter().any(|prefix| sound.name.starts_with(prefix))
+            })
+            .map(|sound| sound.name.as_str())
+    }
+
     /// Register `clips` as the variants of a new IW4 alias `name`, each copying the first variant
     /// of `template` for everything but its sound (volume, distance, channel, flags). The clips come
     /// from outside the zones (Counter-Strike's own wave files). False when the template is missing

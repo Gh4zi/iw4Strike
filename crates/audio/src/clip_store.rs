@@ -569,7 +569,15 @@ impl MediaService {
         if requests.match_live && matches!(key, ClipKey::Loaded(_)) {
             requests.late_prepares = requests.late_prepares.saturating_add(1);
             LATE.fetch_add(1, Ordering::Relaxed);
-            diag::warn!(Audio, "audio: clip prepare after AudioReady ({key:?})");
+            let name = match &key {
+                ClipKey::Loaded(index) => self.0.bank.loaded.get(*index).map(|l| l.name.as_str()),
+                ClipKey::Streamed { .. } => None,
+            };
+            diag::warn!(
+                Audio,
+                "audio: clip prepare after AudioReady ({key:?} {})",
+                name.unwrap_or("?")
+            );
         }
         let job = ClipJob {
             key: key.clone(),
