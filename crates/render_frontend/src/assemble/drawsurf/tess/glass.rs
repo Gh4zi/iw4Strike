@@ -810,13 +810,37 @@ pub(crate) fn apply_cg_glass_tess(
     }
 }
 
+/// How far off its plane, on the eye's side, a pane's lighting is sampled. A pane's origin lies
+/// on the window, the boundary between the cells either side of it, so the pane took the light
+/// and reflection probe of whichever cell the point fell in: Terminal's indoor windows took the
+/// tarmac's probes, two different ones along one row (blue panes beside grey ones). Lit from
+/// the side it is seen from, a window matches the room around it.
+const GLASS_LIGHTING_SIDE_OFFSET: f32 = 4.0;
+
+fn glass_lighting_origin(draw: &GfxGlassMeshDraw, eye: Option<[f32; 3]>) -> [f32; 3] {
+    let Some(eye) = eye else {
+        return draw.origin;
+    };
+    let side: f32 = (0..3)
+        .map(|i| (eye[i] - draw.origin[i]) * draw.normal[i])
+        .sum();
+    let offset = if side < 0.0 {
+        -GLASS_LIGHTING_SIDE_OFFSET
+    } else {
+        GLASS_LIGHTING_SIDE_OFFSET
+    };
+    std::array::from_fn(|i| draw.origin[i] + draw.normal[i] * offset)
+}
+
 pub(crate) fn enqueue_glass_model_lighting(
     cache: Option<Res<WorldModelLightingCache>>,
     scene: Option<Res<WorldScene>>,
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<FpvLens>>,
+    camera_origin: Option<Res<render_fx::FxCameraOrigin>>,
     mut requests: ResMut<ModelLightingRequests>,
     mut plan: ResMut<GfxGlassMeshPlan>,
 ) {
+    let eye = camera_origin.map(|origin| origin.0);
     if !plan.built {
         return;
     }
@@ -841,13 +865,14 @@ pub(crate) fn enqueue_glass_model_lighting(
             draw.reflection_probe_index = 0;
             continue;
         }
+        let origin = glass_lighting_origin(draw, eye);
         let lookup_fallback = scene
             .as_ref()
-            .map(|s| s.dyn_atpoint_lookup_fallback(draw.origin, Some(box_half)))
+            .map(|s| s.dyn_atpoint_lookup_fallback(origin, Some(box_half)))
             .unwrap_or(lighting_iw4::LIGHT_GRID_ATPOINT_EMPTY_PRIMARY);
         draw.pending_lighting = Some(requests.request(ModelLightingRequest {
             owner,
-            origin: draw.origin,
+            origin,
             lookup_fallback,
         }));
     }
