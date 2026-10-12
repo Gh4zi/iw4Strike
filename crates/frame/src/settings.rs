@@ -44,8 +44,9 @@ pub struct GameSettings {
     pub mv_mode: String,
     /// How CS guns shoot when this game is the server (`shooting_mode`): csgo or cs16.
     pub shooting_mode: String,
-    /// How smoke grenades look when this game is the server (`smoke_mode`): csgo (particle
-    /// smoke, the default) or cs2 (volumetric, still a work in progress).
+    /// How smoke grenades look when this game is the server (`smoke_mode`): csgo (CS:GO's static
+    /// smoke, the default), mw2 (MW2's particle smoke) or cs2 (volumetric, still a work in
+    /// progress).
     pub smoke_mode: String,
     /// How finely this game draws CS2 smoke (`smoke_quality`, see [`SmokeQuality`]).
     pub smoke_quality: String,

@@ -156,6 +156,7 @@ pub(crate) fn register_combat_fx_systems(app: &mut App) {
         )
         .init_resource::<super::cs_smoke::CsSmokes>()
         .init_resource::<crate::assemble::drawsurf::tess::glass::GlassSmokes>()
+        .init_resource::<super::csgo_smoke::CsgoSmokes>()
         .add_observer(queue_weapon_fire_fx)
         .add_observer(eject_brass)
         .add_observer(explosion)
@@ -539,6 +540,7 @@ struct FxPresentEnv<'w> {
     atpoint: Res<'w, render_scene::DynAtPointLookup>,
     lod_skinned: Res<'w, LodRampSkinnedDvar>,
     staged_models: ResMut<'w, render_fx::FxModelStaging>,
+    csgo_smokes: ResMut<'w, super::csgo_smoke::CsgoSmokes>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -688,7 +690,7 @@ fn commit_fx_transaction(
         }
     };
     let FxGeneratedFrame {
-        out,
+        mut out,
         verts_gaps,
         mark_mesh,
         post_lights,
@@ -788,6 +790,20 @@ fn commit_fx_transaction(
         }
     }
 
+    // CS:GO's static smoke joins the effect sprites (`csgo_smoke`).
+    if let Some(material) = env.csgo_smokes.material_index(&runtime.catalog) {
+        let grid = scene.as_deref().and_then(|scene| scene.light_grid.as_ref());
+        let puffs = env.csgo_smokes.sprites(
+            host.0.msec_now,
+            cam_tf.translation.to_array(),
+            material,
+            |origin| {
+                grid.and_then(|grid| asset_model::sample_light_grid(&grid.view(), origin).ok())
+                    .map(|sample| sample.compressed)
+            },
+        );
+        out.sprites.extend(puffs);
+    }
     let mut batches: HashMap<(usize, bool), Vec<&FxSpriteInstance>> = HashMap::new();
     let sprites_total = out.sprites.len();
     for sprite in &out.sprites {
@@ -2583,6 +2599,7 @@ fn explosion(
     mut combat: ResMut<CombatFxDump>,
     mut smokes: ResMut<super::cs_smoke::CsSmokes>,
     mut glass_smokes: ResMut<crate::assemble::drawsurf::tess::glass::GlassSmokes>,
+    mut csgo_smokes: ResMut<super::csgo_smoke::CsgoSmokes>,
     fx_world: FxSceneAccess,
 ) {
     let msec = host.0.msec_now;
@@ -2596,8 +2613,13 @@ fn explosion(
     let smoke = cs_grenade == Some("smokegrenade");
     // CS2's smoke is the client's own cloud, not MW2's particle smoke.
     let volumetric = smoke && payload.event_parm == weapon_iw4::cs::CS_SMOKE_VOLUME_PARM;
+    // CS:GO's static cloud is the client's own sprites, not MW2's particle smoke either.
+    let static_cloud = smoke && payload.event_parm == weapon_iw4::cs::CS_SMOKE_STATIC_PARM;
     if volumetric {
         smokes.pop(payload.origin, msec);
+    } else if static_cloud {
+        csgo_smokes.pop(payload.origin, msec);
+        glass_smokes.pop(payload.origin, msec);
     } else if smoke {
         glass_smokes.pop(payload.origin, msec);
     } else if cs_grenade != Some("flashbang") {
@@ -2631,7 +2653,7 @@ fn explosion(
     } else {
         axis_from_hit_normal(payload.direction)
     };
-    if let Some(catalog) = catalog.as_deref().filter(|_| !volumetric) {
+    if let Some(catalog) = catalog.as_deref().filter(|_| !volumetric && !static_cloud) {
         elem_infos.0.sync(&catalog.0);
         let mut boom_played = cursor.boom_played;
         let table_ok = try_play_weapon_fx_at_origin(
@@ -2961,9 +2983,11 @@ fn clear_cs_smokes_for_killcam(
     _transition: On<net::KillcamFxTransition>,
     mut smokes: ResMut<super::cs_smoke::CsSmokes>,
     mut glass_smokes: ResMut<crate::assemble::drawsurf::tess::glass::GlassSmokes>,
+    mut csgo_smokes: ResMut<super::csgo_smoke::CsgoSmokes>,
 ) {
     smokes.clear();
     glass_smokes.clear();
+    csgo_smokes.clear();
 }
 
 /// Blood splattered on the walls and floor behind a player a bullet hits, as Counter-Strike does

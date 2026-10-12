@@ -1847,17 +1847,24 @@ pub const CS_SMOKE_REFIRE_PARM: i32 = 1;
 /// (`smoke_mode cs2`): each client fills the cloud through the map itself and fires no
 /// particle smoke, and the pop is not fired again.
 pub const CS_SMOKE_VOLUME_PARM: i32 = 2;
+/// `event_parm` of a CS smoke's pop under `smoke_mode csgo`: each client draws CS:GO's static
+/// cloud for the smoke's whole life from the pop alone, and the pop is not fired again.
+pub const CS_SMOKE_STATIC_PARM: i32 = 3;
 
-/// How a server's smoke grenades look (`smoke_mode`): the CS:GO-timed particle smoke (the
-/// default), or CS2's volumetric cloud that fills the space it pops in (a work in progress).
+/// How a server's smoke grenades look (`smoke_mode`): CS:GO's static cloud (the default), MW2's
+/// own particle smoke kept going as long as CS's, or CS2's volumetric cloud that fills the space
+/// it pops in (a work in progress).
 pub const SMOKE_CS2: u32 = 0;
-pub const SMOKE_CSGO: u32 = 1;
+pub const SMOKE_MW2: u32 = 1;
+pub const SMOKE_CSGO: u32 = 2;
 
 #[must_use]
 pub fn smoke_mode_from_name(name: &str) -> Option<u32> {
     let name = name.trim();
     if name.eq_ignore_ascii_case("cs2") {
         Some(SMOKE_CS2)
+    } else if name.eq_ignore_ascii_case("mw2") {
+        Some(SMOKE_MW2)
     } else if name.eq_ignore_ascii_case("csgo") {
         Some(SMOKE_CSGO)
     } else {

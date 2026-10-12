@@ -124,7 +124,9 @@ pub(crate) fn world_color_images(
     }
 
     for (asset_id, material) in scene.runtime_material_catalog.materials.iter().enumerate() {
-        if crate::adapters::motion_tracker::MATERIALS.contains(&material.name.as_str()) {
+        if crate::adapters::motion_tracker::MATERIALS.contains(&material.name.as_str())
+            || crate::adapters::fx::csgo_smoke::MATERIALS.contains(&material.name.as_str())
+        {
             stitch_fx_color_by_asset(
                 &mut colors_by_asset,
                 &mut keys_by_asset,

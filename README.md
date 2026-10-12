@@ -345,7 +345,7 @@ Your movement mode is saved, so you only set it once.
 | `viewmodel_fov <54-90>` | Gun position: bigger moves the gun further away (default `68`) |
 | `cl_righthand 1` / `0` | Gun in the right hand (default) or the left |
 | `cl_camera_anim 0` / `1` | Let the MW2 weapon animations move your view with a CS gun in hand (default `0`: no head shake on swaps and reloads) |
-| `smoke_mode csgo` / `cs2` | The server's smoke: CS:GO's particle smoke (the default) or CS2's volumetric smoke (work in progress, set by the host) |
+| `smoke_mode csgo` / `mw2` / `cs2` | The server's smoke: CS:GO's static smoke (the default), MW2's particle smoke, or CS2's volumetric smoke (work in progress, set by the host) |
 | `smoke_quality high` / `medium` / `low` | How finely you draw CS2 smoke, against what it costs |
 | `cl_wpn_sway 0` / `1` | Turn gun bob and sway off or on |
 | `cl_dynamiccrosshair 0` / `1` | Static crosshair, or one that opens when you move and shoot |
