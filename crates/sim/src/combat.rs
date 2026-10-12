@@ -2530,10 +2530,21 @@ pub(crate) fn phase_trace(
                         glass_hit.push(piece);
                         let at_time_ms = i32::try_from(tick.0.saturating_mul(crate::MATCH_TICK_MS))
                             .unwrap_or(i32::MAX);
+                        // MW2's glass cracks at 25 damage. CS's lighter guns (the Glock, the
+                        // Five-SeveN, the SMGs) fall under that past point blank, so a pane took
+                        // two of their bullets to crack. A CS bullet cracks the pane it hits;
+                        // breaking it still takes the damage MW2's glass needs.
+                        let glass_damage = if facts.cs_weapon != 0 {
+                            (scaled as u32).max(u32::from(
+                                crate::world_objects::GLASS_DAMAGE_TO_WEAKEN,
+                            ))
+                        } else {
+                            scaled as u32
+                        };
                         let mut holdrand = *world.stuck_holdrand_mut();
                         world.world_objects_mut().apply_glass_hit(
                             piece,
-                            scaled as u32,
+                            glass_damage,
                             at_time_ms,
                             segment.end,
                             em.direction,
