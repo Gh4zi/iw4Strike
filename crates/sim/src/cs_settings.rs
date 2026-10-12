@@ -58,3 +58,8 @@ pub(crate) const DESTRUCTIBLE_TARGETNAMES: [&str; 5] = [
     "explodable_barrel",
     "flammable_crate",
 ];
+
+/// Map entities MW2's scripts break that have no destructible targetname, by model: the
+/// vending machines `common_scripts/_dynamic_world` wrecks (sparks, a damaged model, a burst of
+/// soda cans), on Terminal among others.
+pub(crate) const DESTRUCTIBLE_MODEL_PREFIXES: [&str; 1] = ["com_vending"];

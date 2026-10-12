@@ -228,13 +228,25 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
     };
     if !crate::cs_settings::destructibles_enabled() {
         let mut runtime = world.resource_mut::<Runtime>();
-        if let Value::String(name) = runtime.object_field(object, "targetname")
-            && crate::cs_settings::DESTRUCTIBLE_TARGETNAMES
+        let by_name = matches!(
+            runtime.object_field(object, "targetname"),
+            Value::String(name) if crate::cs_settings::DESTRUCTIBLE_TARGETNAMES
                 .iter()
                 .any(|t| name.eq_ignore_ascii_case(t))
-        {
-            // Destructibles off: the car or barrel stops the hit but takes no damage.
-            diag::debug!(Sim, "destructibles off: {} took no {} damage", name, hit.amount);
+        );
+        // The vending machines `_dynamic_world` breaks carry no destructible targetname.
+        let by_model = matches!(
+            runtime.object_field(object, "model"),
+            Value::String(model) if crate::cs_settings::DESTRUCTIBLE_MODEL_PREFIXES
+                .iter()
+                .any(|prefix| model
+                    .get(..prefix.len())
+                    .is_some_and(|head| head.eq_ignore_ascii_case(prefix)))
+        );
+        if by_name || by_model {
+            // Destructibles off: the car, barrel or vending machine stops the hit but takes no
+            // damage.
+            diag::debug!(Sim, "destructibles off: an entity took no {} damage", hit.amount);
             return true;
         }
     }
