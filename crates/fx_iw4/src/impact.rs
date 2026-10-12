@@ -88,6 +88,10 @@ pub const fn flesh_hit_flags(head: bool, fatal: bool) -> u32 {
     (head as u32) | ((fatal as u32) << 1)
 }
 
+/// Counter-Strike fork: a flesh hit's flag for a head hit that met a helmet (the victim wore a
+/// helmet over kevlar), which rings and sparks.
+pub const FLESH_HIT_HELMET: u32 = 1 << 2;
+
 #[inline]
 pub const fn surface_type_index(surface_flags: u32) -> usize {
     ((surface_flags >> 20) & 0x1f) as usize

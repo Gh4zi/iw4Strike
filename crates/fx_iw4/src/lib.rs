@@ -180,7 +180,7 @@ pub use gravity::{
     FX_GRAVITY, elem_gravity_accel_z, elem_gravity_accel_z_sampled, sample_gravity_authored,
 };
 pub use impact::{
-    FX_IMPACT_ENTRY_SIZE, FX_IMPACT_EXIT_SURFACE_FLAG, FX_IMPACT_FLESH_COUNT,
+    FLESH_HIT_HELMET, FX_IMPACT_ENTRY_SIZE, FX_IMPACT_EXIT_SURFACE_FLAG, FX_IMPACT_FLESH_COUNT,
     FX_IMPACT_NONFLESH_COUNT, FX_IMPACT_TABLE_ROWS, FX_SURF_TYPE_FLESH, FxImpactEntry,
     FxImpactTable, ImpactType, flesh_effect_index, flesh_hit_flags, impact_entry_cell_offset,
     impact_table_row, surface_type_index,

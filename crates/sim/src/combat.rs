@@ -2357,6 +2357,12 @@ pub(crate) fn phase_trace(
                 }) = segment.collider
             {
                 let head = hud_iw4::obituary_is_headshot(hitloc);
+                // CS: a head hit on a helmet (worn over kevlar) rings and sparks; read before the
+                // hit wears the vest out.
+                let helmet = head
+                    && world
+                        .player(victim)
+                        .is_some_and(|ps| ps.cs_helmet != 0 && ps.cs_armor > 0);
                 let mut fatal = false;
                 if world.publishes_snapshot()
                     && scaled > 0
@@ -2384,6 +2390,9 @@ pub(crate) fn phase_trace(
                 }
                 if hitloc != crate::shield::HITLOC {
                     flesh_flags = fx_iw4::flesh_hit_flags(head, fatal) as u8;
+                    if helmet {
+                        flesh_flags |= fx_iw4::FLESH_HIT_HELMET as u8;
+                    }
                 }
             }
             let payload = crate::EntityEventPayload {

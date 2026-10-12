@@ -3005,6 +3005,8 @@ fn clear_cs_smokes_for_killcam(
 /// hit, up to 172 units past the wound; each that meets the world leaves MW2's blood splatter.
 const BLEED_DISTANCE: f32 = 172.0;
 const BLEED_SPLAT_FX: &str = "impacts/flesh_hit_splat";
+/// MW2's metal surface type, whose small-bullet impact sparks off a helmet.
+const SURF_TYPE_METAL: usize = 13;
 
 /// How many traces a hit of `damage` makes and how far each strays (CS's damage bands).
 fn bleed_traces(damage: f32) -> (u32, f32) {
@@ -3045,6 +3047,7 @@ fn bleed_noise(correlation: u32, pellet: u32, trace: u32, axis: u32) -> f32 {
 /// A bullet's entry into something: where it came from and went in, what it met, and which
 /// shot and pellet it was.
 struct BleedHit {
+    attacker: i32,
     start: [f32; 3],
     end: [f32; 3],
     surf_type: u8,
@@ -3066,13 +3069,23 @@ fn bleed_on_world(
     mut host: ResMut<HostFxSystem>,
     mut cursor: ResMut<FxJournalCursor>,
     fx_world: FxSceneAccess,
+    (local, impact_fx, mut sounds): (
+        Res<LocalPresentClient>,
+        Option<Res<PreparedImpactFx>>,
+        MessageWriter<audio::AliasCommand>,
+    ),
 ) {
     let (Some(world), Some(catalog)) = (clip.0.as_ref(), catalog) else {
         hits.clear();
         return;
     };
+    let sparks = impact_fx.as_deref().and_then(|fx| fx.0.as_ref()).and_then(|table| {
+        let row = table.impact_row(fx_iw4::ImpactType::BulletSmall as i32, false)?;
+        table.effect_name(row, SURF_TYPE_METAL, None)
+    });
     // Rifles' and pistols' hits come as events, shotguns' pellets as records.
     let bullets = hits.read().map(|hit| BleedHit {
+        attacker: hit.0.attacker_entity_num,
         start: hit.0.origin2,
         end: hit.0.origin,
         surf_type: hit.0.surf_type,
@@ -3083,6 +3096,7 @@ fn bleed_on_world(
         pellet: hit.0.pellet.into(),
     });
     let pellets = pellets.0.iter().map(|p| BleedHit {
+        attacker: p.attacker,
         start: p.start,
         end: p.end,
         surf_type: p.surf_type,
@@ -3105,6 +3119,45 @@ fn bleed_on_world(
         }
         let dir = travel.map(|v| v / length);
         let head = payload.flesh_flags & fx_iw4::flesh_hit_flags(true, false) != 0;
+        if head {
+            // CS:GO: a helmet rings and sparks (`Player.DamageHelmet`, `impact_helmet_headshot`),
+            // a bare head cracks (`Player.DamageHeadShot`); the shooter hears the feedback version
+            // wherever they are.
+            let helmet = payload.flesh_flags & fx_iw4::FLESH_HIT_HELMET != 0;
+            let entry = if helmet {
+                "player.damagehelmet"
+            } else {
+                "player.damageheadshot"
+            };
+            let shooter = payload.attacker == local.0.0 as i32;
+            let alias = if shooter {
+                format!("{entry}feedback{}", asset_audio::CS_SOUND_PLAYER_SUFFIX)
+            } else {
+                entry.to_owned()
+            };
+            sounds.write(audio::AliasCommand::Play(audio::PlayAlias {
+                event: None,
+                namespace: asset_core::AssetNamespace::Iw4,
+                alias: format!("{}{alias}", asset_audio::CSGO_SOUND_PREFIX),
+                fallback: Some(format!("{}{alias}", asset_audio::CSS_SOUND_PREFIX)),
+                origin_inches: (!shooter).then_some(payload.end),
+                snd_ent: shooter.then_some(audio::SND_ENT_LOCAL),
+            }));
+            if helmet && sparks.is_some() {
+                let mut played = 0;
+                try_play_weapon_fx_at_origin(
+                    &mut host.0,
+                    &catalog.0,
+                    &mut elem_infos.0,
+                    sparks,
+                    payload.end,
+                    fx::axis_from_hit_normal(dir.map(|v| -v)),
+                    &mut played,
+                    fx_world.view().as_ref().map(|s| s as &dyn FxScene),
+                );
+                cursor.impact_played = cursor.impact_played.saturating_add(played);
+            }
+        }
         let (count, noise) =
             bleed_traces(bleed_damage(weapons.as_deref(), payload.weapon, head));
         let previous_mark_entity = host.0.spawn_mark_entity;
