@@ -2411,15 +2411,9 @@ impl SimState {
                 None,
             )
         };
-        if self.content.data.player_anim_tree.is_none() || legs == 0 {
-            return bind();
-        }
-        let Some(slot) = self.player_anim_trees.get(&id.0) else {
+        let Some(slot) = self.player_pose_slot(id, ps) else {
             return bind();
         };
-        if slot.leaf != legs {
-            return bind();
-        }
         let state = slot.runtime.states().get(legs as usize);
         let node_time = state.map(|s| s.time);
         let goal_weight = state.map(|s| s.goal_weight);
@@ -2441,6 +2435,19 @@ impl SimState {
             node_time,
             goal_weight,
         )
+    }
+
+    /// The anim tree a player's body poses from, `None` when it takes the bind pose.
+    fn player_pose_slot(&self, id: ClientId, ps: &PlayerState) -> Option<&PlayerAnimTreeSlot> {
+        let legs = PlayerAnimValue::from_raw((ps.legs_anim as u16) & PLAYER_ANIM_RAW_MASK)
+            .map(PlayerAnimValue::effective_index)
+            .unwrap_or(0);
+        if self.content.data.player_anim_tree.is_none() || legs == 0 {
+            return None;
+        }
+        self.player_anim_trees
+            .get(&id.0)
+            .filter(|slot| slot.leaf == legs)
     }
 
     /// A player's hit volumes. The attached head model's own bones (face, jaw, brows) carry no
@@ -2565,7 +2572,6 @@ impl SimState {
                 id.0
             ));
         }
-        let (request, _, _, _, _, _, _) = self.player_dobj_request(id, ps);
         let input = player_controller_input(ps, self.cs_hold_pose(id, ps));
         let controller = move |dobj: &xmodel_runtime::DObj,
                                _: &anim_iw4::PartBits,
@@ -2592,6 +2598,7 @@ impl SimState {
             (Some(_), None) | (None, _) => vec![(cap.as_ref(), None)],
         };
         if let Some(shield) = self.client_meta(id).and_then(|meta| meta.shield) {
+            let (request, _, _, _, _, _, _) = self.player_dobj_request(id, ps);
             let capability = self
                 .content
                 .data
@@ -2668,19 +2675,25 @@ impl SimState {
             return Ok((bones, Some(normal)));
         }
         if let Some(slot) = self.player_dobjs.get(&id.0) {
-            // Only the bones the hit volumes, the controller and the hold stance read.
-            let mut request = request;
-            request.requested_parts = Some(xmodel_runtime::collision_parts(
+            // Posed from the player's own tree, and only the bones the hit volumes, the
+            // controller and the hold stance read.
+            let parts = xmodel_runtime::collision_parts(
                 &slot.dobj,
                 &models,
                 &xmodel_runtime::PLAYER_POSE_CONTROL_BONES,
-            ));
-            return xmodel_runtime::collision_dobj_with_controller(
-                &slot.dobj, &models, &request, world, controller,
+            );
+            return xmodel_runtime::collision_dobj_tree_with_controller(
+                &slot.dobj,
+                &models,
+                self.player_pose_slot(id, ps).map(|slot| &slot.runtime),
+                Some(parts),
+                world,
+                controller,
             )
             .map(|bones| (bones, None))
             .map_err(|e| format!("{e:?}"));
         }
+        let (request, _, _, _, _, _, _) = self.player_dobj_request(id, ps);
         xmodel_runtime::collision_models_with_controller(&models, &request, world, controller)
             .map(|bones| (bones, None))
             .map_err(|e| format!("{e:?}"))

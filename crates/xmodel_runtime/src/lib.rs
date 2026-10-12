@@ -27,8 +27,9 @@ pub use hold_stance::{
 pub use retained::{
     BoneCollision, CollSurfCollision, CollTri, CollisionBone, DObjPoseRequest, MaterializeError,
     ModelMovementBrush, PLAYER_POSE_CONTROL_BONES, RetainedModelCapability,
-    collision_bone_from_local_box, collision_dobj_with_controller, collision_models,
-    collision_models_with_controller, collision_parts, pose_dobj, pose_dobj_with_controller,
+    collision_bone_from_local_box, collision_dobj_tree_with_controller,
+    collision_dobj_with_controller, collision_models, collision_models_with_controller,
+    collision_parts, pose_dobj, pose_dobj_tree_with_controller, pose_dobj_with_controller,
 };
 pub use semantic::{
     DObjCompositionDescriptor, DObjModelDescriptor, DObjSemanticState, SemanticResolveError,

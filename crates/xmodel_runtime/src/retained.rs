@@ -335,10 +335,31 @@ pub fn collision_dobj_with_controller(
     world_from_model: Mat4,
     controller: impl FnOnce(&DObj, &PartBits, &mut [Local]),
 ) -> Result<Vec<CollisionBone>, MaterializeError> {
+    collision_dobj_tree_with_controller(
+        dobj,
+        models,
+        request.tree.as_ref(),
+        request.requested_parts,
+        world_from_model,
+        controller,
+    )
+}
+
+/// `collision_dobj_with_controller` posed from a borrowed anim tree, so a caller that keeps
+/// the tree need not copy it into a request.
+pub fn collision_dobj_tree_with_controller(
+    dobj: &DObj,
+    models: &[(&RetainedModelCapability, Option<Attach>)],
+    tree: Option<&XAnimTreeRuntime>,
+    requested_parts: Option<PartBits>,
+    world_from_model: Mat4,
+    controller: impl FnOnce(&DObj, &PartBits, &mut [Local]),
+) -> Result<Vec<CollisionBone>, MaterializeError> {
     if models.is_empty() {
         return Ok(Vec::new());
     }
-    let posed = pose_dobj_with_controller(dobj, request, world_from_model, controller)?;
+    let posed =
+        pose_dobj_tree_with_controller(dobj, tree, requested_parts, world_from_model, controller)?;
     let mut bones = Vec::new();
     for (slot, (model, _)) in dobj.models.iter().zip(models.iter()) {
         for local in 0..slot.bone_count {
@@ -533,8 +554,25 @@ pub fn pose_dobj_with_controller(
     world_from_model: Mat4,
     controller: impl FnOnce(&DObj, &PartBits, &mut [Local]),
 ) -> Result<Vec<Mat4>, MaterializeError> {
-    let requested = request.requested_parts.unwrap_or_else(|| dobj.all_parts());
-    let mut locals = if let Some(tree) = &request.tree {
+    pose_dobj_tree_with_controller(
+        dobj,
+        request.tree.as_ref(),
+        request.requested_parts,
+        world_from_model,
+        controller,
+    )
+}
+
+/// `pose_dobj_with_controller` from a borrowed anim tree.
+pub fn pose_dobj_tree_with_controller(
+    dobj: &DObj,
+    tree: Option<&XAnimTreeRuntime>,
+    requested_parts: Option<PartBits>,
+    world_from_model: Mat4,
+    controller: impl FnOnce(&DObj, &PartBits, &mut [Local]),
+) -> Result<Vec<Mat4>, MaterializeError> {
+    let requested = requested_parts.unwrap_or_else(|| dobj.all_parts());
+    let mut locals = if let Some(tree) = tree {
         let (leaves, layers) = tree.active_pose()?;
         let mut locals = locals_from_leaves(dobj, &leaves, &requested)?;
         apply_additive_layers(dobj, &requested, &mut locals, &layers)?;
