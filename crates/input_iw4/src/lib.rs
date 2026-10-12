@@ -273,6 +273,20 @@ pub struct ClientInput {
     pub walk_key: bool,
 }
 
+impl ClientInput {
+    /// Every button let go and every queued action dropped, keeping the key bindings and the
+    /// rules' settings (hold crouch, walk key).
+    #[must_use]
+    pub fn released(&self) -> Self {
+        Self {
+            keys: self.keys,
+            hold_crouch: self.hold_crouch,
+            walk_key: self.walk_key,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for ClientInput {
     fn default() -> Self {
         Self {
@@ -679,6 +693,19 @@ mod tests {
             let (bits, _) = sample_move(&mut client, 1000, 10);
             assert_eq!(bits & buttons::SPRINT != 0, walk_key, "walk key {walk_key}");
         }
+    }
+
+    #[test]
+    fn releasing_the_keys_keeps_the_cs_rules() {
+        let mut client = ClientInput {
+            hold_crouch: true,
+            walk_key: true,
+            ..ClientInput::default()
+        };
+        client.keys[KEY].binding = command_id_from_name("+back").expect("known command");
+        let released = client.released();
+        assert!(released.hold_crouch && released.walk_key);
+        assert_eq!(released.keys[KEY].binding, client.keys[KEY].binding);
     }
 
     #[test]

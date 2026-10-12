@@ -457,12 +457,8 @@ fn publish_client_action_input(
                 key_event(&mut out.client, key_num, false, now, frame);
             }
         }
-        let keys = out.client.keys;
         out.scripted_ids.clear();
-        out.client = input_iw4::ClientInput {
-            keys,
-            ..Default::default()
-        };
+        out.client = out.client.released();
         // The CS buy window holds gameplay input, but its own key still closes it.
         if buy_captures
             && !console.open
