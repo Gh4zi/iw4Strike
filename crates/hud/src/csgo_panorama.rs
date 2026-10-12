@@ -30,12 +30,172 @@ fn sublayout(tag: &str) -> Option<&'static str> {
         "csgohudweaponpanel" => "file://{resources}/layout/hud/hudweaponpanel.xml",
         "csgohudteamcounter" => "file://{resources}/layout/hud/hudteamcounter.xml",
         "csgohuddeathnotice" => "file://{resources}/layout/hud/huddeathnotice.xml",
+        "csgobuymenu" => "file://{resources}/layout/buymenu.xml",
         _ => return None,
     })
 }
 
 #[derive(Component)]
 pub(crate) struct CsgoPanoramaRoot;
+
+/// The buy menu's wheels' categories, in CS:GO's order (its pages' names).
+const BUY_CATEGORIES: [(&str, &str); 6] = [
+    ("pistols", "PISTOLS"),
+    ("heavy", "HEAVY"),
+    ("smgs", "SMGS"),
+    ("rifles", "RIFLES"),
+    ("gear", "GEAR"),
+    ("grenades", "GRENADES"),
+];
+
+/// One of the buy menu's radial wheels: its panel and its wedges (the buttons).
+struct Wheel {
+    panel: usize,
+    wedges: Vec<usize>,
+    /// Where its first wedge starts (`CCSGO_RadialSelector::m_angStart`): -150 degrees for six
+    /// wedges, -135 for four.
+    start: f32,
+}
+
+/// The buy menu's wheels: the categories and each category's items.
+struct BuyWheels {
+    categories: Wheel,
+    items: Vec<Wheel>,
+}
+
+/// Builds CS:GO's buy wheels as `CCSGO_BuyMenu::CreateBuyWheels` does: a six-wedge wheel of
+/// categories and, per category, a wheel of its items (four wedges when it holds four).
+fn build_buy_wheels(doc: &mut panorama::Doc, files: &panorama::Files) -> Option<BuyWheels> {
+    let container = doc.find("BuyWheelContainer")?;
+    let mut wheel = |doc: &mut panorama::Doc, wedges: usize| -> Option<Wheel> {
+        let (snippet, start) = if wedges > 4 {
+            ("Radial_SixSlot", -150.0)
+        } else {
+            ("Radial_FourSlot", -135.0)
+        };
+        let panel = doc.add_snippet(files, container, snippet)?;
+        doc.set_visible(panel, false);
+        Some(Wheel {
+            panel,
+            wedges: doc.children(panel),
+            start,
+        })
+    };
+    let categories = wheel(doc, 6)?;
+    for (i, (_, name)) in BUY_CATEGORIES.iter().enumerate() {
+        let button = *categories.wedges.get(i)?;
+        let contents = doc.find_in(button, "Contents")?;
+        doc.load_snippet(files, contents, "CategoryWedge");
+        doc.set_class(button, "no-hover", false);
+        if let Some(label) = doc.find_in(contents, "CategoryName") {
+            doc.set_text(label, name);
+            doc.set_class(label, "buywheel-category__label--UPPERCASE", true);
+        }
+        if let Some(label) = doc.find_in(contents, "WedgeKeybinding") {
+            doc.set_text(label, &(i + 1).to_string());
+        }
+    }
+    let mut items = Vec::new();
+    for (page, _) in BUY_CATEGORIES {
+        let count = crate::cs_buymenu::csgo_items(page, true).map_or(0, |(_, slots)| slots.len());
+        let w = wheel(doc, count)?;
+        for (i, &button) in w.wedges.iter().enumerate().take(count) {
+            let contents = doc.find_in(button, "Contents")?;
+            doc.load_snippet(files, contents, "ItemWedge");
+            if let Some(label) = doc.find_in(contents, "WedgeKeybinding") {
+                doc.set_text(label, &(i + 1).to_string());
+            }
+        }
+        items.push(w);
+    }
+    Some(BuyWheels { categories, items })
+}
+
+/// The item details CS:GO's buy menu shows for a hovered gun (`CCSGO_BuyMenu` with
+/// `Helper_GetWeaponAccuracy` and `GetEffectiveRangeRawValue`): its name, price, magazine and
+/// reserve, kill award, and the damage, fire rate, handling, accurate range and armour
+/// penetration bars.
+fn show_item_details(doc: &mut panorama::Doc, info: usize, item: &str) {
+    use weapon_iw4::cs;
+    doc.set_var(info, "item_name", crate::cs_buymenu::csgo_item_name(item));
+    doc.set_var(info, "cost", &cs::buy_price(item).unwrap_or(0).to_string());
+    let gun = cs::cs_weapon_by_name(item);
+    let stats = doc.find_in(info, "WeaponStats");
+    if let Some(stats) = stats {
+        doc.set_visible(stats, gun.is_some());
+    }
+    let Some(gun) = gun else {
+        return;
+    };
+    let index = cs::CS_WEAPONS
+        .iter()
+        .position(|w| w.name == gun.name)
+        .map_or(0, |i| i as u8 + 1);
+    let award = cs::kill_award(index);
+    doc.set_var(info, "ammo_per_mag", &gun.clip.to_string());
+    doc.set_var(info, "ammo_total", &gun.reserve.to_string());
+    doc.set_var(info, "kill_reward", &award.to_string());
+    doc.set_var(info, "kill_reward_pct", &(award * 100 / 300).to_string());
+    let damage = gun.damage * gun.pellets.max(1) as f32;
+    let fire_rate = if gun.cycle > 0.0 { 1.0 / gun.cycle } else { 0.0 };
+    let sniper = gun.scope_overlay;
+    let mode = usize::from(sniper);
+    let (handling, range) = weapon_iw4::csgo::csgo_gun(gun.name).map_or((0.0, 0.0), |g| {
+        let magnitude = g.recoil_magnitude[mode] * (1.0 + (g.recoil_magnitude_variance[mode] / 30.0).min(1.0));
+        let angle = g.recoil_angle[mode] * (1.0 + (g.recoil_angle_variance[mode] / 180.0).min(1.0));
+        let handling = ((1.0 - (magnitude + angle - 5.0) / 80.0) * 100.0).max(1.0).floor();
+        let spread = (g.inaccuracy_stand[mode] + g.spread[mode]) * 0.001;
+        // A 12-inch plate's radius over the spread, in metres, as a share of 90 m.
+        let metres = if spread > 1e-5 { 6.0 / spread * 0.0254 } else { 1e6 };
+        (handling, ((metres / 90.0).min(1.0) * 100.0).floor())
+    });
+    let armor = (100.0 * cs::armor_penetration(index)).floor();
+    for (var, value) in [
+        ("damage", damage),
+        ("fire_rate", fire_rate),
+        ("accuracy", handling),
+        ("range", range),
+        ("armor_pen", armor),
+    ] {
+        doc.set_var(info, var, &(value as i32).to_string());
+    }
+    for (id, value) in [
+        ("DmgProgress", damage),
+        ("FireRateProgress", fire_rate),
+        ("AccuracyProgress", handling),
+        ("RangeProgress", range),
+        ("ArmorPenProgress", armor),
+    ] {
+        if let Some(bar) = doc.find_in(info, id) {
+            let min = doc.attr(bar, "min").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+            let max = doc.attr(bar, "max").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+            doc.set_value(bar, (value - min) / (max - min).max(1e-3));
+        }
+    }
+}
+
+/// The equipment icon of what a buy name sells (`icons/equipment/<name>.svg`).
+fn buy_icon(item: &str) -> &str {
+    match item {
+        "vest" => "kevlar",
+        "vesthelm" => "armor_helmet",
+        "defuser" => "defuser",
+        "flashbang" | "hegrenade" | "smokegrenade" => item,
+        "m4a1" => "m4a1_silencer",
+        "m4a4" => "m4a1",
+        "usp" => "usp_silencer",
+        "p2000" => "hkp2000",
+        "p228" => "p250",
+        "m3" => "nova",
+        "tmp" => "mp9",
+        "mp5" => "mp5sd",
+        "galil" => "galilar",
+        "sg552" => "sg556",
+        "scout" => "ssg08",
+        "sg550" => "scar20",
+        other => other,
+    }
+}
 
 /// A death notice on screen: its panel, when it came and how long it stays.
 struct Notice {
@@ -57,6 +217,7 @@ pub(crate) struct CsgoPanorama {
     notices: Vec<Notice>,
     /// The newest kill feed line already shown (its time).
     feed_seen: i32,
+    buy: Option<BuyWheels>,
 }
 
 /// Reads CS:GO's HUD; `None` without CS:GO (or its packed UI and fonts).
@@ -92,8 +253,26 @@ pub(crate) fn load(fonts: &mut Assets<Font>) -> Option<CsgoPanorama> {
         doc.set_class(counter, "TeamCounter__Align--Top", true);
         doc.set_class(counter, "TeamCounter__Flow--Down", true);
     }
+    let buy = build_buy_wheels(&mut doc, &files);
+    if let Some(menu) = doc.find("BuyMenu") {
+        // Its bar's keys (`{v:csgo_bind:…}`) are this game's binds; no buying for teammates.
+        for (bind, key) in [("bind_cancelselect", "ESC"), ("bind_autobuy", "F1"), ("bind_rebuy", "F2")]
+        {
+            doc.set_var(menu, bind, key);
+        }
+        for id in ["BuyForTeammateLabel", "BuyForTeammateHintLabel"] {
+            if let Some(panel) = doc.find_in(menu, id) {
+                doc.set_visible(panel, false);
+            }
+        }
+        if let Some(info) = doc.find_in(menu, "PreviewPanelContainer") {
+            doc.set_class(info, "preview-container", true);
+            doc.set_class(info, "preview-container--hidden", true);
+        }
+    }
     Some(CsgoPanorama {
         active: true,
+        buy,
         files: Some(files),
         fonts: font_set,
         doc: Some(doc),
@@ -148,6 +327,12 @@ pub(crate) fn update_csgo_panorama(
     view: Res<ViewSubject>,
     feed: Res<crate::cs_hud::CsKillFeed>,
     (time, mut images): (Res<Time>, ResMut<Assets<Image>>),
+    (menu, mut wheel_input, windows, nodes): (
+        Res<crate::cs_buymenu::CsBuyMenu>,
+        ResMut<crate::cs_buymenu::CsgoBuyWheel>,
+        Query<&Window, With<bevy::window::PrimaryWindow>>,
+        Query<(&ComputedNode, &bevy::ui::UiGlobalTransform)>,
+    ),
 ) {
     if !hud.active || !crate::cs_hud::replaces_mw2_hud() || !surface.is_ready() {
         return;
@@ -364,6 +549,104 @@ pub(crate) fn update_csgo_panorama(
             }
             true
         });
+    }
+
+    // The buy menu (`CCSGO_BuyMenu`): the category wheel, or the open category's items; the
+    // wedge under the mouse found by its angle (`CCSGO_RadialSelector`).
+    wheel_input.drawn = false;
+    wheel_input.hover = None;
+    if let (Some(buy), Some(menu_panel)) = (state.buy.as_ref(), doc.find("BuyMenu")) {
+        let page = menu.csgo_page().map(str::to_owned);
+        doc.set_visible(menu_panel, page.is_some());
+        wheel_input.drawn = true;
+        let mut parts = page.as_deref().unwrap_or("").split(':').skip(1);
+        let (side, page_name) = (parts.next().unwrap_or("ct"), parts.next().unwrap_or(""));
+        let terrorist = side == "t";
+        if let Some(logo) = doc.find_in(menu_panel, "TeamLogo") {
+            let name = if terrorist { "t_logo" } else { "ct_logo" };
+            doc.set_image(logo, Some(&format!("file://{{images}}/icons/{name}.svg")));
+        }
+        let money = living.map_or(0, |ps| ps.cs_money as i32);
+        doc.set_visible(buy.categories.panel, page.is_some() && page_name == "main");
+        let mut open = (page_name == "main").then_some((&buy.categories, None));
+        for (w, (name, _)) in buy.items.iter().zip(BUY_CATEGORIES) {
+            let shown = page.is_some() && page_name == name;
+            doc.set_visible(w.panel, shown);
+            let slots = crate::cs_buymenu::csgo_items(name, terrorist).map(|(_, s)| s);
+            for (i, &button) in w.wedges.iter().enumerate() {
+                let item = slots.and_then(|s| s.get(i).copied().flatten());
+                doc.set_class(button, "no-hover", item.is_none());
+                let Some(contents) = doc.find_in(button, "Contents") else {
+                    continue;
+                };
+                let price = item.and_then(weapon_iw4::cs::buy_price);
+                if let Some(label) = doc.find_in(contents, "ItemName") {
+                    doc.set_text(label, item.map_or("", crate::cs_buymenu::csgo_item_name));
+                }
+                if let Some(label) = doc.find_in(contents, "ItemPrice") {
+                    doc.set_text(label, &price.map_or_else(String::new, |p| format!("${p}")));
+                }
+                if let Some(icon) = doc.find_in(contents, "ItemIcon") {
+                    let src = item.map(|i| format!("file://{{images}}/icons/equipment/{}.svg", buy_icon(i)));
+                    doc.set_image(icon, src.as_deref());
+                }
+                doc.set_class(button, "buywheel-cant-afford", price.is_some_and(|p| money < p));
+            }
+            if shown {
+                open = Some((w, slots));
+            }
+        }
+        // Hover: inside the wheel's circle, the wedge the mouse's angle falls in.
+        let cursor = windows.single().ok().and_then(Window::cursor_position);
+        let mut hovered = None;
+        if let Some((w, slots)) = open
+            && let Some(cursor) = cursor
+            && let Some((node, transform)) = doc.entity(w.panel).and_then(|e| nodes.get(e).ok())
+        {
+            let inverse = node.inverse_scale_factor();
+            let center = transform.translation * inverse;
+            let size = node.size() * inverse;
+            let radius = size.x.min(size.y) * 0.5;
+            let d = cursor - center;
+            if d.length_squared() < radius * radius {
+                let mut angle = d.y.atan2(d.x).to_degrees() - w.start;
+                if angle < 0.0 {
+                    angle += 360.0;
+                }
+                let index = (angle % 360.0 / (360.0 / w.wedges.len() as f32)) as usize;
+                let filled = slots.is_none_or(|s| s.get(index).copied().flatten().is_some());
+                if index < w.wedges.len() && filled {
+                    hovered = Some(index);
+                }
+            }
+        }
+        for w in std::iter::once(&buy.categories).chain(buy.items.iter()) {
+            let current = open.is_some_and(|(o, _)| o.panel == w.panel);
+            for (i, &button) in w.wedges.iter().enumerate() {
+                doc.set_class(button, "radial-select-hover", current && hovered == Some(i));
+            }
+        }
+        wheel_input.hover = hovered.map(|i| i as u8 + 1);
+        // The item details for the hovered item (the last one stays up, as in CS:GO); hidden
+        // over the categories.
+        if let Some(info) = doc.find_in(menu_panel, "PreviewPanelContainer") {
+            let item = open.and_then(|(_, slots)| slots).zip(hovered).and_then(|(slots, i)| {
+                slots.get(i).copied().flatten()
+            });
+            if let Some(item) = item {
+                doc.set_class(info, "preview-container--hidden", false);
+                doc.set_class(info, "preview-container--details", true);
+                show_item_details(doc, info, item);
+            } else if page_name == "main" || page.is_none() {
+                doc.set_class(info, "preview-container--details", false);
+                doc.set_class(info, "preview-container--hidden", true);
+            }
+        }
+        // Buy time left: buying closes 20 s into the round (`mp_buytime`).
+        if let Some(countdown) = doc.find_in(menu_panel, "Countdown") {
+            let left = crate::cs_hud::round_seconds_left(snap).map_or(0, |s| (s - 95).max(0));
+            doc.set_var(countdown, "duration", &clock(left));
+        }
     }
 
     doc.sync(root, &mut commands, files, &mut images, &state.fonts);

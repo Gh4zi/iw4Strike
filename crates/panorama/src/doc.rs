@@ -23,6 +23,7 @@ const DEFAULT_FONT_SIZE: f32 = 16.0;
 struct Panel {
     tag: String,
     id: Option<String>,
+    attrs: Vec<(String, String)>,
     classes: Vec<String>,
     inline: Vec<(String, String)>,
     overrides: Vec<(String, String)>,
@@ -238,6 +239,7 @@ impl Doc {
         classes.extend(attr("class").unwrap_or("").split_whitespace().map(str::to_owned));
         let size = |key: &str| attr(key).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0).max(0) as u32;
         let panel = Panel {
+            attrs: attrs.clone(),
             tag: element.name.clone(),
             id: attr("id").filter(|id| !id.is_empty()).map(str::to_owned),
             classes,
@@ -322,6 +324,16 @@ impl Doc {
             .copied()
             .filter(|&c| !self.panels[c].removed)
             .collect()
+    }
+
+    /// A layout attribute of `panel` (`min`, `max` of a progress bar…).
+    #[must_use]
+    pub fn attr(&self, panel: usize, key: &str) -> Option<&str> {
+        self.panels[panel]
+            .attrs
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.as_str())
     }
 
     #[must_use]
@@ -418,9 +430,27 @@ impl Doc {
         self.changed = true;
     }
 
-    /// Shows or hides `panel` (`visibility: collapse`).
+    /// Shows or hides `panel` over what its styles say, as `SetVisible` does.
     pub fn set_visible(&mut self, panel: usize, on: bool) {
-        self.set_style(panel, "visibility", (!on).then_some("collapse"));
+        self.set_style(panel, "visibility", Some(if on { "visible" } else { "collapse" }));
+    }
+
+    /// Loads snippet `name` into `panel` itself (its classes and children become the panel's),
+    /// as `RequireLoadLayoutSnippet` does.
+    pub fn load_snippet(&mut self, files: &Files, panel: usize, name: &str) -> bool {
+        let Some(element) = self.snippets.get(name).cloned() else {
+            return false;
+        };
+        for class in element.attr("class").unwrap_or("").split_whitespace() {
+            if !css::Element::has_class(self, panel, class) {
+                self.panels[panel].classes.push(class.to_owned());
+            }
+        }
+        for child in &element.children {
+            self.add(files, child, Some(panel), &|_| None);
+        }
+        self.changed = true;
+        true
     }
 
     /// Builds snippet `name` as a new last child of `parent`; its panel.
@@ -602,7 +632,7 @@ impl Doc {
 
     fn val(&self, len: Len) -> Val {
         match len {
-            Len::Fit | Len::Fill(_) => Val::Auto,
+            Len::Fit | Len::Fill(_) | Len::OfOther(_) => Val::Auto,
             Len::Px(px) => Val::Px(px * self.scale),
             Len::Percent(p) => Val::Percent(p),
         }
@@ -712,6 +742,37 @@ impl Doc {
         if matches!(s.width, Len::Fill(_)) && !along_row {
             node.width = Val::Percent(100.0);
         }
+        // A full-size panel with margins: Panorama fits it and its margins inside the parent
+        // (where CSS adds the margins outside), so it fills what the margins leave.
+        let margined = |a: Len, b: Len| !matches!(a, Len::Px(0.0)) || !matches!(b, Len::Px(0.0));
+        if s.width == Len::Percent(100.0) && margined(s.margin[0], s.margin[2]) {
+            node.width = Val::Auto;
+            match parent_flow {
+                Flow::None => node.justify_self = JustifySelf::Stretch,
+                Flow::Down | Flow::DownWrap => node.align_self = AlignSelf::Stretch,
+                Flow::Right | Flow::RightWrap => {
+                    node.flex_grow = 1.0;
+                    node.flex_basis = Val::Px(0.0);
+                }
+            }
+        }
+        if s.height == Len::Percent(100.0) && margined(s.margin[1], s.margin[3]) {
+            node.height = Val::Auto;
+            match parent_flow {
+                Flow::None => node.align_self = AlignSelf::Stretch,
+                Flow::Right | Flow::RightWrap => node.align_self = AlignSelf::Stretch,
+                Flow::Down | Flow::DownWrap => {
+                    node.flex_grow = 1.0;
+                    node.flex_basis = Val::Px(0.0);
+                }
+            }
+        }
+        // One side a share of the other: an aspect ratio (width over height).
+        match (s.width, s.height) {
+            (Len::OfOther(share), _) => node.aspect_ratio = Some(share),
+            (_, Len::OfOther(share)) if share > 0.0 => node.aspect_ratio = Some(1.0 / share),
+            _ => {}
+        }
         if matches!(s.height, Len::Fill(_)) && !along_column {
             node.height = Val::Percent(100.0);
         }
@@ -727,6 +788,7 @@ impl Doc {
         };
         // The first flowed child aligned to the far end of its flow (or its middle) takes the
         // free space before it, which packs it and those after it there, as Panorama does.
+        let parent_style = p.parent.map(|q| &self.panels[q].style);
         let first_along = |along_end: &dyn Fn(&Style) -> Option<Align>| {
             p.parent.is_some_and(|q| {
                 self.panels[q]
@@ -742,12 +804,19 @@ impl Doc {
             Flow::None => {
                 node.grid_row = GridPlacement::start(1);
                 node.grid_column = GridPlacement::start(1);
-                node.justify_self = to_justify(s.halign);
-                node.align_self = to_align(s.valign);
+                if node.justify_self != JustifySelf::Stretch {
+                    node.justify_self = to_justify(s.halign);
+                }
+                if node.align_self != AlignSelf::Stretch {
+                    node.align_self = to_align(s.valign);
+                }
             }
             Flow::Right | Flow::RightWrap => {
-                node.align_self = to_align(s.valign);
-                if first_along(&|st: &Style| st.halign) {
+                if node.align_self != AlignSelf::Stretch {
+                    node.align_self = to_align(s.valign);
+                }
+                let room = parent_style.is_some_and(|ps| !matches!(ps.width, Len::Fit));
+                if room && first_along(&|st: &Style| st.halign) {
                     node.margin.left = Val::Auto;
                     if s.halign == Some(Align::Center) {
                         node.margin.right = Val::Auto;
@@ -755,8 +824,11 @@ impl Doc {
                 }
             }
             Flow::Down | Flow::DownWrap => {
-                node.align_self = to_align(s.halign);
-                if first_along(&|st: &Style| st.valign) {
+                if node.align_self != AlignSelf::Stretch {
+                    node.align_self = to_align(s.halign);
+                }
+                let room = parent_style.is_some_and(|ps| !matches!(ps.height, Len::Fit));
+                if room && first_along(&|st: &Style| st.valign) {
                     node.margin.top = Val::Auto;
                     if s.valign == Some(Align::Center) {
                         node.margin.bottom = Val::Auto;
@@ -796,8 +868,40 @@ impl Doc {
         e.insert(BorderColor::all(
             s.border_color.map_or(Color::NONE, |c| style::tint(c, None, opacity)),
         ));
+        // Bevy turns a node about its middle; a turn about `transform-origin` is that plus the
+        // shift the origin would make (in shares of the node, its aspect known or square).
+        let aspect = match s.width {
+            Len::OfOther(share) => share,
+            _ => 1.0,
+        };
+        let (dx, dy) = ((s.origin.0 - 0.5) * aspect, s.origin.1 - 0.5);
+        let (sin, cos) = s.rotate.sin_cos();
+        let (rx, ry) = (cos * dx - sin * dy, sin * dx + cos * dy);
+        let shift = ((dx - rx) / aspect * 100.0, (dy - ry) * 100.0);
+        let mut px = (s.translate.0 * self.scale, s.translate.1 * self.scale);
+        if parent_flow == Flow::None {
+            let half = |a: Len, b: Len| match (a, b) {
+                (Len::Px(a), Len::Px(b)) => (a - b) * 0.5 * self.scale,
+                _ => 0.0,
+            };
+            if s.halign == Some(Align::Center) {
+                px.0 += half(s.margin[0], s.margin[2]);
+            }
+            if s.valign == Some(Align::Center) {
+                px.1 += half(s.margin[1], s.margin[3]);
+            }
+        }
+        let along = |px: f32, share: f32| {
+            if share.abs() < 1e-4 {
+                Val::Px(px)
+            } else if px == 0.0 {
+                Val::Percent(share)
+            } else {
+                Val::Px(px)
+            }
+        };
         e.insert(UiTransform {
-            translation: Val2::px(s.translate.0 * self.scale, s.translate.1 * self.scale),
+            translation: Val2::new(along(px.0, shift.0), along(px.1, shift.1)),
             scale: Vec2::new(s.scale.0, s.scale.1),
             rotation: Rot2::radians(s.rotate),
         });

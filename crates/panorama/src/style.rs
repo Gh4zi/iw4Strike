@@ -13,6 +13,9 @@ pub enum Len {
     Percent(f32),
     /// `fill-parent-flow( weight )`: what the parent's flow leaves, shared by weight.
     Fill(f32),
+    /// `height-percentage( p% )` as a width, `width-percentage( p% )` as a height: this share
+    /// of the panel's other side.
+    OfOther(f32),
 }
 
 /// How a panel lays out its children (`flow-children`).
@@ -76,6 +79,8 @@ pub struct Style {
     pub translate: (f32, f32),
     pub scale: (f32, f32),
     pub rotate: f32,
+    /// `transform-origin`, as shares of the panel's width and height (the middle by default).
+    pub origin: (f32, f32),
     // Text (inherited).
     pub color: Option<Color>,
     pub font_family: Option<String>,
@@ -115,6 +120,7 @@ impl Default for Style {
             translate: (0.0, 0.0),
             scale: (1.0, 1.0),
             rotate: 0.0,
+            origin: (0.5, 0.5),
             color: None,
             font_family: None,
             font_size: None,
@@ -166,7 +172,8 @@ pub fn parse_len(value: &str) -> Option<Len> {
     if let Some(args) = call_args(&v, "width-percentage")
         .or_else(|| call_args(&v, "height-percentage"))
     {
-        return Some(Len::Percent(args.first()?.trim_end_matches('%').trim().parse().ok()?));
+        let p: f32 = args.first()?.trim_end_matches('%').trim().parse().ok()?;
+        return Some(Len::OfOther(p / 100.0));
     }
     if let Some(p) = v.strip_suffix('%') {
         return p.trim().parse().ok().map(Len::Percent);
@@ -412,6 +419,14 @@ impl Style {
             "z-index" => self.z_index = v.parse::<f32>().ok().map(|z| z as i32),
             "overflow" => self.clip = v.contains("clip") || v.contains("scroll"),
             "transform" => parse_transform(v, self),
+            "transform-origin" => {
+                let mut it = v
+                    .split_whitespace()
+                    .filter_map(|p| p.trim_end_matches('%').parse::<f32>().ok());
+                if let (Some(x), Some(y)) = (it.next(), it.next()) {
+                    self.origin = (x / 100.0, y / 100.0);
+                }
+            }
             "pre-transform-scale2d" => {
                 let mut it = v.split(',').filter_map(|s| s.trim().parse::<f32>().ok());
                 if let Some(x) = it.next() {
@@ -475,6 +490,7 @@ mod tests {
         assert_eq!(parse_len("48%"), Some(Len::Percent(48.0)));
         assert_eq!(parse_len("fit-children"), Some(Len::Fit));
         assert_eq!(parse_len("fill-parent-flow( 1.0 )"), Some(Len::Fill(1.0)));
+        assert_eq!(parse_len("height-percentage( 86.72% )"), Some(Len::OfOther(0.8672)));
         assert_eq!(parse_color("#66666699"), Some(Color::srgba_u8(0x66, 0x66, 0x66, 0x99)));
         assert_eq!(parse_color("#fff"), Some(Color::srgba_u8(255, 255, 255, 255)));
         let g = parse_gradient(

@@ -6,6 +6,9 @@
 //!   the weapon panels of `classes/<weapon>.res`, the text of `resource/cstrike_english.txt` and
 //!   the `gfx/vgui` pictures (CS:S's pack, CS 1.6's `.tga` files). The mouse picks (the panel
 //!   under it shows the weapon), the number keys too; like CS:S you stand still while it is open.
+//! - **CS:GO** (`_vgui_menus 1` with CS:GO installed): CS:GO's six categories, then each one's
+//!   guns (its side's competitive loadout, CS:GO's own guns included) as tiles with CS:GO's
+//!   weapon pictures, names and prices, on the same window, mouse and number keys as VGUI.
 //! - **Classic** (`_vgui_menus 0`): CS 1.6's old numbered text menu at the left of the screen,
 //!   its menus read from 1.6's `titles.txt` (our own wording when 1.6 isn't installed). Only the
 //!   number keys pick; you keep moving and looking around.
@@ -53,7 +56,24 @@ pub struct CsBuyMenu {
     shown: Option<View>,
 }
 
+/// CS:GO's own buy wheel (`csgo_panorama`) drawing the CS:GO pages: whether it does, and the
+/// wedge the mouse is over (its number key), for a click to pick.
+#[derive(Resource, Default)]
+pub(crate) struct CsgoBuyWheel {
+    pub(crate) drawn: bool,
+    pub(crate) hover: Option<u8>,
+}
+
 impl CsBuyMenu {
+    /// The CS:GO buy page open (`csgo:<t|ct>:<page>`).
+    #[must_use]
+    pub(crate) fn csgo_page(&self) -> Option<&str> {
+        match &self.screen {
+            Some(Screen::Vgui(page)) if page.starts_with("csgo:") => Some(page),
+            _ => None,
+        }
+    }
+
     /// The VGUI window is open: gameplay input stops and the cursor is free.
     #[must_use]
     pub fn captures_input(&self) -> bool {
@@ -103,6 +123,8 @@ enum Screen {
 enum Look {
     Source,
     GoldSrc,
+    /// CS:GO's pages: white on dark panels.
+    Csgo,
 }
 
 /// Where the menu's files come from.
@@ -168,6 +190,8 @@ impl Install {
 /// What the menu reads once, the first time it opens.
 struct Data {
     install: Option<Install>,
+    /// CS:GO's pack, for its buy pages' pictures (CS:GO installed).
+    csgo: Option<mdl_source::Vpk>,
     strings: HashMap<String, String>,
     /// CS 1.6's `titles.txt` menus, by lowercase name (our own when 1.6 isn't there).
     classic: HashMap<String, Vec<String>>,
@@ -192,6 +216,7 @@ impl Data {
             match install.as_ref().map(Install::look) {
                 Some(Look::Source) => "CS:S",
                 Some(Look::GoldSrc) => "GoldSrc (Condition Zero / CS 1.6)",
+                Some(Look::Csgo) => "CS:GO",
                 None => "nowhere (classic only)",
             },
             strings.len(),
@@ -203,6 +228,7 @@ impl Data {
         );
         Self {
             install,
+            csgo: asset_transport::find_csgo_pak().and_then(|pak| mdl_source::Vpk::open(&pak).ok()),
             strings,
             classic,
         }
@@ -792,6 +818,12 @@ const LIGHT_ORANGE: [u8; 4] = [188, 112, 0, 128];
 /// `dulltext` labels (`LabelDimText`).
 const DIM_ORANGE: [u8; 4] = [255, 176, 0, 164];
 const FRAME_BG: [u8; 4] = [0, 0, 0, 196];
+/// CS:GO's pages: text, dimmed text, tiles, the hovered tile and the tiles' edges.
+const CSGO_TEXT: [u8; 4] = [235, 235, 230, 255];
+const CSGO_DISABLED: [u8; 4] = [140, 140, 140, 150];
+const CSGO_BUTTON_BG: [u8; 4] = [24, 26, 30, 215];
+const CSGO_ARMED_BG: [u8; 4] = [72, 92, 122, 235];
+const CSGO_EDGE: [u8; 4] = [255, 255, 255, 40];
 const BUTTON_BG: [u8; 4] = [0, 0, 0, 64];
 /// CS:S `Button.ArmedBgColor` ("Red"); CS 1.6 lights the button orange (`SelectionBG`).
 const SOURCE_ARMED_BG: [u8; 4] = [192, 28, 0, 140];
@@ -918,6 +950,7 @@ pub(crate) fn update_cs_buymenu(
     mut fonts: ResMut<Assets<Font>>,
     mut images: ResMut<Assets<Image>>,
     mut roots: Query<(Entity, &mut Node), With<CsBuyRoot>>,
+    wheel: Res<CsgoBuyWheel>,
 ) {
     if !replaces_mw2_hud() {
         return;
@@ -1008,6 +1041,9 @@ pub(crate) fn update_cs_buymenu(
             let data = menu.data.as_ref().expect("loaded above");
             if let Some(text) = shop_closed(data, buyer.bits) {
                 menu.message = Some((text, now + MESSAGE_SECONDS));
+            } else if settings.vgui_menus && data.csgo.is_some() {
+                let side = if terrorist { "t" } else { "ct" };
+                menu.screen = Some(Screen::Vgui(format!("csgo:{side}:main")));
             } else {
                 let vgui = settings.vgui_menus
                     && data
@@ -1064,7 +1100,15 @@ pub(crate) fn update_cs_buymenu(
             }
         }
         let controls = page_controls(menu, &page);
-        if let Some(cursor) = windows.single().ok().and_then(Window::cursor_position) {
+        if wheel.drawn && page.starts_with("csgo:") {
+            // CS:GO's wheel: the wedge under the mouse, by its key.
+            hover = wheel.hover.and_then(|key| {
+                controls
+                    .iter()
+                    .find(|c| c.kind == Kind::Button && c.hotkey == Some(key))
+                    .cloned()
+            });
+        } else if let Some(cursor) = windows.single().ok().and_then(Window::cursor_position) {
             let (x, y) = (cursor.x / unit, cursor.y / unit);
             hover = controls
                 .iter()
@@ -1113,10 +1157,13 @@ pub(crate) fn update_cs_buymenu(
         menu.message = None;
     }
 
-    // Draw.
+    // Draw (CS:GO's pages are CS:GO's wheel's to draw when it does).
     let view = View {
         size: [surface.width() as u32, surface.height() as u32],
-        screen: menu.screen.clone(),
+        screen: menu
+            .screen
+            .clone()
+            .filter(|s| !(wheel.drawn && matches!(s, Screen::Vgui(p) if p.starts_with("csgo:")))),
         hover: hover.map(|c| c.name),
         money: buyer.money,
         terrorist: buyer.terrorist,
@@ -1136,11 +1183,14 @@ pub(crate) fn update_cs_buymenu(
     let fonts = menu.fonts.clone().expect("loaded above");
     match view.screen.clone() {
         Some(Screen::Vgui(page)) => {
-            let look = menu
-                .data
-                .as_ref()
-                .and_then(|d| d.install.as_ref())
-                .map_or(Look::Source, Install::look);
+            let look = if page.starts_with("csgo:") {
+                Look::Csgo
+            } else {
+                menu.data
+                    .as_ref()
+                    .and_then(|d| d.install.as_ref())
+                    .map_or(Look::Source, Install::look)
+            };
             let mut controls = page_controls(menu, &page);
             controls.extend(ffa_button(menu, &page, buyer.ffa));
             let info = view
@@ -1245,7 +1295,246 @@ const DIGIT_KEYS: [(KeyCode, u8); 20] = [
     (KeyCode::Numpad0, 10),
 ];
 
+/// CS:GO's categories: the label and the page each opens.
+const CSGO_CATEGORIES: [(&str, &str); 6] = [
+    ("PISTOLS", "pistols"),
+    ("HEAVY", "heavy"),
+    ("SMGS", "smgs"),
+    ("RIFLES", "rifles"),
+    ("GEAR", "gear"),
+    ("GRENADES", "grenades"),
+];
+
+/// A CS:GO category's title and its wheel's buy names slot by slot, for the Terrorists or the
+/// Counter-Terrorists: CS:GO's default loadout (`None` where CS:GO sells something this game
+/// doesn't yet: the Zeus, the Molotov and Incendiary, the Decoy).
+pub(crate) fn csgo_items(
+    page: &str,
+    terrorist: bool,
+) -> Option<(&'static str, &'static [Option<&'static str>])> {
+    Some(match (page, terrorist) {
+        ("pistols", true) => (
+            "PISTOLS",
+            &[Some("glock"), Some("elite"), Some("p228"), Some("tec9"), Some("deagle")],
+        ),
+        ("pistols", false) => (
+            "PISTOLS",
+            &[Some("usp"), Some("elite"), Some("p228"), Some("fiveseven"), Some("deagle")],
+        ),
+        ("heavy", true) => (
+            "HEAVY",
+            &[Some("m3"), Some("xm1014"), Some("sawedoff"), Some("m249"), Some("negev")],
+        ),
+        ("heavy", false) => (
+            "HEAVY",
+            &[Some("m3"), Some("xm1014"), Some("mag7"), Some("m249"), Some("negev")],
+        ),
+        ("smgs", true) => (
+            "SMGS",
+            &[Some("mac10"), Some("mp7"), Some("ump45"), Some("p90"), Some("bizon")],
+        ),
+        ("smgs", false) => (
+            "SMGS",
+            &[Some("tmp"), Some("mp7"), Some("ump45"), Some("p90"), Some("bizon")],
+        ),
+        ("rifles", true) => (
+            "RIFLES",
+            &[
+                Some("galil"),
+                Some("ak47"),
+                Some("scout"),
+                Some("sg552"),
+                Some("awp"),
+                Some("g3sg1"),
+            ],
+        ),
+        ("rifles", false) => (
+            "RIFLES",
+            &[
+                Some("famas"),
+                Some("m4a4"),
+                Some("scout"),
+                Some("aug"),
+                Some("awp"),
+                Some("sg550"),
+            ],
+        ),
+        ("gear", true) => ("GEAR", &[Some("vest"), Some("vesthelm"), None, None]),
+        ("gear", false) => ("GEAR", &[Some("vest"), Some("vesthelm"), None, Some("defuser")]),
+        ("grenades", _) => (
+            "GRENADES",
+            &[None, None, Some("flashbang"), Some("hegrenade"), Some("smokegrenade")],
+        ),
+        _ => return None,
+    })
+}
+
+/// What CS:GO calls the item a buy name sells.
+pub(crate) fn csgo_item_name(item: &str) -> &'static str {
+    match item {
+        "ak47" => "AK-47",
+        "m4a1" => "M4A1-S",
+        "m4a4" => "M4A4",
+        "usp" => "USP-S",
+        "p2000" => "P2000",
+        "p228" => "P250",
+        "glock" => "Glock-18",
+        "elite" => "Dual Berettas",
+        "fiveseven" => "Five-SeveN",
+        "tec9" => "Tec-9",
+        "cz75a" => "CZ75-Auto",
+        "deagle" => "Desert Eagle",
+        "revolver" => "R8 Revolver",
+        "m3" => "Nova",
+        "xm1014" => "XM1014",
+        "mag7" => "MAG-7",
+        "sawedoff" => "Sawed-Off",
+        "m249" => "M249",
+        "negev" => "Negev",
+        "mac10" => "MAC-10",
+        "tmp" => "MP9",
+        "mp7" => "MP7",
+        "mp5" => "MP5-SD",
+        "ump45" => "UMP-45",
+        "p90" => "P90",
+        "bizon" => "PP-Bizon",
+        "galil" => "Galil AR",
+        "famas" => "FAMAS",
+        "scout" => "SSG 08",
+        "sg552" => "SG 553",
+        "aug" => "AUG",
+        "awp" => "AWP",
+        "g3sg1" => "G3SG1",
+        "sg550" => "SCAR-20",
+        "vest" => "Kevlar Vest",
+        "vesthelm" => "Kevlar + Helmet",
+        "defuser" => "Defuse Kit",
+        "flashbang" => "Flashbang",
+        "hegrenade" => "HE Grenade",
+        "smokegrenade" => "Smoke Grenade",
+        _ => "",
+    }
+}
+
+/// The picture of the item a buy name sells: CS:GO's weapon picture, or its HUD icon for the
+/// armour and the kit (`csgo:<path in its pack>`).
+fn csgo_picture(item: &str) -> String {
+    let weapon = match item {
+        "vest" => return "csgo:materials/panorama/images/hud/healtharmor/icon-shield".to_owned(),
+        "vesthelm" => {
+            return "csgo:materials/panorama/images/hud/healtharmor/icon-armor-helmet".to_owned();
+        }
+        "defuser" => return "csgo:materials/panorama/images/hud/weaponpanel/icon-defuser".to_owned(),
+        "m4a1" => "m4a1_silencer",
+        "m4a4" => "m4a1",
+        "usp" => "usp_silencer",
+        "p2000" => "hkp2000",
+        "p228" => "p250",
+        "m3" => "nova",
+        "tmp" => "mp9",
+        "mp5" => "mp5sd",
+        "galil" => "galilar",
+        "sg552" => "sg556",
+        "scout" => "ssg08",
+        "sg550" => "scar20",
+        other => other,
+    };
+    format!("csgo:resource/flash/econ/weapons/base_weapons/weapon_{weapon}")
+}
+
+fn csgo_control(kind: Kind, name: String, rect: [f32; 4], text: String) -> Control {
+    Control {
+        kind,
+        name,
+        rect,
+        text,
+        hotkey: None,
+        align: Align::West,
+        title: false,
+        dull: false,
+        command: String::new(),
+        image: None,
+        fill: None,
+    }
+}
+
+/// A CS:GO buy page (`csgo:<t|ct>:<page>`): the six categories, or a category's tiles.
+fn csgo_page(path: &str) -> Option<Vec<Control>> {
+    let mut parts = path.split(':').skip(1);
+    let (side, page) = (parts.next()?, parts.next()?);
+    let mut controls = Vec::new();
+    let title = |text: &str| {
+        let mut label = csgo_control(Kind::Label, "title".to_owned(), [40.0, 28.0, 400.0, 30.0], text.to_owned());
+        label.title = true;
+        label
+    };
+    let button = |name: String, rect: [f32; 4], text: String, key: u8, command: String| Control {
+        hotkey: Some(key),
+        command,
+        ..csgo_control(Kind::Button, name, rect, text)
+    };
+    if page == "main" {
+        controls.push(title("BUY"));
+        for (i, (label, target)) in CSGO_CATEGORIES.iter().enumerate() {
+            let key = i as u8 + 1;
+            controls.push(button(
+                format!("category{key}"),
+                [40.0, 76.0 + i as f32 * 38.0, 220.0, 30.0],
+                format!("{key}    {label}"),
+                key,
+                format!("csgo:{side}:{target}"),
+            ));
+        }
+        controls.push(button(
+            "cancel".to_owned(),
+            [40.0, 320.0, 120.0, 26.0],
+            "0    CLOSE".to_owned(),
+            10,
+            "vguicancel".to_owned(),
+        ));
+        return Some(controls);
+    }
+    let (label, items) = csgo_items(page, side == "t")?;
+    controls.push(title(label));
+    for (i, item) in items.iter().enumerate() {
+        let Some(item) = item else {
+            continue;
+        };
+        let key = i as u8 + 1;
+        let (x, y) = (40.0 + (i % 3) as f32 * 196.0, 66.0 + (i / 3) as f32 * 122.0);
+        controls.push(button(
+            format!("item{key}"),
+            [x, y, 188.0, 114.0],
+            String::new(),
+            key,
+            (*item).to_owned(),
+        ));
+        controls.push(Control {
+            image: Some(csgo_picture(item)),
+            ..csgo_control(Kind::Image, format!("picture{key}"), [x + 46.0, y + 6.0, 96.0, 72.0], String::new())
+        });
+        let price = cs::buy_price(item).map_or(String::new(), |price| format!("${price}"));
+        controls.push(csgo_control(
+            Kind::Label,
+            format!("name{key}"),
+            [x + 8.0, y + 84.0, 172.0, 24.0],
+            format!("{key}   {}    {price}", csgo_item_name(item)),
+        ));
+    }
+    controls.push(button(
+        "back".to_owned(),
+        [40.0, 436.0, 120.0, 26.0],
+        "0    BACK".to_owned(),
+        10,
+        format!("csgo:{side}:main"),
+    ));
+    Some(controls)
+}
+
 fn page_controls(menu: &mut CsBuyMenu, path: &str) -> Vec<Control> {
+    if path.starts_with("csgo:") {
+        return csgo_page(path).unwrap_or_default();
+    }
     if !menu.pages.contains_key(path) {
         let controls = menu.data.as_ref().and_then(|data| load_controls(data, path));
         menu.pages.insert(path.to_owned(), controls);
@@ -1256,6 +1545,28 @@ fn page_controls(menu: &mut CsBuyMenu, path: &str) -> Vec<Control> {
 fn picture(menu: &mut CsBuyMenu, images: &mut Assets<Image>, name: &str) -> Option<Handle<Image>> {
     if let Some(handle) = menu.images.get(name) {
         return handle.clone();
+    }
+    // CS:GO's pictures are PNGs in its pack.
+    if let Some(path) = name.strip_prefix("csgo:") {
+        let handle = menu
+            .data
+            .as_ref()
+            .and_then(|d| d.csgo.as_ref())
+            .and_then(|pack| pack.read(&format!("{path}.png")))
+            .and_then(|bytes| {
+                Image::from_buffer(
+                    &bytes,
+                    bevy::image::ImageType::Extension("png"),
+                    bevy::image::CompressedImageFormats::NONE,
+                    true,
+                    bevy::image::ImageSampler::linear(),
+                    RenderAssetUsages::default(),
+                )
+                .ok()
+            })
+            .map(|image| images.add(image));
+        menu.images.insert(name.to_owned(), handle.clone());
+        return handle;
     }
     let handle = menu
         .data
@@ -1318,6 +1629,9 @@ fn vgui_action(menu: &CsBuyMenu, control: &Control, terrorist: bool) -> Action {
     }
     if command.eq_ignore_ascii_case("rebuy") {
         return Action::Rebuy;
+    }
+    if command.starts_with("csgo:") {
+        return Action::Open(command.to_owned());
     }
     if command.to_ascii_lowercase().ends_with(".res") {
         return menu
@@ -1650,13 +1964,17 @@ fn draw_vgui(
                 let background = match (button, armed, look) {
                     (true, true, Look::Source) => SOURCE_ARMED_BG,
                     (true, true, Look::GoldSrc) => GOLDSRC_ARMED_BG,
+                    (true, true, Look::Csgo) => CSGO_ARMED_BG,
+                    (true, false, Look::Csgo) => CSGO_BUTTON_BG,
                     (true, false, _) => BUTTON_BG,
                     (false, ..) => [0; 4],
                 };
-                let color = match (enabled, control.dull) {
-                    (false, _) => LIGHT_ORANGE,
-                    (true, true) => DIM_ORANGE,
-                    (true, false) => ORANGE,
+                let color = match (look, enabled, control.dull) {
+                    (Look::Csgo, true, _) => CSGO_TEXT,
+                    (Look::Csgo, false, _) => CSGO_DISABLED,
+                    (_, false, _) => LIGHT_ORANGE,
+                    (_, true, true) => DIM_ORANGE,
+                    (_, true, false) => ORANGE,
                 };
                 let (font, size) = if control.title {
                     (&fonts.bold, 18.0)
@@ -1667,7 +1985,8 @@ fn draw_vgui(
                 };
                 let mut entity = root.spawn((node, BackgroundColor(rgba(background))));
                 if button {
-                    entity.insert(BorderColor::all(rgba(LIGHT_ORANGE)));
+                    let edge = if look == Look::Csgo { CSGO_EDGE } else { LIGHT_ORANGE };
+                    entity.insert(BorderColor::all(rgba(edge)));
                 }
                 entity.with_children(|cell| {
                     cell.spawn(text(font, size * unit, rgba(color), control.text.clone()));

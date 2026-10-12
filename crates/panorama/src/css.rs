@@ -18,6 +18,8 @@ pub struct Compound {
     pub id: Option<String>,
     pub classes: Vec<String>,
     pub pseudos: Vec<String>,
+    /// `:not( … )`: compounds the panel must not match.
+    pub nots: Vec<Compound>,
 }
 
 /// A complex selector: compounds from the outermost to the subject, each joined to the next by
@@ -38,10 +40,17 @@ impl Selector {
     #[must_use]
     pub fn specificity(&self) -> (u32, u32, u32) {
         self.parts.iter().fold((0, 0, 0), |(a, b, c), (part, _)| {
+            let nots = part.nots.iter().fold((0, 0, 0), |(x, y, z), n| {
+                (
+                    x + u32::from(n.id.is_some()),
+                    y + (n.classes.len() + n.pseudos.len()) as u32,
+                    z + u32::from(n.tag.is_some()),
+                )
+            });
             (
-                a + u32::from(part.id.is_some()),
-                b + (part.classes.len() + part.pseudos.len()) as u32,
-                c + u32::from(part.tag.is_some()),
+                a + u32::from(part.id.is_some()) + nots.0,
+                b + (part.classes.len() + part.pseudos.len()) as u32 + nots.1,
+                c + u32::from(part.tag.is_some()) + nots.2,
             )
         })
     }
@@ -78,6 +87,7 @@ fn compound_matches(compound: &Compound, doc: &impl Element, panel: usize) -> bo
     }
     compound.classes.iter().all(|c| doc.has_class(panel, c))
         && compound.pseudos.iter().all(|p| doc.has_pseudo(panel, p))
+        && !compound.nots.iter().any(|n| compound_matches(n, doc, panel))
 }
 
 /// Whether `selector` applies to `panel`.
@@ -136,7 +146,20 @@ fn parse_compound(text: &str) -> Option<Compound> {
             }
             ':' => {
                 chars.next();
-                compound.pseudos.push(take(&mut chars).to_ascii_lowercase());
+                let name = take(&mut chars).to_ascii_lowercase();
+                if name == "not" && chars.peek().is_some_and(|&(_, c)| c == '(') {
+                    chars.next();
+                    let mut inner = String::new();
+                    for (_, c) in chars.by_ref() {
+                        if c == ')' {
+                            break;
+                        }
+                        inner.push(c);
+                    }
+                    compound.nots.push(parse_compound(inner.trim())?);
+                } else {
+                    compound.pseudos.push(name);
+                }
             }
             '*' => {
                 chars.next();
@@ -342,5 +365,12 @@ mod tests {
         assert!(matches(&parsed.rules[2].selector, &Tree, 2));
         let child = parse("CSGOHudHealthArmor > Label { x: 1px; }", 0);
         assert!(!matches(&child.rules[0].selector, &Tree, 2));
+        let not = parse(
+            ".hud-HA:not(.hud-HA--critical) Label { x: 1px; } Label:not(.x) { y: 1px; }",
+            0,
+        );
+        assert!(!matches(&not.rules[0].selector, &Tree, 2));
+        assert!(matches(&not.rules[1].selector, &Tree, 2));
+        assert_eq!(not.rules[0].specificity, (0, 2, 1));
     }
 }

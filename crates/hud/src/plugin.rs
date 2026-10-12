@@ -45,6 +45,7 @@ impl Plugin for HudPlugin {
             .init_resource::<crate::cs_crosshair::CsCrosshairState>()
             .init_resource::<crate::cs_scoreboard::CsBoardState>()
             .init_resource::<crate::cs_buymenu::CsBuyMenu>()
+            .init_resource::<crate::cs_buymenu::CsgoBuyWheel>()
             .init_resource::<crate::cs_hud::CsHudAssets>()
             .init_resource::<crate::cs16_hud::Cs16HudAssets>()
             .init_resource::<crate::csgo_hud::CsgoHudAssets>()
