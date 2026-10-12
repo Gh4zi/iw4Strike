@@ -149,6 +149,8 @@ pub struct ClientMatchState {
     pub(crate) cs_carry: Option<CsCarry>,
     /// CS money; `None` until it first changes (the start money).
     pub(crate) cs_money: Option<i32>,
+    /// The player's CS:GO loadout choices (`weapon_iw4::cs::CS_LOADOUT_*`).
+    pub(crate) cs_loadout: u32,
 }
 
 /// What a surviving CS player keeps from one round to the next: guns and grenades with their

@@ -97,7 +97,8 @@ fn build_buy_wheels(doc: &mut panorama::Doc, files: &panorama::Files) -> Option<
     }
     let mut items = Vec::new();
     for (page, _) in BUY_CATEGORIES {
-        let count = crate::cs_buymenu::csgo_items(page, true).map_or(0, |(_, slots)| slots.len());
+        let count =
+            crate::cs_buymenu::csgo_items(page, true, 0).map_or(0, |(_, slots)| slots.len());
         let w = wheel(doc, count)?;
         for (i, &button) in w.wedges.iter().enumerate().take(count) {
             let contents = doc.find_in(button, "Contents")?;
@@ -327,11 +328,12 @@ pub(crate) fn update_csgo_panorama(
     view: Res<ViewSubject>,
     feed: Res<crate::cs_hud::CsKillFeed>,
     (time, mut images): (Res<Time>, ResMut<Assets<Image>>),
-    (menu, mut wheel_input, windows, nodes): (
+    (menu, mut wheel_input, windows, nodes, settings): (
         Res<crate::cs_buymenu::CsBuyMenu>,
         ResMut<crate::cs_buymenu::CsgoBuyWheel>,
         Query<&Window, With<bevy::window::PrimaryWindow>>,
         Query<(&ComputedNode, &bevy::ui::UiGlobalTransform)>,
+        Res<frame::GameSettings>,
     ),
 ) {
     if !hud.active || !crate::cs_hud::replaces_mw2_hud() || !surface.is_ready() {
@@ -572,7 +574,8 @@ pub(crate) fn update_csgo_panorama(
         for (w, (name, _)) in buy.items.iter().zip(BUY_CATEGORIES) {
             let shown = page.is_some() && page_name == name;
             doc.set_visible(w.panel, shown);
-            let slots = crate::cs_buymenu::csgo_items(name, terrorist).map(|(_, s)| s);
+            let slots =
+                crate::cs_buymenu::csgo_items(name, terrorist, weapon_iw4::cs::cs_loadout_flags(&settings.loadout_pistol, &settings.loadout_m4)).map(|(_, s)| s);
             for (i, &button) in w.wedges.iter().enumerate() {
                 let item = slots.and_then(|s| s.get(i).copied().flatten());
                 doc.set_class(button, "no-hover", item.is_none());

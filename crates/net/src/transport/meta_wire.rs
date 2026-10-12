@@ -539,6 +539,11 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u32(request_id);
             out.put_u32(weapon);
         }
+        ClientAction::CsLoadout { request_id, flags } => {
+            out.put_u8(27);
+            out.put_u32(request_id);
+            out.put_u32(flags);
+        }
         ClientAction::ActionSlot { request_id, slot } => {
             out.put_u8(19);
             out.put_u32(request_id);
@@ -659,6 +664,10 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
         25 => Ok(ClientAction::BuyWeapon {
             request_id: input.get_u32()?,
             weapon: input.get_u32()?,
+        }),
+        27 => Ok(ClientAction::CsLoadout {
+            request_id: input.get_u32()?,
+            flags: input.get_u32()?,
         }),
         19 => Ok(ClientAction::ActionSlot {
             request_id: input.get_u32()?,

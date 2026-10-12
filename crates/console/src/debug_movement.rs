@@ -132,6 +132,21 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "cl_camera_anim [0|1] — with a CS gun in hand, let the MW2 weapon animations move your view (the head shake on draws and reloads); 0 by default",
         ));
     }
+    if registry.resolve("cl_knife").is_none() {
+        registry.register(crate::CommandSpec::new("cl_knife").usage(
+            "cl_knife [default|bayonet|m9_bayonet|karambit|butterfly|flip|gut|huntsman|falchion|bowie|shadow_daggers|navaja|stiletto|ursus|talon|classic|paracord|survival|nomad|skeleton|golden] — the CS:GO knife you carry (with CS:GO installed)",
+        ));
+    }
+    if registry.resolve("cl_loadout_pistol").is_none() {
+        registry.register(crate::CommandSpec::new("cl_loadout_pistol").usage(
+            "cl_loadout_pistol [usp|p2000] — the Counter-Terrorists' starting pistol (USP-S or P2000)",
+        ));
+    }
+    if registry.resolve("cl_loadout_m4").is_none() {
+        registry.register(crate::CommandSpec::new("cl_loadout_m4").usage(
+            "cl_loadout_m4 [m4a4|m4a1] — the Counter-Terrorists' M4 in the buy wheel (M4A4 or M4A1-S)",
+        ));
+    }
     if registry.resolve("cl_wpn_sway").is_none() {
         registry.register(
             crate::CommandSpec::new("cl_wpn_sway")
@@ -510,6 +525,42 @@ pub(crate) fn route_movement_commands(
                     format!("cl_camera_anim = {arg}")
                 }
                 _ => "usage: cl_camera_anim [0|1]".to_owned(),
+            },
+            "cl_knife" => match cmd.args.as_slice() {
+                [] => format!("cl_knife = {}", game.knife),
+                [arg] if arg.trim() == "default"
+                    || weapon_iw4::cs::csgo_knife_view_model(arg).is_some() =>
+                {
+                    game.knife = arg.trim().to_ascii_lowercase();
+                    game.touch();
+                    format!("cl_knife = {}", game.knife)
+                }
+                _ => format!(
+                    "cl_knife: default, {}",
+                    weapon_iw4::cs::CSGO_KNIVES
+                        .iter()
+                        .map(|(name, _, _)| *name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            },
+            "cl_loadout_pistol" => match cmd.args.as_slice() {
+                [] => format!("cl_loadout_pistol = {}", game.loadout_pistol),
+                [arg] if matches!(arg.trim(), "usp" | "p2000") => {
+                    game.loadout_pistol = arg.trim().to_owned();
+                    game.touch();
+                    format!("cl_loadout_pistol = {}", game.loadout_pistol)
+                }
+                _ => "usage: cl_loadout_pistol [usp|p2000]".to_owned(),
+            },
+            "cl_loadout_m4" => match cmd.args.as_slice() {
+                [] => format!("cl_loadout_m4 = {}", game.loadout_m4),
+                [arg] if matches!(arg.trim(), "m4a4" | "m4a1") => {
+                    game.loadout_m4 = arg.trim().to_owned();
+                    game.touch();
+                    format!("cl_loadout_m4 = {}", game.loadout_m4)
+                }
+                _ => "usage: cl_loadout_m4 [m4a4|m4a1]".to_owned(),
             },
             "cl_wpn_sway" => {
                 use render_anim::occupancy::cs_viewmodel::{set_viewmodel_sway, viewmodel_sway};

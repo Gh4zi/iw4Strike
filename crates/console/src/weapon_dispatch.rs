@@ -247,6 +247,37 @@ pub(crate) fn buy_action(
     })
 }
 
+/// Tells the server this player's CS:GO loadout choices (the starting pistol), when they change
+/// and every few seconds besides, so a server joined later or a new map hears them too.
+pub(crate) fn send_cs_loadout(
+    settings: Res<frame::GameSettings>,
+    presented: Res<PresentedSnapshot>,
+    local: Res<LocalPresentClient>,
+    time: Res<Time>,
+    mut inbox: ResMut<ClientActionInbox>,
+    mut seq: ResMut<net::ActionRequestIds>,
+    mut last: Local<Option<(u32, u32, f32)>>,
+) {
+    const RESEND_SECONDS: f32 = 10.0;
+    if presented.player(local.0).is_none() {
+        return;
+    }
+    let flags = weapon_iw4::cs::cs_loadout_flags(&settings.loadout_pistol, &settings.loadout_m4);
+    let now = time.elapsed_secs();
+    if last.is_some_and(|(client, sent, at)| {
+        client == local.0.0 && sent == flags && now - at < RESEND_SECONDS
+    }) {
+        return;
+    }
+    let action = ClientAction::CsLoadout {
+        request_id: seq.allocate(),
+        flags,
+    };
+    if inbox.push(local.0, action).is_ok() {
+        *last = Some((local.0.0, flags, now));
+    }
+}
+
 /// The buy menu's picks, sent like the `buy` command; `menuselect <n>` picks an item as its
 /// number key would.
 pub(crate) fn route_buy_menu(

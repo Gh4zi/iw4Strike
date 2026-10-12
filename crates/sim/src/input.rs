@@ -62,6 +62,12 @@ pub enum ClientAction {
         weapon: u32,
     },
 
+    /// CS:GO loadout choices (`weapon_iw4::cs::CS_LOADOUT_*`): which pistol a round starts with.
+    CsLoadout {
+        request_id: ActionRequestId,
+        flags: u32,
+    },
+
     SpawnClient {
         request_id: ActionRequestId,
     },
@@ -204,6 +210,7 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::BuyArmor { request_id, .. }
         | ClientAction::BuyDefuser { request_id }
         | ClientAction::BuyWeapon { request_id, .. }
+        | ClientAction::CsLoadout { request_id, .. }
         | ClientAction::SpawnClient { request_id }
         | ClientAction::ForceSpawn { request_id, .. }
         | ClientAction::SpawnIntermission { request_id }

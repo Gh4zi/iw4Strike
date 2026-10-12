@@ -204,6 +204,8 @@ struct Roles {
     stab: Option<usize>,
     stab_miss: Option<usize>,
     empty: Option<Empty>,
+    /// CS:GO's inspects (`lookat01`…`lookat03`), played on `+lookatweapon`.
+    inspect: Vec<usize>,
 }
 
 /// A gun's idle, draw, reload and shoot animations.
@@ -569,6 +571,7 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
         hidden_bone: None,
     });
     let mut roles = Roles {
+        inspect: Vec::new(),
         slashes,
         stab,
         stab_miss,
@@ -751,6 +754,10 @@ fn source_model(
         silenced
     });
     let roles = Roles {
+        inspect: ["lookat01", "lookat02", "lookat03"]
+            .iter()
+            .filter_map(|name| label(name))
+            .collect(),
         slashes,
         stab,
         stab_miss,
@@ -869,6 +876,7 @@ fn cs2_roles(viewmodel: &mdl_source2::viewmodel::Viewmodel) -> Roles {
         stab: viewmodel.find("heavy_hit", |_| true),
         stab_miss: viewmodel.find("heavy_miss", |_| true),
         empty,
+        inspect: Vec::new(),
     }
 }
 
@@ -1234,7 +1242,7 @@ fn warm_up() -> Warmup {
             // once and shared.
             for terrorist in [true, false] {
                 let cs2_gun = cs2.as_deref().zip(cs::cs2_view(name));
-                let csgo_gun = csgo_source(csgo.as_deref(), name, terrorist);
+                let csgo_gun = csgo_source(csgo.as_deref(), name, terrorist, None);
                 if !terrorist && csgo_gun.is_none() {
                     continue;
                 }
@@ -1275,10 +1283,14 @@ fn csgo_source<'a>(
     csgo: Option<&'a mdl_source::Vpk>,
     name: &str,
     terrorist: bool,
+    knife: Option<&'static str>,
 ) -> Option<(&'a mdl_source::Vpk, &'static str, &'static str)> {
     let side = usize::from(!terrorist);
-    csgo.zip(weapon_iw4::cs::csgo_view_model(name))
-        .map(|(vpk, models)| (vpk, models[side], CSGO_ARMS[side]))
+    csgo.zip(weapon_iw4::cs::csgo_view_model(name)).map(|(vpk, models)| {
+        // `cl_knife`: the chosen CS:GO knife instead of the side's own.
+        let model = knife.filter(|_| name == "knife").unwrap_or(models[side]);
+        (vpk, model, CSGO_ARMS[side])
+    })
 }
 
 /// Where a weapon's viewmodel stands.
@@ -1340,8 +1352,15 @@ impl CsViewmodels {
 
     /// `weapon`'s viewmodel for a player on the Terrorists' side or not. One not read yet is
     /// decoded off the main thread, loading meanwhile.
-    fn model_for(&mut self, weapon: ViewWeapon, terrorist: bool) -> ModelLoad {
-        let key = (weapon.name, terrorist);
+    fn model_for(
+        &mut self,
+        weapon: ViewWeapon,
+        terrorist: bool,
+        knife: Option<&'static str>,
+    ) -> ModelLoad {
+        // A chosen CS:GO knife is its own model (by its viewmodel's name).
+        let knife = knife.filter(|_| weapon.knife && self.csgo.clone().flatten().is_some());
+        let key = (knife.unwrap_or(weapon.name), terrorist);
         if let Some(model) = self.models.get(&key) {
             return model
                 .clone()
@@ -1358,7 +1377,7 @@ impl CsViewmodels {
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 decode_model(
                     cs2.as_deref().zip(cs2_view),
-                    csgo_source(csgo.as_deref(), name, terrorist),
+                    csgo_source(csgo.as_deref(), name, terrorist, knife),
                     css.as_deref(),
                     goldsrc.as_ref(),
                     view_model,
@@ -1728,8 +1747,13 @@ pub fn update_cs_viewmodel(
     mut frame: ResMut<CsViewmodelFrame>,
     mut active: ResMut<CsViewmodelActive>,
     mut sounds: MessageWriter<audio::AliasCommand>,
+    mut actions: Option<ResMut<net::ClientActionInput>>,
 ) {
     let (view, settings) = view_settings;
+    // `+lookatweapon` this frame (taken whatever is held, so it never waits for a gun).
+    let inspect = actions
+        .as_mut()
+        .is_some_and(|a| std::mem::take(&mut a.client.inspect));
     frame.model = None;
     active.0 = false;
     state.pump(&mut images);
@@ -1752,7 +1776,8 @@ pub fn update_cs_viewmodel(
             Some(terrorist_team(snap, team))
         })
         .unwrap_or(true);
-    let model = match state.model_for(weapon, terrorist) {
+    let knife = weapon_iw4::cs::csgo_knife_view_model(&settings.knife);
+    let model = match state.model_for(weapon, terrorist, knife) {
         ModelLoad::Ready(model) => model,
         ModelLoad::Loading => {
             active.0 = true;
@@ -1937,6 +1962,27 @@ pub fn update_cs_viewmodel(
                     1.0
                 };
                 start(playing, Some(reload), rate);
+            }
+            let inspecting = playing.sequence.is_some_and(|s| roles.inspect.contains(&s));
+            if inspecting && ps.cs_zoom != 0 {
+                // Zooming in puts the weapon back up.
+                start(playing, idle, 1.0);
+            } else if inspect
+                && !roles.inspect.is_empty()
+                && !reloading
+                && ps.cs_zoom == 0
+                && !weapon.grenade
+                && !playing.arming
+                && (playing.sequence == idle
+                    || inspecting
+                    || playing.sequence.is_none_or(|s| {
+                        (now - playing.started) as f32 * playing.rate
+                            >= model.sequences[s].duration
+                    }))
+            {
+                // CS:GO picks among a knife's inspects (the Butterfly has three).
+                let pick = (now * 1000.0) as usize % roles.inspect.len();
+                start(playing, Some(roles.inspect[pick]), 1.0);
             }
             playing.last_fire_ms = ps.cs_last_fire_ms;
             playing.reloading = reloading;

@@ -893,6 +893,9 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
             ClientAction::BuyWeapon { request_id, weapon } => {
                 apply_buy_weapon(world, tick, *id, request_id, weapon);
             }
+            ClientAction::CsLoadout { flags, .. } => {
+                world.client_meta_mut(*id).cs_loadout = flags;
+            }
             ClientAction::ActionSlot {
                 request_id: _,
                 slot,

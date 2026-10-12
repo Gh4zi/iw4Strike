@@ -1,4 +1,4 @@
-pub const INPUT_COMMAND_NAMES: [&str; 92] = [
+pub const INPUT_COMMAND_NAMES: [&str; 94] = [
     "",
     "+attack",
     "-attack",
@@ -96,6 +96,9 @@ pub const INPUT_COMMAND_NAMES: [&str; 92] = [
     // Counter-Strike: buy the best rifle and armor you can afford / what you bought last time.
     "autobuy",
     "rebuy",
+    // Counter-Strike: look at (inspect) the weapon in hand.
+    "+lookatweapon",
+    "-lookatweapon",
 ];
 
 /// Other games' names for the same commands: `+jump` is `+gostand`.

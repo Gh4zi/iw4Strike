@@ -260,6 +260,8 @@ pub struct ClientInput {
     /// Counter-Strike `autobuy` / `rebuy` pressed this frame.
     pub auto_buy: bool,
     pub re_buy: bool,
+    /// Counter-Strike `+lookatweapon` pressed this frame (the viewmodel inspects the weapon).
+    pub inspect: bool,
     pub action_slots: Vec<usize>,
 
     pub offhand_hold_cancel: bool,
@@ -300,6 +302,7 @@ impl Default for ClientInput {
             buy_menu: false,
             auto_buy: false,
             re_buy: false,
+            inspect: false,
             action_slots: Vec::new(),
             offhand_hold_cancel: false,
             stance_held: None,
@@ -408,6 +411,7 @@ pub fn input_cmd(client: &mut ClientInput, cmd_id: u32, key: i32, now_msec: i32,
         85..=89 => client.weapon_slots.push((cmd_id - 79) as u8),
         90 => client.auto_buy = true,
         91 => client.re_buy = true,
+        92 => client.inspect = true,
         _ => {}
     }
 }

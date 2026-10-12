@@ -449,6 +449,9 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("fov={:.0}", settings.fov),
         format!("viewmodel_fov={:.0}", settings.viewmodel_fov),
         format!("cl_righthand={}", u8::from(settings.right_hand)),
+        format!("cl_knife={}", settings.knife),
+        format!("cl_loadout_pistol={}", settings.loadout_pistol),
+        format!("cl_loadout_m4={}", settings.loadout_m4),
         format!("cl_camera_anim={}", u8::from(settings.camera_anim)),
         format!("mv_mode={}", settings.mv_mode),
         format!("shooting_mode={}", settings.shooting_mode),
@@ -575,6 +578,21 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             }
             "viewmodel_fov" => parse_into(value, &mut settings.viewmodel_fov),
             "cl_righthand" => settings.right_hand = value.trim() != "0",
+            "cl_knife" => {
+                if weapon_iw4::cs::csgo_knife_view_model(value).is_some() || value.trim() == "default" {
+                    settings.knife = value.trim().to_ascii_lowercase();
+                }
+            }
+            "cl_loadout_pistol" | "ui_loadout_pistol" => {
+                if matches!(value.trim(), "usp" | "p2000") {
+                    settings.loadout_pistol = value.trim().to_owned();
+                }
+            }
+            "cl_loadout_m4" | "ui_loadout_m4" => {
+                if matches!(value.trim(), "m4a4" | "m4a1") {
+                    settings.loadout_m4 = value.trim().to_owned();
+                }
+            }
             "cl_camera_anim" => settings.camera_anim = value.trim() != "0",
             "snd_timer_warning_volume" => {
                 if let Ok(volume) = value.trim().parse::<f32>()
@@ -752,6 +770,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
         (KeyCode::KeyB, "buymenu"),
         (KeyCode::F1, "autobuy"),
         (KeyCode::F2, "rebuy"),
+        (KeyCode::KeyF, "+lookatweapon"),
         (KeyCode::Digit6, "slot6"),
         (KeyCode::Digit7, "slot7"),
         (KeyCode::Digit8, "slot8"),
@@ -844,6 +863,21 @@ pub(crate) fn native_menu_settings(
             "ui_round_banner" => {
                 if hud::RoundBanner::parse(value).is_some() {
                     settings.round_banner = value.trim().to_ascii_lowercase();
+                }
+            }
+            "ui_knife" => {
+                if weapon_iw4::cs::csgo_knife_view_model(value).is_some() || value.trim() == "default" {
+                    settings.knife = value.trim().to_ascii_lowercase();
+                }
+            }
+            "ui_loadout_pistol" => {
+                if matches!(value.trim(), "usp" | "p2000") {
+                    settings.loadout_pistol = value.trim().to_owned();
+                }
+            }
+            "ui_loadout_m4" => {
+                if matches!(value.trim(), "m4a4" | "m4a1") {
+                    settings.loadout_m4 = value.trim().to_owned();
                 }
             }
             "ui_sensitivity" => {
@@ -1021,6 +1055,9 @@ pub(crate) fn native_menu_settings(
     }
     dvars.set("ui_player_name", settings.player_name.clone());
     dvars.set("ui_round_banner", settings.round_banner.clone());
+    dvars.set("ui_knife", settings.knife.clone());
+    dvars.set("ui_loadout_pistol", settings.loadout_pistol.clone());
+    dvars.set("ui_loadout_m4", settings.loadout_m4.clone());
     dvars.set("ui_shadows", settings.shadows.to_string());
     dvars.set("ui_dof", if settings.depth_of_field { "1" } else { "0" });
     dvars.set("ui_fsr", settings.fsr_mode.to_string());

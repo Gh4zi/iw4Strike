@@ -52,6 +52,8 @@ pub struct CsBuyMenu {
     data: Option<Data>,
     pages: HashMap<String, Option<Vec<Control>>>,
     images: HashMap<String, Option<Handle<Image>>>,
+    /// The CS:GO loadout choices the CS:GO pages sell by (`weapon_iw4::cs::CS_LOADOUT_*`).
+    loadout_choices: u32,
     fonts: Option<Fonts>,
     shown: Option<View>,
 }
@@ -960,6 +962,7 @@ pub(crate) fn update_cs_buymenu(
     };
     let menu = &mut *menu;
     menu.ate_escape = false;
+    menu.loadout_choices = weapon_iw4::cs::cs_loadout_flags(&settings.loadout_pistol, &settings.loadout_m4);
     let toggle = actions
         .as_mut()
         .is_some_and(|a| std::mem::take(&mut a.client.buy_menu));
@@ -1311,7 +1314,21 @@ const CSGO_CATEGORIES: [(&str, &str); 6] = [
 pub(crate) fn csgo_items(
     page: &str,
     terrorist: bool,
+    loadout: u32,
 ) -> Option<(&'static str, &'static [Option<&'static str>])> {
+    use weapon_iw4::cs::{CS_LOADOUT_M4A1_S, CS_LOADOUT_P2000};
+    if !terrorist && page == "pistols" && loadout & CS_LOADOUT_P2000 != 0 {
+        return Some((
+            "PISTOLS",
+            &[Some("p2000"), Some("elite"), Some("p228"), Some("fiveseven"), Some("deagle")],
+        ));
+    }
+    if !terrorist && page == "rifles" && loadout & CS_LOADOUT_M4A1_S != 0 {
+        return Some((
+            "RIFLES",
+            &[Some("famas"), Some("m4a1"), Some("scout"), Some("aug"), Some("awp"), Some("sg550")],
+        ));
+    }
     Some(match (page, terrorist) {
         ("pistols", true) => (
             "PISTOLS",
@@ -1458,8 +1475,9 @@ fn csgo_control(kind: Kind, name: String, rect: [f32; 4], text: String) -> Contr
     }
 }
 
-/// A CS:GO buy page (`csgo:<t|ct>:<page>`): the six categories, or a category's tiles.
-fn csgo_page(path: &str) -> Option<Vec<Control>> {
+/// A CS:GO buy page (`csgo:<t|ct>:<page>`): the six categories, or a category's tiles, with
+/// the player's loadout choices.
+fn csgo_page(path: &str, loadout: u32) -> Option<Vec<Control>> {
     let mut parts = path.split(':').skip(1);
     let (side, page) = (parts.next()?, parts.next()?);
     let mut controls = Vec::new();
@@ -1494,7 +1512,7 @@ fn csgo_page(path: &str) -> Option<Vec<Control>> {
         ));
         return Some(controls);
     }
-    let (label, items) = csgo_items(page, side == "t")?;
+    let (label, items) = csgo_items(page, side == "t", loadout)?;
     controls.push(title(label));
     for (i, item) in items.iter().enumerate() {
         let Some(item) = item else {
@@ -1533,7 +1551,7 @@ fn csgo_page(path: &str) -> Option<Vec<Control>> {
 
 fn page_controls(menu: &mut CsBuyMenu, path: &str) -> Vec<Control> {
     if path.starts_with("csgo:") {
-        return csgo_page(path).unwrap_or_default();
+        return csgo_page(path, menu.loadout_choices).unwrap_or_default();
     }
     if !menu.pages.contains_key(path) {
         let controls = menu.data.as_ref().and_then(|data| load_controls(data, path));

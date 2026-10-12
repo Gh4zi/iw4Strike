@@ -190,6 +190,7 @@ impl Plugin for ConsolePlugin {
                         (
                             crate::weapon_dispatch::route_weapon_commands,
                             crate::weapon_dispatch::route_buy_menu,
+                            crate::weapon_dispatch::send_cs_loadout,
                         )
                             .chain(),
                     )

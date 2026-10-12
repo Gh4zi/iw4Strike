@@ -263,7 +263,15 @@ fn give_cs_round_loadout(world: &mut FrameWorld, id: ClientId) {
     let Some(terrorist) = cs_bomb_side(world, id) else {
         return;
     };
-    let name = if terrorist { "glock" } else { "usp" };
+    // The Counter-Terrorists start with their loadout's pistol: the USP-S, or the P2000.
+    let p2000 = world
+        .client_meta(id)
+        .is_some_and(|m| m.cs_loadout & weapon_iw4::cs::CS_LOADOUT_P2000 != 0);
+    let name = match (terrorist, p2000) {
+        (true, _) => "glock",
+        (false, true) => "p2000",
+        (false, false) => "usp",
+    };
     let Some(pistol) = weapon_iw4::cs::CS_WEAPONS
         .iter()
         .find(|weapon| weapon.name == name)

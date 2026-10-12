@@ -2363,6 +2363,61 @@ pub const CS_DEFUSE_SECONDS: f32 = 10.0;
 pub const CS_DEFUSE_KIT_SECONDS: f32 = 5.0;
 /// `DEFUSEKIT_PRICE`; Counter-Terrorists only.
 pub const CS_DEFUSE_KIT_PRICE: i32 = 200;
+/// CS:GO's knives a player can carry instead of their side's default one (`cl_knife`, with
+/// CS:GO installed): the setting's name, the viewmodel and what CS:GO calls it.
+pub const CSGO_KNIVES: [(&str, &str, &str); 20] = [
+    ("bayonet", "v_knife_bayonet", "Bayonet"),
+    ("m9_bayonet", "v_knife_m9_bay", "M9 Bayonet"),
+    ("karambit", "v_knife_karam", "Karambit"),
+    ("butterfly", "v_knife_butterfly", "Butterfly Knife"),
+    ("flip", "v_knife_flip", "Flip Knife"),
+    ("gut", "v_knife_gut", "Gut Knife"),
+    ("huntsman", "v_knife_tactical", "Huntsman Knife"),
+    ("falchion", "v_knife_falchion_advanced", "Falchion Knife"),
+    ("bowie", "v_knife_survival_bowie", "Bowie Knife"),
+    ("shadow_daggers", "v_knife_push", "Shadow Daggers"),
+    ("navaja", "v_knife_gypsy_jackknife", "Navaja Knife"),
+    ("stiletto", "v_knife_stiletto", "Stiletto Knife"),
+    ("ursus", "v_knife_ursus", "Ursus Knife"),
+    ("talon", "v_knife_widowmaker", "Talon Knife"),
+    ("classic", "v_knife_css", "Classic Knife"),
+    ("paracord", "v_knife_cord", "Paracord Knife"),
+    ("survival", "v_knife_canis", "Survival Knife"),
+    ("nomad", "v_knife_outdoor", "Nomad Knife"),
+    ("skeleton", "v_knife_skeleton", "Skeleton Knife"),
+    ("golden", "v_knife_gg", "Golden Knife"),
+];
+
+/// CS:GO loadout choices a player makes for the Counter-Terrorists (`cl_loadout_pistol`,
+/// `cl_loadout_m4`), as the server keeps them: the P2000 starts the round instead of the USP-S,
+/// and the M4A1-S is the rifle the buy wheel sells instead of the M4A4.
+pub const CS_LOADOUT_P2000: u32 = 1;
+pub const CS_LOADOUT_M4A1_S: u32 = 2;
+
+/// The loadout flags of the choices `cl_loadout_pistol` (`usp`/`p2000`) and `cl_loadout_m4`
+/// (`m4a4`/`m4a1`) name.
+#[must_use]
+pub fn cs_loadout_flags(pistol: &str, m4: &str) -> u32 {
+    let mut flags = 0;
+    if pistol.trim() == "p2000" {
+        flags |= CS_LOADOUT_P2000;
+    }
+    if m4.trim() == "m4a1" {
+        flags |= CS_LOADOUT_M4A1_S;
+    }
+    flags
+}
+
+/// The viewmodel of the CS:GO knife `name` (`cl_knife`); `None` for `default` or a name
+/// that is not one.
+#[must_use]
+pub fn csgo_knife_view_model(name: &str) -> Option<&'static str> {
+    CSGO_KNIVES
+        .iter()
+        .find(|(n, _, _)| n.eq_ignore_ascii_case(name.trim()))
+        .map(|(_, model, _)| *model)
+}
+
 /// The item index of a defuse kit lying on the floor (a dead Counter-Terrorist's): not a weapon.
 pub const CS_DEFUSE_KIT_ITEM: i32 = -2;
 /// The planted bomb's blast (`m_flBombRadius` 500 by default): 500 damage falling off linearly

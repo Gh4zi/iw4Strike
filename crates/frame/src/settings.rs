@@ -37,6 +37,13 @@ pub struct GameSettings {
     pub viewmodel_fov: f32,
     /// `cl_righthand`: the CS gun is held in the right hand (false: the left).
     pub right_hand: bool,
+    /// `cl_knife`: the CS:GO knife carried instead of the side's default (`default`, or a
+    /// name of `weapon_iw4::cs::CSGO_KNIVES`); only with CS:GO installed.
+    pub knife: String,
+    /// `cl_loadout_pistol`: the Counter-Terrorists' starting pistol, `usp` (USP-S) or `p2000`.
+    pub loadout_pistol: String,
+    /// `cl_loadout_m4`: the Counter-Terrorists' M4 in the buy wheel, `m4a4` or `m4a1` (M4A1-S).
+    pub loadout_m4: String,
     /// `cl_camera_anim`: with a CS gun in hand, the MW2 weapon animations underneath still move
     /// the view (their camera bone shakes the head on draws and reloads). Off by default.
     pub camera_anim: bool,
@@ -148,6 +155,9 @@ impl Default for GameSettings {
             fov: Self::FOV_DEFAULT,
             viewmodel_fov: Self::VIEWMODEL_FOV_DEFAULT,
             right_hand: true,
+            knife: "default".to_owned(),
+            loadout_pistol: "usp".to_owned(),
+            loadout_m4: "m4a4".to_owned(),
             camera_anim: false,
             mv_mode: "csgo".to_owned(),
             shooting_mode: "csgo".to_owned(),
