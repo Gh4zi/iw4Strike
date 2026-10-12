@@ -192,6 +192,9 @@ pub struct AuthorityDObjState {
     /// The angles `apply_trajectory_apos_at` last posed with and the matrix that made: movers
     /// are re-posed every step, and while both still hold the matrix is already the answer.
     applied_apos: Option<([f32; 3], glam::Mat4)>,
+    /// Animated models re-materialize every step; their collision surfaces and bind pose are
+    /// the same each time.
+    coll_trace_base: Option<CollTraceBase>,
 
     pub(crate) t5_destructible: Option<crate::t5_destructible::State>,
     /// Capabilities for the models this script model can swap to: husks and
@@ -221,10 +224,20 @@ fn rigid_from_mat4(m: glam::Mat4) -> clipmap_iw4::RigidXform {
     }
 }
 
+/// What a collision trace takes from the model alone: its collision surfaces in clipmap form and
+/// its bind pose, kept with the capability they came from.
+#[derive(Clone, Debug)]
+struct CollTraceBase {
+    capability: std::sync::Arc<xmodel_runtime::RetainedModelCapability>,
+    model: std::sync::Arc<clipmap_iw4::XModelColl>,
+    bind: Vec<clipmap_iw4::RigidXform>,
+}
+
 fn coll_trace_from_capability(
-    capability: &xmodel_runtime::RetainedModelCapability,
+    capability: &std::sync::Arc<xmodel_runtime::RetainedModelCapability>,
     request: &xmodel_runtime::DObjPoseRequest,
     world_from_model: glam::Mat4,
+    base: &mut Option<CollTraceBase>,
 ) -> Result<Option<AuthorityDObjCollTrace>, xmodel_runtime::MaterializeError> {
     if capability.coll_lod < 0
         || capability.coll_surfs.is_empty()
@@ -236,11 +249,22 @@ fn coll_trace_from_capability(
         return Ok(None);
     }
     let posed = capability.pose(request, glam::Mat4::IDENTITY)?;
-    let bind = capability.pose(
-        &xmodel_runtime::DObjPoseRequest::bind_pose(),
-        glam::Mat4::IDENTITY,
-    )?;
-    let n = posed.len().max(bind.len());
+    let base = match base {
+        Some(base) if std::sync::Arc::ptr_eq(&base.capability, capability) => base,
+        _ => base.insert(CollTraceBase {
+            capability: capability.clone(),
+            model: std::sync::Arc::new(xmodel_coll_from_capability(capability)),
+            bind: capability
+                .pose(
+                    &xmodel_runtime::DObjPoseRequest::bind_pose(),
+                    glam::Mat4::IDENTITY,
+                )?
+                .into_iter()
+                .map(rigid_from_mat4)
+                .collect(),
+        }),
+    };
+    let n = posed.len().max(base.bind.len());
     let mut bones = Vec::with_capacity(n);
     for i in 0..n {
         bones.push(clipmap_iw4::XModelAnimBone {
@@ -249,15 +273,15 @@ fn coll_trace_from_capability(
                 .copied()
                 .map(rigid_from_mat4)
                 .unwrap_or(clipmap_iw4::RigidXform::IDENTITY),
-            bind: bind
+            bind: base
+                .bind
                 .get(i)
                 .copied()
-                .map(rigid_from_mat4)
                 .unwrap_or(clipmap_iw4::RigidXform::IDENTITY),
         });
     }
     Ok(Some(AuthorityDObjCollTrace {
-        model: std::sync::Arc::new(xmodel_coll_from_capability(capability)),
+        model: base.model.clone(),
         world_from_model,
         bones,
         hide_part_bits: *request.hide_part_bits.words(),
@@ -334,6 +358,7 @@ impl AuthorityDObjState {
             play_anim: None,
             apos: None,
             applied_apos: None,
+            coll_trace_base: None,
             t5_destructible: None,
             swap_capabilities: Vec::new(),
         }
@@ -653,6 +678,7 @@ impl AuthorityDObjState {
                     capability,
                     &self.pose_request,
                     self.world_from_model,
+                    &mut self.coll_trace_base,
                 );
                 match coll {
                     Ok(coll) => {
