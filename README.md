@@ -76,7 +76,8 @@ welcome, even small fixes.**
 - Drop your gun with **G** (tossed ahead like CS:GO), walk over a gun to pick it up when that
   slot is empty, or look at it and press **E** to swap
 - Other players (and you, in third person) hold the CS weapon models; guns on the ground are
-  the CS models too
+  the CS models too. In third person the knife takes the installed CS game's stance (its
+  animations are still a work in progress), and grenades are experimental
 - Weapon switching takes CS 1.6's deploy time: fire 0.75 s after switching (AWP 1.45 s, Scout
   1.25 s), with no put-away delay
 
@@ -94,6 +95,12 @@ welcome, even small fixes.**
 - 4:3 resolutions (1152x864, 1280x960, 1440x1080) and exclusive fullscreen for stretched 4:3
 - **Max Frames Ahead** (Advanced Video): 1 for the lowest input lag, a low-latency alternative
   to NVIDIA Reflex on any GPU; 2 for more FPS
+- **AMD FSR 3** upscaling (Advanced Video): Native AA, Quality, Balanced, Performance and Ultra
+  Performance, with **FSR Sharpness**
+- **Options > Audio**: Master, SFX, Music, Voice and Ambient volume (drag the slider or type the
+  percent), **Output device** (pick your speakers or headset, switched at once, even mid-match)
+  and **HRTF** for headphones (hear whether a sound is in front or behind, above or below)
+- A CS2-style console (`console_style 1`, read from your CS2 install) or the original one
 - MW2 perks, killstreaks, XP, challenges, medals, hitmarkers, class menu and exploding cars
   and barrels are turned off
 - Create Game offers Free-for-all, Team Deathmatch and Search and Destroy (Defusal); MW2's
@@ -351,6 +358,15 @@ Your movement mode is saved, so you only set it once.
 | `drop` / `buymenu` | Drop your gun / open the buy menu (as **G** / **B**) |
 | `thirdperson 1` / `0` | Third-person view on or off |
 
+### Video, sound and console
+
+| Command | What it does |
+|---|---|
+| `r_fsr <0-5>` | AMD FSR 3 upscaling: `0` off (default), `1` Native AA, `2` Quality, `3` Balanced, `4` Performance, `5` Ultra Performance |
+| `r_fsr_sharpness <0-1>` | FSR 3's sharpening (default `0.8`) |
+| `snd_device` / `snd_device <number or name>` | List the sound output devices / switch to one at once (`default` follows Windows) |
+| `console_style 1` / `0` | CS2's console look or the original one |
+
 ### Maps and bots
 
 | Command | What it does |
@@ -446,7 +462,7 @@ everything is as before.
 | Guns in first person: all 24 guns, the knife, HE, flash and smoke grenades and the C4, with CS2's arms | ✅ In |
 | CS2's own first-person animations: draw, idle, shoot, reload, silencer on and off, shotguns reloading shell by shell, pistols' slide locked back when empty | ✅ In |
 | CS2's materials: colour, normal, roughness and metal, occlusion maps, with the map's reflections on the metal | ✅ In |
-| Knife and grenades in third person: CS2's stance (on the server's hitboxes too) | 🟡 WIP: standing still only; running, crouching, the slash and the throw are still MW2's, and the knife can point a little off in the hand |
+| Knife and grenades in third person: CS2's stance (on the server's hitboxes too) | 🟡 WIP: the knife's animations are still being worked on and can point a little off in the hand; grenades are experimental |
 | Volumetric smoke (`smoke_mode cs2`, set by the host) | 🟡 WIP: in the current build, still being tuned |
 | Guns in third person and on the ground | ❌ Still CS:S models |
 | Sounds | ❌ Still CS:S sounds; CS2-only ones (the Nova's shell going in, the M4A1-S bolt) are silent |
@@ -507,11 +523,9 @@ Known issues with CS2 on:
   - [ ] Sparks off the helmet on a headshot against a helmet, like CS:GO
   - [ ] Blood on the knife's hits on walls and floors too
   - [ ] Blood marks on the player who was hit, cleared when they respawn
-- [ ] **WIP** Knife and grenades in third person like CS: held with CS2's own stance (read from
-  your CS2 install, the same on the server's hitboxes and on screen; MW2's upright one-handed
-  pose without CS2), and the hunched grenade pose only while a throw is under way, so holding
-  one doesn't move your hitboxes. Standing still is in; running, crouching, the knife slash and
-  the grenade throw are next
+- [ ] **WIP** Knife and grenades in third person like CS: held in the installed CS game's own
+  stance (CS2, CS:S, CZ or CS 1.6, read from your install, the same on the server's hitboxes and
+  on screen). The knife's animations are still being worked on; grenades are experimental
 - [ ] No camera shake from the hidden MW2 weapon animations when you swap or reload a CS gun
   (`cl_camera_anim 1` brings it back)
 
@@ -561,8 +575,8 @@ Known issues with CS2 on:
    - [x] C4
    - [x] CS2's materials on all of them (normal, roughness and metal, occlusion, the map's
      reflections)
-   - [ ] **WIP** Knife and grenades in third person (CS2's stance, on the hitboxes too):
-     standing still is in; running, crouching, slashing and throwing are next
+   - [ ] **WIP** Knife and grenades in third person (CS2's stance, on the hitboxes too): the
+     knife's animations are still being worked on; grenades are experimental
    - [ ] Guns in third person and lying on the ground
    - [ ] The inspect key
 2. **CS2 sounds**: guns (with the CS2-only ones like the Nova's shell going in), footsteps,
@@ -625,11 +639,10 @@ Known issues with CS2 on:
 - The map ambient sound plays about 9 dB quieter than MW2's by default (MW2's looping emitters
   stack up to only a few dB under a rifle); tune it with `snd_ambient_volume`. Very loud
   gunfire can still clip.
-- Linux: performance problems (stutters, launch time that varies a lot from one start to the
-  next) and broken audio.
-- Third person, on every version: the knife and grenades don't look right yet. They take CS2's
-  stance only standing still with CS2 installed, MW2's upright pose without it, and running,
-  crouching, slashing and throwing use MW2's animations.
+- Linux: stutters, and a launch time that varies a lot from one start to the next. v0.3.3 should
+  stop the sound from cutting out, but no one has tested it on Linux yet.
+- Third person: the knife's animations are still a work in progress (it can point a little off
+  in the hand), and grenades are experimental.
 - Deaths play MW2's death animations, not ragdolls, and bodies stay on the ground until MW2's
   corpse pool reuses them (see Physics in Planned).
 - No blood marks on the player who was hit yet (blood on the walls behind them is in).
