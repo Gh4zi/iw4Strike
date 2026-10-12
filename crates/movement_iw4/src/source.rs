@@ -371,6 +371,9 @@ struct Move<'a, C: CollisionBackend> {
     walking: bool,
     /// The held weapon's run speed, before walk, duck and stamina scale it (CS:GO acceleration).
     weapon_speed: f32,
+    /// Source's base velocity: what a player stood on gives or takes at the instant of leaving or
+    /// landing on them. It moves the player this step and becomes momentum at the step's end.
+    base_velocity: [f32; 3],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -545,7 +548,13 @@ fn move_step<C: CollisionBackend>(
         landing_speed: 0.0,
         walking: walk_key,
         weapon_speed: profile.max_speed,
+        base_velocity: [0.0; 3],
     };
+    // CS:GO: on a player who stands on another, the top one slides off.
+    let stacked = profile.csgo.is_some()
+        && mv
+            .ground_player(ps.ground_entity_num)
+            .is_some_and(|ground| ground.on_player);
 
     let unstuck = mv.unstick(ps);
     mv.categorize(ps, pml);
@@ -562,6 +571,19 @@ fn move_step<C: CollisionBackend>(
             wish
         }
         None => command_wish(cmd, &profile, walk_key),
+    };
+    let mut slid_cmd = *cmd;
+    let cmd = if stacked {
+        // Sliding off a stack: full speed forwards, no strafe, walk, jump or duck.
+        wish = Wish {
+            forward: mv.profile.max_speed * 3.0,
+            side: 0.0,
+        };
+        mv.walking = false;
+        slid_cmd.buttons &= !(buttons::JUMP | buttons::CROUCH);
+        &mut slid_cmd
+    } else {
+        cmd
     };
     mv.duck(ps, pml, cmd, old_buttons, &mut wish);
 
@@ -585,6 +607,7 @@ fn move_step<C: CollisionBackend>(
     } else {
         mv.full_walk_move(ps, pml, cmd, old_buttons, wish);
     }
+    mv.apply_base_velocity(ps);
     StepResult {
         bounds: mv.bounds,
         landing_speed: mv.landing_speed,
@@ -689,6 +712,29 @@ impl<C: CollisionBackend> Move<'_, C> {
 
     fn player_trace(&self, start: [f32; 3], end: [f32; 3]) -> Trace {
         self.trace(start, end, self.bounds)
+    }
+
+    /// The player standing on `entity` means standing on, if it is one.
+    fn ground_player(&self, entity: i32) -> Option<crate::PlayerGround> {
+        self.collision.player_ground(u16::try_from(entity).ok()?)
+    }
+
+    /// Adds the base velocity to the player's (`sign` 1) or takes it back out (`sign` -1)
+    /// around a move, as Source's walk and air moves do.
+    fn add_base_velocity(&self, ps: &mut PlayerState, sign: f32) {
+        for (axis, base) in ps.velocity.iter_mut().zip(self.base_velocity) {
+            *axis += sign * base;
+        }
+    }
+
+    /// Source's base velocity becomes momentum after the move, with half a step's worth more
+    /// (`1 + frametime / 2` of it), as the start of Source's next command applies it.
+    fn apply_base_velocity(&mut self, ps: &mut PlayerState) {
+        let scale = 1.0 + self.frametime * 0.5;
+        for (axis, base) in ps.velocity.iter_mut().zip(self.base_velocity) {
+            *axis += base * scale;
+        }
+        self.base_velocity = [0.0; 3];
     }
 
     /// `FullWalkMove` for a player out of water.
@@ -889,16 +935,28 @@ impl<C: CollisionBackend> Move<'_, C> {
         pml.ground_plane = 1;
         pml.almost_ground_plane = 1;
         pml.walking = 1;
+        let entity = crate::ground::trace_entity_id(trace);
         if landing {
+            if let Some(ground) = self.ground_player(entity) {
+                // Landing on a player takes their velocity at that instant away.
+                self.base_velocity[0] -= ground.velocity[0];
+                self.base_velocity[1] -= ground.velocity[1];
+                self.base_velocity[2] = ground.velocity[2];
+            }
             ps.velocity[2] = 0.0;
             crate::crash_land(ps, pml);
         }
-        let entity = crate::ground::trace_entity_id(trace);
         ps.ground_entity_num = entity;
         self.collision.touch_entity(entity);
     }
 
-    fn leave_ground(&self, ps: &mut PlayerState, pml: &mut Pml) {
+    fn leave_ground(&mut self, ps: &mut PlayerState, pml: &mut Pml) {
+        if let Some(ground) = self.ground_player(ps.ground_entity_num) {
+            // Leaving a player gives their velocity at that instant: a runboost.
+            self.base_velocity[0] += ground.velocity[0];
+            self.base_velocity[1] += ground.velocity[1];
+            self.base_velocity[2] = ground.velocity[2];
+        }
         ps.ground_entity_num = ENTITYNUM_NONE;
         pml.ground_plane = 0;
         pml.almost_ground_plane = 0;
@@ -926,15 +984,20 @@ impl<C: CollisionBackend> Move<'_, C> {
                 }
             }
         }
+        let ground = self.ground_player(ps.ground_entity_num);
         self.leave_ground(ps, pml);
         ps.jump_origin_z = ps.origin[2];
         ps.jump_time = cmd.server_time;
 
         if let Some(rules) = profile.csgo {
-            // A ducking or ducked jump sets the upward speed; a standing one adds to it. The
-            // stamina penalty scales it, and the jump's impulse adds to the penalty.
+            // A ducking or ducked jump, or one off a player's head, sets the upward speed; a
+            // standing one adds to it; one off a player in the air has none of its own, only
+            // theirs (the base velocity). The stamina penalty scales it, and the jump's impulse
+            // adds to the penalty.
             let start_z = ps.velocity[2];
-            if ps.cs_duck_state != 0 {
+            if ground.is_some_and(|ground| ground.airborne) {
+                ps.velocity[2] = 0.0;
+            } else if ps.cs_duck_state != 0 || ground.is_some() {
                 ps.velocity[2] = profile.jump_impulse;
             } else {
                 ps.velocity[2] += profile.jump_impulse;
@@ -1107,8 +1170,10 @@ impl<C: CollisionBackend> Move<'_, C> {
             None => self.accelerate(ps, dir, wish_speed, self.profile.accelerate),
         }
 
+        self.add_base_velocity(ps, 1.0);
         if length(&ps.velocity) < 0.0001 {
             ps.velocity = [0.0; 3];
+            self.add_base_velocity(ps, -1.0);
             return;
         }
 
@@ -1120,10 +1185,12 @@ impl<C: CollisionBackend> Move<'_, C> {
         let direct = self.player_trace(ps.origin, dest);
         if direct.fraction >= 1.0 && direct.startsolid == 0 && direct.allsolid == 0 {
             ps.origin = dest;
+            self.add_base_velocity(ps, -1.0);
             self.stay_on_ground(ps);
             return;
         }
         self.step_move(ps, pml);
+        self.add_base_velocity(ps, -1.0);
         self.stay_on_ground(ps);
     }
 
@@ -1257,7 +1324,9 @@ impl<C: CollisionBackend> Move<'_, C> {
         let (dir, wish_speed) = wish_direction(pml, wish);
         let wish_speed = wish_speed.min(self.profile.max_speed);
         self.air_accelerate(ps, dir, wish_speed);
+        self.add_base_velocity(ps, 1.0);
         self.try_player_move(ps, pml);
+        self.add_base_velocity(ps, -1.0);
     }
 
     /// `TryPlayerMove`: move through the frame, clipping along up to five planes with no
@@ -2864,5 +2933,170 @@ mod tests {
 
         let (held, _, _) = wall_slide(true, -127);
         assert!(held < 200.0, "pushing away from the wall still surfed: {held}");
+    }
+
+    const BOOSTER: u16 = 1;
+
+    /// A player at the origin (a 32 wide, 72 tall box) moving at `velocity`, with nothing else
+    /// in the world.
+    struct Booster {
+        velocity: [f32; 3],
+        airborne: bool,
+        on_player: bool,
+    }
+
+    const BOOSTER_PLANES: [[f32; 4]; 6] = [
+        [1.0, 0.0, 0.0, 16.0],
+        [-1.0, 0.0, 0.0, 16.0],
+        [0.0, 1.0, 0.0, 16.0],
+        [0.0, -1.0, 0.0, 16.0],
+        [0.0, 0.0, 1.0, 72.0],
+        [0.0, 0.0, -1.0, 0.0],
+    ];
+
+    impl CollisionBackend for Booster {
+        fn trace(&self, input: GroundTraceInput) -> Trace {
+            let mut best = Trace {
+                fraction: 1.0,
+                endpos: input.end,
+                ..Trace::default()
+            };
+            let brush = trace_iw4::BrushRef {
+                planes: &BOOSTER_PLANES,
+                contents: 1,
+                plane_surface_flags: &[],
+                glass_encoded: 0,
+            };
+            trace_iw4::trace_box_into(
+                [brush],
+                input.start,
+                input.end,
+                input.mins,
+                input.maxs,
+                input.tracemask,
+                &mut best,
+            );
+            if best.fraction < 1.0 || best.startsolid != 0 {
+                best.hit_type = trace_iw4::HITTYPE_ENTITY;
+                best.hit_id = BOOSTER;
+            }
+            best
+        }
+
+        fn player_ground(&self, entity: u16) -> Option<crate::PlayerGround> {
+            (entity == BOOSTER).then_some(crate::PlayerGround {
+                velocity: self.velocity,
+                airborne: self.airborne,
+                on_player: self.on_player,
+            })
+        }
+    }
+
+    /// CS:GO movement standing still on the booster's head, settled there while it stood still;
+    /// then the booster takes on `booster`'s motion.
+    fn on_booster(booster: Booster) -> Sim<Booster> {
+        let mut sim = Sim::csgo(Booster {
+            velocity: [0.0; 3],
+            airborne: false,
+            on_player: false,
+        });
+        sim.ps.origin = [0.0, 0.0, 72.0];
+        for _ in 0..5 {
+            sim.tick(0, 0, 0, 0.0);
+        }
+        assert_eq!(sim.ps.ground_entity_num, i32::from(BOOSTER), "not on the booster");
+        sim.world = booster;
+        sim
+    }
+
+    /// Source's base velocity becomes momentum with half a 100 Hz step's worth more.
+    const BASE_SCALE: f32 = 1.0 + 0.01 * 0.5;
+
+    #[test]
+    fn jumping_off_a_running_player_takes_their_speed() {
+        let mut sim = on_booster(Booster {
+            velocity: [250.0, 0.0, 0.0],
+            airborne: false,
+            on_player: false,
+        });
+        sim.tick(0, 0, buttons::JUMP, 0.0);
+        assert!(!sim.grounded());
+        let expected = 250.0 * BASE_SCALE;
+        assert!(
+            (sim.ps.velocity[0] - expected).abs() < 0.01,
+            "runboost speed {} (wanted {expected})",
+            sim.ps.velocity[0]
+        );
+        // Off a head the jump sets the upward speed, as a ducked one does.
+        assert!(sim.ps.velocity[2] > 280.0, "jump {}", sim.ps.velocity[2]);
+    }
+
+    #[test]
+    fn jumping_off_a_player_in_the_air_rides_their_jump() {
+        let mut sim = on_booster(Booster {
+            velocity: [0.0, 0.0, 200.0],
+            airborne: true,
+            on_player: false,
+        });
+        sim.tick(0, 0, buttons::JUMP, 0.0);
+        // No impulse of its own, only their upward speed. (This booster stays put, so the step
+        // ends back on its head, as Source's would on a booster that rose with it: the landing
+        // clears the player's own upward speed and leaves theirs.)
+        let expected = 200.0 * BASE_SCALE;
+        assert!(
+            (sim.ps.velocity[2] - expected).abs() < 0.01,
+            "upward speed {} (wanted {expected})",
+            sim.ps.velocity[2]
+        );
+    }
+
+    #[test]
+    fn landing_on_a_running_player_takes_their_speed_away() {
+        let mut sim = Sim::csgo(Booster {
+            velocity: [250.0, 0.0, 0.0],
+            airborne: false,
+            on_player: false,
+        });
+        sim.ps.origin = [0.0, 0.0, 100.0];
+        for _ in 0..100 {
+            sim.tick(0, 0, 0, 0.0);
+            if sim.grounded() {
+                break;
+            }
+        }
+        assert!(sim.grounded());
+        let expected = -250.0 * BASE_SCALE;
+        assert!(
+            (sim.ps.velocity[0] - expected).abs() < 0.01,
+            "speed after landing {} (wanted {expected})",
+            sim.ps.velocity[0]
+        );
+    }
+
+    #[test]
+    fn the_top_of_a_stack_slides_off() {
+        let mut sim = on_booster(Booster {
+            velocity: [0.0; 3],
+            airborne: false,
+            on_player: true,
+        });
+        let start = sim.ps.origin[0];
+        sim.tick(0, 0, buttons::JUMP, 0.0);
+        assert!(sim.ps.velocity[2] <= 0.0, "jumped off a stack");
+        for _ in 0..20 {
+            sim.tick(0, 0, 0, 0.0);
+        }
+        assert!(sim.ps.origin[0] > start + 10.0, "never slid: {}", sim.ps.origin[0]);
+
+        // One player high is no stack: standing still stays put.
+        let mut sim = on_booster(Booster {
+            velocity: [0.0; 3],
+            airborne: false,
+            on_player: false,
+        });
+        for _ in 0..20 {
+            sim.tick(0, 0, 0, 0.0);
+        }
+        assert_eq!(sim.ps.origin[0], 0.0);
     }
 }

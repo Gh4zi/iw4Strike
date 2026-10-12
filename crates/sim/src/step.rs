@@ -2015,6 +2015,9 @@ struct PlayerBodyClip {
     origin: [f32; 3],
     /// CS rules: solid box this tall (stand or duck hull); `None` keeps the IW4 capsule.
     box_height: Option<f32>,
+    velocity: [f32; 3],
+    /// What the player stands on (`ground_entity_num`).
+    ground: i32,
 }
 
 fn alive_body_clips(world: &FrameWorld) -> Vec<PlayerBodyClip> {
@@ -2031,6 +2034,8 @@ fn alive_body_clips(world: &FrameWorld) -> Vec<PlayerBodyClip> {
                 entnum: id.0 as u16,
                 origin: ps.origin,
                 box_height: movement_iw4::rules::body_height(ps),
+                velocity: ps.velocity,
+                ground: ps.ground_entity_num,
             })
         })
         .collect();
@@ -2042,6 +2047,8 @@ fn alive_body_clips(world: &FrameWorld) -> Vec<PlayerBodyClip> {
                 entnum: body.client.0 as u16,
                 origin: body.origin,
                 box_height: body.box_height,
+                velocity: body.velocity,
+                ground: body.ground_entity,
             }),
     );
     bodies
@@ -2067,6 +2074,21 @@ impl CollisionBackend for ClipBackend<'_> {
 
     fn trace_exact_boxes(&self, input: GroundTraceInput) -> Trace {
         self.trace_with_rule(input, trace_iw4::BrushHitRule::ExactBoxTouch)
+    }
+
+    fn player_ground(&self, entity: u16) -> Option<movement_iw4::PlayerGround> {
+        let body = self
+            .bodies
+            .iter()
+            .find(|body| body.entnum == entity && entity != self.self_entnum)?;
+        Some(movement_iw4::PlayerGround {
+            velocity: body.velocity,
+            airborne: body.ground == playerstate_iw4::ENTITYNUM_NONE,
+            on_player: self
+                .bodies
+                .iter()
+                .any(|under| i32::from(under.entnum) == body.ground),
+        })
     }
 }
 

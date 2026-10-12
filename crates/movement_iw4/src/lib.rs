@@ -42,7 +42,7 @@ pub use ads_intent::{AdsIntentContext, AdsIntentResult, BUTTON_ADS, update_ads_i
 pub use air::{AirMoveContext, air_move};
 pub use check_prone::{PRONE_CHECK_HEIGHT, PRONE_FEET_DIST, check_prone, player_prone_allowed};
 pub use cmdscale::{CmdScaleWalkContext, cmd_scale_walk};
-pub use collision::CollisionBackend;
+pub use collision::{CollisionBackend, PlayerGround};
 pub use correct_solid::{BG_CORRECT_SOLID_DELTAS, CorrectSolidOutcome, correct_solid};
 pub use crash::{crash_land, crash_land_fall_height};
 pub use dmgtimer::{

@@ -294,6 +294,9 @@ pub(crate) struct PredictionRemoteBody {
     pub origin: [f32; 3],
     /// CS rules: the body's box height (stand or duck hull); `None` is the IW4 capsule.
     pub box_height: Option<f32>,
+    /// Its velocity and what it stands on, for players standing on it (runboosts).
+    pub velocity: [f32; 3],
+    pub ground_entity: i32,
     pub life_sequence: crate::LifeSequence,
 }
 
@@ -3417,6 +3420,8 @@ impl SimState {
                                 client: *id,
                                 origin: ps.origin,
                                 box_height: movement_iw4::rules::body_height(ps),
+                                velocity: ps.velocity,
+                                ground_entity: ps.ground_entity_num,
                                 life_sequence: meta.life_sequence,
                             },
                         )
