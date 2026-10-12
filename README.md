@@ -46,6 +46,9 @@ welcome, even small fixes.**
   stamina, crouch-spam fatigue, ground acceleration and 1.1x bunny-hop cap, built from the
   measurements and technical reference of
   [CSMovementRust](https://github.com/EduardoCalvoUribe/CSMovementRust)
+- Edgebugs: off the edge of a box-shaped ledge they happen where they would in CS:GO; with
+  `always_edgebug 1` every big fall ends in one, and with `always_pixelsurf 1` any wall can be
+  pixelsurfed
 - Other presets: CS:S-style, surf, Momentum Mod bhop and CS 1.6 movement (`mv_mode`)
 - CS:GO ladders: grab one by moving into it, climb at CS:GO's speed, crouch or walk to climb
   slowly and silently, jump to push off, walk backwards off the top to catch it; your gun stays
@@ -334,8 +337,10 @@ buy flashbang
 | `mv_mode surf` | Surf settings (very high air control, auto-hop) |
 | `mv_mode mmod` | Momentum Mod bhop (auto-hop, no stamina, 260 speed) |
 | `mv_stamina <0-1>` | How much jumping slows you down: `1` normal, `0.5` half, `0` off |
+| `always_edgebug 1` / `0` | Every fall from higher than a crouched jump plus a stair step ends in an edgebug: no landing, no fall damage, you keep your speed (default `0`; not in `mv_mode cs16`) |
+| `always_pixelsurf 1` / `0` | Hold a key into any wall while falling to pixelsurf along it: your height holds until you let go (default `0`; not in `mv_mode cs16`) |
 
-Your movement mode is saved, so you only set it once.
+Your movement mode, `always_edgebug` and `always_pixelsurf` are saved, so you only set them once.
 
 ### Gun and crosshair
 

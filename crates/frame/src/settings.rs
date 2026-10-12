@@ -52,6 +52,11 @@ pub struct GameSettings {
     pub smoke_quality: String,
     /// Map destructibles (cars, barrels) take damage (`sv_destructibles`); off for CS play.
     pub destructibles: bool,
+    /// Every fall from higher than a crouched jump plus a stair step ends in an edgebug
+    /// (`always_edgebug`).
+    pub always_edgebug: bool,
+    /// Falling while pushing into any wall pixelsurfs along it (`always_pixelsurf`).
+    pub always_pixelsurf: bool,
     pub third_person: bool,
     /// The console's look: 0 the original panel, 1 the CS2-style window.
     pub console_style: u8,
@@ -150,6 +155,8 @@ impl Default for GameSettings {
             smoke_mode: "csgo".to_owned(),
             smoke_quality: "high".to_owned(),
             destructibles: false,
+            always_edgebug: false,
+            always_pixelsurf: false,
             third_person: false,
             console_style: 0,
             fsr_mode: 0,

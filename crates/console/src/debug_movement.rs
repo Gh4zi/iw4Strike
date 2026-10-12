@@ -21,6 +21,16 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "mv_mode [csgo|csgo64|csgo128|css|surf|mmod|cs16] — movement preset: CS:GO (100, 64 or 128 tick), CS:S style, surf, Momentum bhop, CS 1.6",
         ));
     }
+    if registry.resolve("always_edgebug").is_none() {
+        registry.register(crate::CommandSpec::new("always_edgebug").usage(
+            "always_edgebug [0|1] — every fall from higher than a crouched jump plus a stair step ends in an edgebug: no landing, no fall damage, your speed kept (not in mv_mode cs16)",
+        ));
+    }
+    if registry.resolve("always_pixelsurf").is_none() {
+        registry.register(crate::CommandSpec::new("always_pixelsurf").usage(
+            "always_pixelsurf [0|1] — hold a key into any wall while falling to pixelsurf along it: your height holds until you let go (not in mv_mode cs16)",
+        ));
+    }
     if registry.resolve("shooting_mode").is_none() {
         registry.register(crate::CommandSpec::new("shooting_mode").usage(
             "shooting_mode [csgo|cs16] — how CS guns shoot on the server you host: CS:GO's spray, inaccuracy and recoil (default) or CS 1.6's",
@@ -157,6 +167,14 @@ pub(crate) fn sync_movement_mode(game: Res<frame::GameSettings>) {
     {
         movement_iw4::rules::set_mode(wanted);
         diag::info!(Console, "mv_mode = {} — {}", wanted.name(), wanted.describe());
+    }
+    if movement_iw4::rules::always_edgebug() != game.always_edgebug {
+        movement_iw4::rules::set_always_edgebug(game.always_edgebug);
+        diag::info!(Console, "always_edgebug = {}", u8::from(game.always_edgebug));
+    }
+    if movement_iw4::rules::always_pixelsurf() != game.always_pixelsurf {
+        movement_iw4::rules::set_always_pixelsurf(game.always_pixelsurf);
+        diag::info!(Console, "always_pixelsurf = {}", u8::from(game.always_pixelsurf));
     }
 }
 
@@ -330,6 +348,32 @@ pub(crate) fn route_movement_commands(
                     _ => "usage: mv_mode [csgo|csgo64|csgo128|css|surf|mmod|cs16]".to_owned(),
                 }
             }
+            "always_edgebug" => match cmd.args.as_slice() {
+                [] => format!(
+                    "always_edgebug = {}",
+                    u8::from(movement_iw4::rules::always_edgebug())
+                ),
+                [arg] if arg == "0" || arg == "1" => {
+                    movement_iw4::rules::set_always_edgebug(arg == "1");
+                    game.always_edgebug = arg == "1";
+                    game.touch();
+                    format!("always_edgebug = {arg}")
+                }
+                _ => "usage: always_edgebug [0|1]".to_owned(),
+            },
+            "always_pixelsurf" => match cmd.args.as_slice() {
+                [] => format!(
+                    "always_pixelsurf = {}",
+                    u8::from(movement_iw4::rules::always_pixelsurf())
+                ),
+                [arg] if arg == "0" || arg == "1" => {
+                    movement_iw4::rules::set_always_pixelsurf(arg == "1");
+                    game.always_pixelsurf = arg == "1";
+                    game.touch();
+                    format!("always_pixelsurf = {arg}")
+                }
+                _ => "usage: always_pixelsurf [0|1]".to_owned(),
+            },
             "sv_destructibles" => match cmd.args.as_slice() {
                 [] => format!(
                     "sv_destructibles = {}",

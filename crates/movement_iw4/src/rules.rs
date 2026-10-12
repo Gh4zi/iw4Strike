@@ -1,7 +1,7 @@
 //! Which movement ruleset normal players use (`mv_mode`). Client prediction and the authority
 //! of a listen server read the same setting, so both sides always simulate the same rules.
 
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use playerstate_iw4::PlayerState;
 
@@ -128,10 +128,42 @@ pub fn set_mode(mode: MovementMode) {
     MODE.store(index as u8, Ordering::Relaxed);
 }
 
+static ALWAYS_EDGEBUG: AtomicBool = AtomicBool::new(false);
+static ALWAYS_PIXELSURF: AtomicBool = AtomicBool::new(false);
+
+/// `always_edgebug`: every fall from higher than a crouched jump plus a stair step ends in an
+/// edgebug (Source movement only).
+#[must_use]
+pub fn always_edgebug() -> bool {
+    ALWAYS_EDGEBUG.load(Ordering::Relaxed)
+}
+
+pub fn set_always_edgebug(on: bool) {
+    ALWAYS_EDGEBUG.store(on, Ordering::Relaxed);
+}
+
+/// `always_pixelsurf`: falling while pushing into any wall pixelsurfs along it (Source movement
+/// only).
+#[must_use]
+pub fn always_pixelsurf() -> bool {
+    ALWAYS_PIXELSURF.load(Ordering::Relaxed)
+}
+
+pub fn set_always_pixelsurf(on: bool) {
+    ALWAYS_PIXELSURF.store(on, Ordering::Relaxed);
+}
+
 /// The ruleset normal players move with. `None` keeps retail IW4 movement.
 #[must_use]
 pub fn active() -> Option<Ruleset> {
-    CS_RULES.then(|| mode().ruleset())
+    CS_RULES.then(|| match mode().ruleset() {
+        Ruleset::Source(profile) => Ruleset::Source(source::SourceProfile {
+            always_edgebug: always_edgebug(),
+            always_pixelsurf: always_pixelsurf(),
+            ..profile
+        }),
+        goldsrc @ Ruleset::GoldSrc(_) => goldsrc,
+    })
 }
 
 const PM_TYPE_NORMAL: i32 = 0;

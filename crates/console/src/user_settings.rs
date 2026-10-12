@@ -455,6 +455,8 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("smoke_mode={}", settings.smoke_mode),
         format!("smoke_quality={}", settings.smoke_quality),
         format!("sv_destructibles={}", u8::from(settings.destructibles)),
+        format!("always_edgebug={}", u8::from(settings.always_edgebug)),
+        format!("always_pixelsurf={}", u8::from(settings.always_pixelsurf)),
         format!("third_person={}", settings.third_person),
         format!("console_style={}", settings.console_style),
         format!("fsr_mode={}", settings.fsr_mode),
@@ -602,6 +604,8 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             }
             "snd_hrtf" => settings.hrtf = value.trim() == "1",
             "sv_destructibles" => settings.destructibles = value.trim() == "1",
+            "always_edgebug" => settings.always_edgebug = value.trim() == "1",
+            "always_pixelsurf" => settings.always_pixelsurf = value.trim() == "1",
             "_vgui_menus" => settings.vgui_menus = value.trim() != "0",
             "cl_roundbanner" => {
                 if hud::RoundBanner::parse(value).is_some() {
