@@ -52,6 +52,9 @@ const CSGO_VIEWMODEL_OFFSET: Mat3x4 = [
     [0.0, 1.0, 0.0, -1.0],
     [0.0, 0.0, 1.0, -1.0],
 ];
+/// CS:GO's default `viewmodel_fov` (horizontal degrees at 4:3): its guns are drawn as CS:GO draws
+/// them by default, whatever `viewmodel_fov` (tuned for CS2's and CS:S's) says.
+const CSGO_VIEWMODEL_FOV: f32 = 60.0;
 /// CS:GO's arms when the player wears no agent: the Phoenix Connexion's and the SAS's.
 const CSGO_ARMS: [&str; 2] = [
     "models/weapons/t_arms_phoenix.mdl",
@@ -1930,7 +1933,8 @@ pub fn update_cs_viewmodel(
     let (tan_half_fov_y, texture_gamma) = match model.format {
         Format::GoldSrc => (GOLDSRC_TAN_HALF_FOV_Y, 0.8),
         // Source's viewmodel fov is horizontal at 4:3 (widened for wider screens like ours).
-        Format::Source | Format::Csgo | Format::Source2 => (
+        Format::Csgo => ((CSGO_VIEWMODEL_FOV * 0.5).to_radians().tan() * 0.75, 1.0),
+        Format::Source | Format::Source2 => (
             (settings.viewmodel_fov * 0.5).to_radians().tan() * 0.75,
             1.0,
         ),
