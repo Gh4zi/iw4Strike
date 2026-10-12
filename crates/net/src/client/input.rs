@@ -82,6 +82,7 @@ impl Default for ClientActionInput {
         Self {
             client: ClientInput {
                 hold_crouch: movement_iw4::rules::CS_RULES,
+                walk_key: movement_iw4::rules::CS_RULES,
                 ..ClientInput::default()
             },
             stance_life: None,

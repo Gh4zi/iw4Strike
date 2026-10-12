@@ -268,6 +268,9 @@ pub struct ClientInput {
     pub center_view: bool,
     /// CS rules: every crouch or stance binding is held `+movedown` (CS `+duck`), never a toggle.
     pub hold_crouch: bool,
+    /// CS rules: the sprint key is CS's walk key (`+speed`), held in every direction, backwards
+    /// included (MW2 never sprints backwards).
+    pub walk_key: bool,
 }
 
 impl Default for ClientInput {
@@ -288,6 +291,7 @@ impl Default for ClientInput {
             stance_held: None,
             center_view: false,
             hold_crouch: false,
+            walk_key: false,
         }
     }
 }
@@ -616,6 +620,9 @@ pub fn create_cmd(input: &CreateCmdInput) -> UserCmd {
 pub fn sample_move(client: &mut ClientInput, now_msec: i32, frame_msec: u32) -> (u32, MoveAxes) {
     stance_hold(client, now_msec);
     let mut bits = key_move_bits(&client.kb, client.using_ads, cmd_buttons(&client.kb));
+    if client.walk_key && (client.kb.sprint.active || client.kb.sprint.was_pressed) {
+        bits |= buttons::SPRINT;
+    }
     if client.kb.gostand.active || client.kb.gostand.was_pressed {
         client.stance_latch = 0;
     }
@@ -657,6 +664,20 @@ mod tests {
             key_event(&mut client, KEY, false, 1100, 10);
             assert!(!client.kb.movedown.active, "{binding}: released");
             assert_eq!(client.stance_latch, 0, "{binding}: no latched stance");
+        }
+    }
+
+    #[test]
+    fn cs_walk_key_holds_moving_backwards() {
+        for walk_key in [false, true] {
+            let mut client = ClientInput {
+                walk_key,
+                ..ClientInput::default()
+            };
+            client.kb.sprint.active = true;
+            client.kb.back.active = true;
+            let (bits, _) = sample_move(&mut client, 1000, 10);
+            assert_eq!(bits & buttons::SPRINT != 0, walk_key, "walk key {walk_key}");
         }
     }
 
