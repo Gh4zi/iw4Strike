@@ -2668,6 +2668,13 @@ impl SimState {
             return Ok((bones, Some(normal)));
         }
         if let Some(slot) = self.player_dobjs.get(&id.0) {
+            // Only the bones the hit volumes, the controller and the hold stance read.
+            let mut request = request;
+            request.requested_parts = Some(xmodel_runtime::collision_parts(
+                &slot.dobj,
+                &models,
+                &xmodel_runtime::PLAYER_POSE_CONTROL_BONES,
+            ));
             return xmodel_runtime::collision_dobj_with_controller(
                 &slot.dobj, &models, &request, world, controller,
             )

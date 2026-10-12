@@ -250,6 +250,84 @@ fn build_models(models: &[(&RetainedModelCapability, Option<Attach>)]) -> Result
     DObj::build(&descriptors)
 }
 
+/// The bones a player's controller and CS hold stance read or write besides the hit volumes'
+/// own (`apply_player_controller`, `apply_hold_stance`).
+pub const PLAYER_POSE_CONTROL_BONES: [&str; 23] = [
+    "back_low",
+    "back_mid",
+    "back_up",
+    "pelvis",
+    "torso_stabilizer",
+    "j_spinelower",
+    "j_spineupper",
+    "j_spine4",
+    "j_neck",
+    "j_head",
+    "j_clavicle_le",
+    "j_clavicle_ri",
+    "j_shoulder_le",
+    "j_elbow_le",
+    "j_wrist_le",
+    "j_mid_le_1",
+    "j_thumb_le_1",
+    "j_shoulder_ri",
+    "j_elbow_ri",
+    "j_wrist_ri",
+    "j_mid_ri_1",
+    "j_thumb_ri_1",
+    "tag_weapon_right",
+];
+
+/// Every bone a collision pose of `models` on `dobj` reads: the bones with a hit volume, the
+/// bones `named`, all their ancestors, and the source of any duplicate among them.
+///
+/// Sampling only these leaves every bone with a hit volume where a full pose puts it (each one's
+/// world transform is its own and its ancestors' locals), for the cost of the bones that carry
+/// hit volumes rather than the whole skeleton. Every bone when the skeleton outgrows the mask.
+#[must_use]
+pub fn collision_parts(
+    dobj: &DObj,
+    models: &[(&RetainedModelCapability, Option<Attach>)],
+    named: &[&str],
+) -> PartBits {
+    if dobj.bones.len() > PartBits::CAPACITY {
+        return dobj.all_parts();
+    }
+    let mut parts = PartBits::default();
+    // A bone is only ever set with all its ancestors, so the walk stops at the first one set.
+    let add = |parts: &mut PartBits, mut bone: Option<usize>| {
+        while let Some(index) = bone {
+            if parts.get(index) {
+                break;
+            }
+            parts.set(index);
+            bone = dobj.bones.get(index).and_then(|bone| bone.parent);
+        }
+    };
+    for (slot, (model, _)) in dobj.models.iter().zip(models.iter()) {
+        for local in 0..slot.bone_count {
+            if model.bone_collision.get(local).is_some_and(Option::is_some) {
+                add(&mut parts, Some(slot.base + local));
+            }
+        }
+    }
+    for name in named {
+        add(&mut parts, dobj.find(name));
+    }
+    loop {
+        let mut grew = false;
+        for &(dest, source) in &dobj.duplicates {
+            if parts.get(dest) && !parts.get(source) {
+                add(&mut parts, Some(source));
+                grew = true;
+            }
+        }
+        if !grew {
+            return parts;
+        }
+    }
+}
+
 pub fn collision_dobj_with_controller(
     dobj: &DObj,
     models: &[(&RetainedModelCapability, Option<Attach>)],
