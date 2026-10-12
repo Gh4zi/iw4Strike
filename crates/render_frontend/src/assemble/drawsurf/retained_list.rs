@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use super::list::DrawSurfList;
 use super::tess::fx::FxCodeMeshPlan;
-use super::tess::glass::GfxGlassMeshPlan;
+use super::tess::glass::{GLASS_SMOKE_RADIUS, GfxGlassMeshDraw, GfxGlassMeshPlan, GlassSmokes};
 use super::tess::mark::{GfxMarkMeshPlan, mark_mesh_surface_samplers};
 use super::tess::particle_cloud::FxParticleCloudPlan;
 use super::tess::smodel::{
@@ -372,8 +372,44 @@ fn sort_fx_draw_lane(lane: &mut FxDrawLane, eye: [f32; 3], glass: Option<&GfxGla
         )
     };
     lane.colour.sort_unstable_by_key(order);
-    lane.emissive.sort_unstable_by_key(order);
+    // A pane in the emissive list stands before a smoke (`glass_before_smoke`): it draws after
+    // every effect.
+    lane.emissive.sort_unstable_by_key(|item| {
+        (
+            matches!(item.kind, RetainedDrawKind::Glass { .. }),
+            order(item),
+        )
+    });
     lane.distortion.sort_unstable_by_key(order);
+}
+
+/// Whether a pane stands between the eye and a standing particle smoke, with no smoke on the
+/// eye's side reaching it. Glass is lit and draws before effects (MW2's order), so the smoke
+/// behind painted over the pane's markings (the white bands across Terminal's windows); such a
+/// pane draws after the effects instead. A smoke on the eye's side keeps the pane under it.
+fn glass_before_smoke(draw: &GfxGlassMeshDraw, eye: [f32; 3], smokes: &[[f32; 3]]) -> bool {
+    let side = |at: [f32; 3]| -> f32 {
+        (0..3)
+            .map(|i| (at[i] - draw.origin[i]) * draw.normal[i])
+            .sum()
+    };
+    let eye_side = side(eye);
+    if eye_side.abs() < 1.0 {
+        return false;
+    }
+    let mut behind = false;
+    for &smoke in smokes {
+        if (side(smoke) < 0.0) != (eye_side < 0.0) {
+            behind = true;
+        } else {
+            let reach = GLASS_SMOKE_RADIUS + draw.radius;
+            let d2: f32 = (0..3).map(|i| (smoke[i] - draw.origin[i]).powi(2)).sum();
+            if d2 < reach * reach {
+                return false;
+            }
+        }
+    }
+    behind
 }
 
 pub(crate) fn mix_draw_membership(id: &mut u64, item: &RetainedDrawItem) {
@@ -1954,21 +1990,45 @@ pub(crate) fn rebuild_fx_draw_lane(
     smodel_lighting: Option<Res<crate::prepare::scene::smodel_lighting::WorldSmodelLighting>>,
     camera_origin: Option<Res<render_fx::FxCameraOrigin>>,
     scene: Option<Res<WorldScene>>,
+    smoke: (
+        Option<Res<GlassSmokes>>,
+        Option<Res<render_fx::HostFxSystem>>,
+    ),
 ) {
     let (fx, particle_cloud, mark_mesh, glass_mesh) = plans;
     let eye = camera_origin.map(|c| c.0).unwrap_or([0.0; 3]);
     let glass_plan = glass_mesh.as_deref();
+    let smokes: Vec<[f32; 3]> = match smoke {
+        (Some(smokes), Some(host)) => smokes.standing(host.0.msec_now).collect(),
+        _ => Vec::new(),
+    };
+    let before_smoke: Vec<bool> = match glass_plan {
+        Some(plan) if !smokes.is_empty() => plan
+            .draws
+            .iter()
+            .map(|draw| glass_before_smoke(draw, eye, &smokes))
+            .collect(),
+        _ => Vec::new(),
+    };
     let distortion_key = scene
         .as_deref()
         .and_then(|scene| scene.cull.as_ref())
         .and_then(|cull| cull.sort_key_distortion);
     let lane = &mut *lane;
-    let layout = lane_layout_hash(
-        fx.as_deref(),
-        particle_cloud.as_deref(),
-        mark_mesh.as_deref(),
-        glass_mesh.as_deref(),
-    );
+    // Which panes draw after the effects is part of the lanes' membership.
+    let layout = before_smoke
+        .iter()
+        .enumerate()
+        .filter(|(_, late)| **late)
+        .fold(
+            lane_layout_hash(
+                fx.as_deref(),
+                particle_cloud.as_deref(),
+                mark_mesh.as_deref(),
+                glass_mesh.as_deref(),
+            ),
+            |hash, (i, _)| (hash ^ (i as u64 + 1)).wrapping_mul(0x0000_0100_0000_01b3),
+        );
     let payload = mix_fx_payload_revision(
         fx.as_deref(),
         particle_cloud.as_deref(),
@@ -2221,7 +2281,12 @@ pub(crate) fn rebuild_fx_draw_lane(
             } else {
                 None
             };
-            push_direct_lane_item(&mut lane.colour, &mut lane.emissive, distortion, item);
+            if distortion.is_none() && before_smoke.get(i).copied().unwrap_or(false) {
+                // Drawn after the effects, with its lit technique (`glass_before_smoke`).
+                lane.emissive.push(item);
+            } else {
+                push_direct_lane_item(&mut lane.colour, &mut lane.emissive, distortion, item);
+            }
             lane.glass_mesh_sorted = lane.glass_mesh_sorted.saturating_add(1);
         }
     }

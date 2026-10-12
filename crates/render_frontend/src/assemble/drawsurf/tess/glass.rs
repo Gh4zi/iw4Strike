@@ -35,6 +35,50 @@ pub const GFX_GLASS_MESH_VERT_LIMIT: usize = 0xC000;
 
 pub const GFX_GLASS_MESH_INDEX_LIMIT: usize = 0xA000;
 
+/// How long after its last pop (or refire) a CS:GO particle smoke counts as standing.
+const GLASS_SMOKE_LIFE_MS: i32 = 20_000;
+/// Pops this close are one smoke (a refire comes from the same grenade).
+const GLASS_SMOKE_SAME_POP: f32 = 64.0;
+/// How far a particle smoke's cloud reaches from where it popped.
+pub(crate) const GLASS_SMOKE_RADIUS: f32 = 200.0;
+
+/// CS:GO's particle smokes, by where they popped and when (FX clock ms). Glass is lit and draws
+/// before effects (MW2's order), so a smoke behind a window painted over the window's own
+/// markings; a pane with a smoke behind it draws after the effects (`rebuild_fx_draw_lane`).
+#[derive(Resource, Default)]
+pub(crate) struct GlassSmokes {
+    pops: Vec<([f32; 3], i32)>,
+}
+
+impl GlassSmokes {
+    pub(crate) fn pop(&mut self, origin: [f32; 3], now_ms: i32) {
+        let same = |at: [f32; 3]| {
+            (0..3).map(|i| (at[i] - origin[i]).powi(2)).sum::<f32>()
+                < GLASS_SMOKE_SAME_POP * GLASS_SMOKE_SAME_POP
+        };
+        self.pops
+            .retain(|(at, ms)| !same(*at) && glass_smoke_live(*ms, now_ms));
+        self.pops.push((origin, now_ms));
+    }
+
+    /// Where the standing smokes popped.
+    pub(crate) fn standing(&self, now_ms: i32) -> impl Iterator<Item = [f32; 3]> + '_ {
+        self.pops
+            .iter()
+            .filter(move |(_, ms)| glass_smoke_live(*ms, now_ms))
+            .map(|(at, _)| *at)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.pops.clear();
+    }
+}
+
+/// A clock that went back (a new map) leaves no smoke standing.
+fn glass_smoke_live(popped_ms: i32, now_ms: i32) -> bool {
+    now_ms >= popped_ms && now_ms - popped_ms < GLASS_SMOKE_LIFE_MS
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct GfxGlassMeshDraw {
     pub material: u32,
@@ -52,6 +96,8 @@ pub struct GfxGlassMeshDraw {
     pub piece: u16,
 
     pub origin: [f32; 3],
+    /// The pane's face normal.
+    pub normal: [f32; 3],
 
     pub radius: f32,
 
@@ -457,6 +503,7 @@ impl GfxGlassMeshPlan {
             init_index,
             piece: piece as u16,
             origin,
+            normal: axis[2],
             radius,
             reflection_probe_index: 0,
         });

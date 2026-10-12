@@ -559,6 +559,33 @@ fn apply_payload_update(product: &mut FrameProduct, persist: &mut ProductBindPer
     false
 }
 
+/// The lit technique inputs for glass in the emissive list: a pane before a smoke
+/// (`retained_list::glass_before_smoke`) draws after the effects with the technique it has in
+/// the colour list.
+#[derive(Clone, Copy)]
+struct GlassLit<'a> {
+    tech_type: TechType,
+    sun_shadow_map: super::SunShadowReceivers,
+    spot_shadowed: &'a [u8],
+}
+
+fn glass_lit_technique(
+    draw: &RetainedDrawItem,
+    glass_lit: Option<GlassLit<'_>>,
+    light_types: &[u8],
+    dfog: bool,
+) -> Option<TechType> {
+    let lit = glass_lit.filter(|_| matches!(draw.kind, RetainedDrawKind::Glass { .. }))?;
+    Some(super::colour_lit_technique(
+        lit.tech_type,
+        draw.key,
+        light_types,
+        dfog,
+        lit.sun_shadow_map,
+        lit.spot_shadowed,
+    ))
+}
+
 fn apply_camera_list(
     product: &mut FrameProduct,
     persist: &mut ProductBindPersist,
@@ -574,6 +601,7 @@ fn apply_camera_list(
     prepared: &PreparedMaterialTable,
     composition_digest: u64,
     reuse_compact: bool,
+    glass_lit: Option<GlassLit<'_>>,
 ) {
     if reuse_compact && apply_payload_update(product, persist) {
         product.generation_id = generation_id;
@@ -595,6 +623,7 @@ fn apply_camera_list(
         catalog,
         prepared,
         composition_digest,
+        glass_lit,
     );
 }
 
@@ -609,6 +638,7 @@ fn compact_product_draws(
     persist: &mut ProductBindPersist,
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
+    glass_lit: Option<GlassLit<'_>>,
 ) {
     // Draws with one logical key share a sort key, and the lists arrive in sort-key order: when a
     // partition is sorted, a duplicate can only sit in the run of its own key, so the dedupe
@@ -664,6 +694,8 @@ fn compact_product_draws(
                 light_type,
                 spot_shadowed.contains(&index),
             ))
+        } else if let Some(lit) = glass_lit_technique(&draw, glass_lit, light_types, dfog) {
+            lit
         } else if remap_lit {
             super::colour_lit_technique(
                 tech_type,
@@ -845,8 +877,11 @@ fn colour_list_keep(
     sun_shadow_map: super::SunShadowReceivers,
     spot_shadowed: &[u8],
     catalog: &RuntimeMaterialCatalog,
+    glass_lit: Option<GlassLit<'_>>,
 ) -> bool {
-    let tech = if remap_lit {
+    let tech = if let Some(lit) = glass_lit_technique(draw, glass_lit, light_types, dfog) {
+        lit
+    } else if remap_lit {
         super::colour_lit_technique(
             base,
             draw.key,
@@ -905,6 +940,7 @@ fn fill_product_list(
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
     composition_digest: u64,
+    glass_lit: Option<GlassLit<'_>>,
 ) {
     product.generation_id = generation_id;
     product.list_digest = composition_digest;
@@ -919,6 +955,7 @@ fn fill_product_list(
         persist,
         catalog,
         prepared,
+        glass_lit,
     );
     product.world_pretess_id = world_pretess_id(product);
     persist.remember_compacted(product);
@@ -1611,6 +1648,7 @@ pub(crate) fn execute_sun_product(
         &generation.catalog,
         &generation.prepared,
         stamp.digest(),
+        None,
     );
     {
         let sun = &mut *product;
@@ -1773,6 +1811,7 @@ pub(crate) fn execute_spot_product(
         &generation.catalog,
         &generation.prepared,
         stamp.digest(),
+        None,
     );
     product.spot_slots =
         spot_casters.adopt_frame_slots(&persist.compact_remap, last_pack_id, last_packed);
@@ -1902,6 +1941,11 @@ pub(crate) fn execute_camera_products(
     emissive_persist.prepare(inputs.catalog_generation);
 
     let reuse_compact = last_fill.is_some_and(|prev| prev.composition_eq(stamp));
+    let glass_lit = GlassLit {
+        tech_type: draw_method.tech_type(),
+        sun_shadow_map: sun_receivers,
+        spot_shadowed: &spot_lights.0,
+    };
     let overlay_pair = {
         let colour_keep = |draw: &RetainedDrawItem| {
             distortion_settings.enabled
@@ -1914,6 +1958,7 @@ pub(crate) fn execute_camera_products(
                     sun_receivers,
                     &spot_lights.0,
                     &generation.catalog,
+                    None,
                 )
         };
         let emissive_keep = |draw: &RetainedDrawItem| {
@@ -1927,6 +1972,7 @@ pub(crate) fn execute_camera_products(
                     super::SunShadowReceivers::NONE,
                     &[],
                     &generation.catalog,
+                    Some(glass_lit),
                 )
         };
         let overlay_colour = reuse_compact
@@ -1997,6 +2043,7 @@ pub(crate) fn execute_camera_products(
                         },
                         if remap { spot_lights.0.as_slice() } else { &[] },
                         &generation.catalog,
+                        (!remap).then_some(glass_lit),
                     )
                 });
             }
@@ -2016,6 +2063,7 @@ pub(crate) fn execute_camera_products(
             &generation.prepared,
             composition_digest,
             reuse_compact,
+            None,
         );
         apply_camera_list(
             emissive,
@@ -2032,6 +2080,7 @@ pub(crate) fn execute_camera_products(
             &generation.prepared,
             composition_digest,
             reuse_compact,
+            Some(glass_lit),
         );
     }
 
@@ -2169,6 +2218,7 @@ fn fill_dlight_light(
         prepared,
         dlight_list_digest(composition_digest, inputs),
         false,
+        None,
     );
 }
 

@@ -155,6 +155,7 @@ pub(crate) fn register_combat_fx_systems(app: &mut App) {
             tick_missile_present_state.in_set(ClientSet::Effects),
         )
         .init_resource::<super::cs_smoke::CsSmokes>()
+        .init_resource::<crate::assemble::drawsurf::tess::glass::GlassSmokes>()
         .add_observer(queue_weapon_fire_fx)
         .add_observer(eject_brass)
         .add_observer(explosion)
@@ -2581,6 +2582,7 @@ fn explosion(
     mut cursor: ResMut<FxJournalCursor>,
     mut combat: ResMut<CombatFxDump>,
     mut smokes: ResMut<super::cs_smoke::CsSmokes>,
+    mut glass_smokes: ResMut<crate::assemble::drawsurf::tess::glass::GlassSmokes>,
     fx_world: FxSceneAccess,
 ) {
     let msec = host.0.msec_now;
@@ -2596,7 +2598,9 @@ fn explosion(
     let volumetric = smoke && payload.event_parm == weapon_iw4::cs::CS_SMOKE_VOLUME_PARM;
     if volumetric {
         smokes.pop(payload.origin, msec);
-    } else if !smoke && cs_grenade != Some("flashbang") {
+    } else if smoke {
+        glass_smokes.pop(payload.origin, msec);
+    } else if cs_grenade != Some("flashbang") {
         smokes.blast(payload.origin, msec);
     }
     let impact_type = weapons
@@ -2956,8 +2960,10 @@ fn tunnel_cs_smokes(
 fn clear_cs_smokes_for_killcam(
     _transition: On<net::KillcamFxTransition>,
     mut smokes: ResMut<super::cs_smoke::CsSmokes>,
+    mut glass_smokes: ResMut<crate::assemble::drawsurf::tess::glass::GlassSmokes>,
 ) {
     smokes.clear();
+    glass_smokes.clear();
 }
 
 /// Blood splattered on the walls and floor behind a player a bullet hits, as Counter-Strike does
