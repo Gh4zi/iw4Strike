@@ -370,7 +370,7 @@ pub const CS_LOCATION_DAMAGE: [f32; HITLOC_COUNT] = [
 
 const RIFLE_RUN_SPEED: f32 = 140.0;
 
-pub const CS_WEAPONS: [CsWeapon; 24] = [
+pub const CS_WEAPONS: [CsWeapon; 34] = [
     CsWeapon {
         name: "ak47",
         mw2_name: "ak47_mp",
@@ -1401,6 +1401,405 @@ pub const CS_WEAPONS: [CsWeapon; 24] = [
         },
         ..BASE
     },
+    // CS:GO's M4A4: CS:GO's numbers (`weapon_m4a1`), the m4a1's CS 1.6 handling.
+    CsWeapon {
+        name: "m4a4",
+        mw2_name: "m16_mp",
+        view_model: "v_m4a1",
+        fire_sounds: &["m4a1_unsil-1", "m4a1_unsil-2"],
+        css_view_model: "v_rif_m4a1",
+        css_fire_sound: "Weapon_M4A1.Single",
+        price: 3100,
+        damage: 33.0,
+        range_modifier: 0.97,
+        cycle: 0.09,
+        clip: 30,
+        reserve: 90,
+        reload: 3.1,
+        max_speed: 225.0,
+        max_speed_zoomed: 225.0,
+        semi_auto: false,
+        distance: 8192.0,
+        spread: CsSpread::Rifle {
+            air: (0.035, 0.4),
+            run: (0.035, 0.07),
+            still: (0.0, 0.02),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(1.0, 0.45, 0.28, 0.045, 3.75, 3.0, 7),
+            air: kick(1.2, 0.5, 0.23, 0.15, 5.5, 3.5, 6),
+            ducked: kick(0.6, 0.3, 0.2, 0.0125, 3.25, 2.0, 7),
+            standing: kick(0.65, 0.35, 0.25, 0.015, 3.5, 2.25, 7),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 220.0,
+            integer: true,
+            base: 0.3,
+            max: 1.0,
+            power: 3,
+        },
+        pistol: false,
+        crosshair: CsCrosshair {
+            gap: 4.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    // CS:GO's MP7: CS:GO's numbers (`weapon_mp7`), the mp5's CS 1.6 handling.
+    CsWeapon {
+        name: "mp7",
+        mw2_name: "tavor_mp",
+        view_model: "v_mp5",
+        fire_sounds: &["mp5-1", "mp5-2"],
+        css_view_model: "v_smg_mp5",
+        css_fire_sound: "Weapon_MP5Navy.Single",
+        price: 1500,
+        damage: 29.0,
+        range_modifier: 0.85,
+        cycle: 0.08,
+        clip: 30,
+        reserve: 120,
+        reload: 3.1,
+        max_speed: 220.0,
+        max_speed_zoomed: 220.0,
+        semi_auto: false,
+        distance: 3600.0,
+        spread: CsSpread::Rifle {
+            air: (0.0, 0.2),
+            run: (0.0, 0.04),
+            still: (0.0, 0.04),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(0.5, 0.275, 0.2, 0.03, 3.0, 2.0, 10),
+            air: kick(0.9, 0.475, 0.35, 0.0425, 5.0, 3.0, 6),
+            ducked: kick(0.225, 0.15, 0.1, 0.015, 2.0, 1.0, 10),
+            standing: kick(0.25, 0.175, 0.125, 0.02, 2.25, 1.25, 10),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.0,
+            divisor: 220.1,
+            integer: false,
+            base: 0.45,
+            max: 0.75,
+            power: 2,
+        },
+        crosshair: CsCrosshair {
+            gap: 6.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    // CS:GO's PP-Bizon: CS:GO's numbers (`weapon_bizon`), the mp5's CS 1.6 handling.
+    CsWeapon {
+        name: "bizon",
+        mw2_name: "masada_mp",
+        view_model: "v_mp5",
+        fire_sounds: &["mp5-1", "mp5-2"],
+        css_view_model: "v_smg_mp5",
+        css_fire_sound: "Weapon_MP5Navy.Single",
+        price: 1400,
+        damage: 27.0,
+        range_modifier: 0.8,
+        cycle: 0.08,
+        clip: 64,
+        reserve: 120,
+        reload: 2.4,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        semi_auto: false,
+        distance: 3600.0,
+        spread: CsSpread::Rifle {
+            air: (0.0, 0.2),
+            run: (0.0, 0.04),
+            still: (0.0, 0.04),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(0.5, 0.275, 0.2, 0.03, 3.0, 2.0, 10),
+            air: kick(0.9, 0.475, 0.35, 0.0425, 5.0, 3.0, 6),
+            ducked: kick(0.225, 0.15, 0.1, 0.015, 2.0, 1.0, 10),
+            standing: kick(0.25, 0.175, 0.125, 0.02, 2.25, 1.25, 10),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.0,
+            divisor: 220.1,
+            integer: false,
+            base: 0.45,
+            max: 0.75,
+            power: 2,
+        },
+        crosshair: CsCrosshair {
+            gap: 6.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    // CS:GO's MAG-7: CS:GO's numbers (`weapon_mag7`), the m3's CS 1.6 handling.
+    CsWeapon {
+        name: "mag7",
+        mw2_name: "striker_mp",
+        view_model: "v_m3",
+        fire_sounds: &["m3-1"],
+        css_view_model: "v_shot_m3super90",
+        css_fire_sound: "Weapon_M3.Single",
+        price: 1300,
+        damage: 30.0,
+        range_modifier: 0.45,
+        cycle: 0.85,
+        clip: 5,
+        reserve: 32,
+        reload: 2.5,
+        max_speed: 225.0,
+        max_speed_zoomed: 225.0,
+        semi_auto: true,
+        distance: 1400.0,
+        spread: CsSpread::Cone(0.0675),
+        recoil: CsRecoil::Shotgun {
+            ground: (4, 6),
+            air: (8, 11),
+        },
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 6.0,
+        },
+        pellets: 8,
+        ..BASE
+    },
+    // CS:GO's Sawed-Off: CS:GO's numbers (`weapon_sawedoff`), the m3's CS 1.6 handling.
+    CsWeapon {
+        name: "sawedoff",
+        mw2_name: "ranger_mp",
+        view_model: "v_m3",
+        fire_sounds: &["m3-1"],
+        css_view_model: "v_shot_m3super90",
+        css_fire_sound: "Weapon_M3.Single",
+        price: 1100,
+        damage: 32.0,
+        range_modifier: 0.45,
+        cycle: 0.85,
+        clip: 7,
+        reserve: 32,
+        max_speed: 210.0,
+        max_speed_zoomed: 210.0,
+        semi_auto: true,
+        distance: 1400.0,
+        spread: CsSpread::Cone(0.0675),
+        recoil: CsRecoil::Shotgun {
+            ground: (4, 6),
+            air: (8, 11),
+        },
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 6.0,
+        },
+        shell_reload: Some((0.55, 0.45, 0.45)),
+        pellets: 8,
+        ..BASE
+    },
+    // CS:GO's Negev: CS:GO's numbers (`weapon_negev`), the m249's CS 1.6 handling.
+    CsWeapon {
+        name: "negev",
+        mw2_name: "rpd_mp",
+        view_model: "v_m249",
+        fire_sounds: &["m249-1", "m249-2"],
+        css_view_model: "v_mach_m249para",
+        css_fire_sound: "Weapon_M249.Single",
+        price: 1700,
+        damage: 35.0,
+        range_modifier: 0.97,
+        cycle: 0.075,
+        clip: 150,
+        reserve: 300,
+        reload: 5.7,
+        max_speed: 150.0,
+        max_speed_zoomed: 150.0,
+        semi_auto: false,
+        distance: 8192.0,
+        spread: CsSpread::Rifle {
+            air: (0.045, 0.5),
+            run: (0.045, 0.095),
+            still: (0.0, 0.03),
+        },
+        recoil: CsRecoil::KickBack {
+            moving: kick(1.1, 0.5, 0.3, 0.06, 4.0, 3.0, 8),
+            air: kick(1.8, 0.65, 0.45, 0.125, 5.0, 3.5, 8),
+            ducked: kick(0.75, 0.325, 0.25, 0.025, 3.5, 2.5, 9),
+            standing: kick(0.8, 0.35, 0.3, 0.03, 3.75, 3.0, 9),
+        },
+        accuracy: CsAccuracy::Sustained {
+            initial: 0.2,
+            divisor: 175.0,
+            integer: true,
+            base: 0.4,
+            max: 0.9,
+            power: 3,
+        },
+        crosshair: CsCrosshair {
+            gap: 6.0,
+            delta: 6.0,
+        },
+        ..BASE
+    },
+    // CS:GO's P2000: CS:GO's numbers (`weapon_hkp2000`), the usp's CS 1.6 handling.
+    CsWeapon {
+        name: "p2000",
+        mw2_name: "scar_mp",
+        view_model: "v_usp",
+        fire_sounds: &["usp_unsil-1"],
+        css_view_model: "v_pist_usp",
+        css_fire_sound: "Weapon_USP.Single",
+        price: 200,
+        damage: 35.0,
+        range_modifier: 0.91,
+        cycle: 0.17,
+        clip: 13,
+        reserve: 52,
+        reload: 2.2,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        semi_auto: true,
+        distance: 4096.0,
+        spread: CsSpread::Pistol {
+            air: 1.2,
+            moving: 0.225,
+            ducked: 0.08,
+            standing: 0.1,
+        },
+        recoil: CsRecoil::Punch(2.0),
+        accuracy: CsAccuracy::Pistol {
+            initial: 0.92,
+            recover: 0.3,
+            factor: 0.275,
+            min: 0.6,
+            max: 0.92,
+        },
+        pistol: true,
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    // CS:GO's Tec-9: CS:GO's numbers (`weapon_tec9`), the glock's CS 1.6 handling.
+    CsWeapon {
+        name: "tec9",
+        mw2_name: "aa12_mp",
+        view_model: "v_glock18",
+        fire_sounds: &["glock18-2"],
+        css_view_model: "v_pist_glock18",
+        css_fire_sound: "Weapon_Glock.Single",
+        price: 500,
+        damage: 33.0,
+        range_modifier: 0.79,
+        cycle: 0.12,
+        clip: 18,
+        reserve: 90,
+        reload: 2.5,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        semi_auto: true,
+        distance: 4096.0,
+        spread: CsSpread::Pistol {
+            air: 1.0,
+            moving: 0.165,
+            ducked: 0.075,
+            standing: 0.1,
+        },
+        recoil: CsRecoil::Punch(0.0),
+        accuracy: CsAccuracy::Pistol {
+            initial: 0.9,
+            recover: 0.325,
+            factor: 0.275,
+            min: 0.6,
+            max: 0.9,
+        },
+        pistol: true,
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    // CS:GO's CZ75-Auto: CS:GO's numbers (`weapon_cz75a`), the fiveseven's CS 1.6 handling.
+    CsWeapon {
+        name: "cz75a",
+        mw2_name: "mg4_mp",
+        view_model: "v_fiveseven",
+        fire_sounds: &["fiveseven-1"],
+        css_view_model: "v_pist_fiveseven",
+        css_fire_sound: "Weapon_FiveSeven.Single",
+        price: 500,
+        damage: 31.0,
+        range_modifier: 0.85,
+        cycle: 0.1,
+        clip: 12,
+        reserve: 12,
+        reload: 2.7,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        semi_auto: false,
+        distance: 4096.0,
+        spread: CsSpread::Pistol {
+            air: 1.5,
+            moving: 0.255,
+            ducked: 0.075,
+            standing: 0.15,
+        },
+        recoil: CsRecoil::Punch(2.0),
+        accuracy: CsAccuracy::Pistol {
+            initial: 0.92,
+            recover: 0.275,
+            factor: 0.25,
+            min: 0.725,
+            max: 0.92,
+        },
+        pistol: true,
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
+    // CS:GO's R8 Revolver: CS:GO's numbers (`weapon_revolver`), the deagle's CS 1.6 handling.
+    CsWeapon {
+        name: "revolver",
+        mw2_name: "model1887_mp",
+        view_model: "v_deagle",
+        fire_sounds: &["deagle-1", "deagle-2"],
+        css_view_model: "v_pist_deagle",
+        css_fire_sound: "Weapon_DEagle.Single",
+        price: 600,
+        damage: 86.0,
+        range_modifier: 0.94,
+        cycle: 0.5,
+        clip: 8,
+        reserve: 8,
+        reload: 2.3,
+        max_speed: 180.0,
+        max_speed_zoomed: 220.0,
+        semi_auto: false,
+        distance: 4096.0,
+        spread: CsSpread::Pistol {
+            air: 1.5,
+            moving: 0.25,
+            ducked: 0.115,
+            standing: 0.13,
+        },
+        recoil: CsRecoil::Punch(2.0),
+        accuracy: CsAccuracy::Pistol {
+            initial: 0.9,
+            recover: 0.4,
+            factor: 0.35,
+            min: 0.55,
+            max: 0.9,
+        },
+        pistol: true,
+        crosshair: CsCrosshair {
+            gap: 8.0,
+            delta: 3.0,
+        },
+        ..BASE
+    },
 ];
 
 /// The CS 1.6 knife (`CKnife`) on slot 3, worn by an MW2 pistol that never fires. It is not in
@@ -1771,7 +2170,7 @@ const CS2_VIEWS: [Cs2View; 29] = [
 /// The CS:GO viewmodel each CS weapon wears (`models/weapons/<stem>.mdl` in CS:GO's pack), the
 /// same CS:GO gun as its CS2 model: the Terrorists' and the Counter-Terrorists' (only the knife
 /// differs).
-const CSGO_VIEW_MODELS: [(&str, [&str; 2]); 29] = [
+const CSGO_VIEW_MODELS: [(&str, [&str; 2]); 39] = [
     ("ak47", ["v_rif_ak47"; 2]),
     ("m4a1", ["v_rif_m4a1_s"; 2]),
     ("awp", ["v_snip_awp"; 2]),
@@ -1801,6 +2200,16 @@ const CSGO_VIEW_MODELS: [(&str, [&str; 2]); 29] = [
     ("flashbang", ["v_eq_flashbang"; 2]),
     ("smokegrenade", ["v_eq_smokegrenade"; 2]),
     ("c4", ["v_ied"; 2]),
+    ("m4a4", ["v_rif_m4a1"; 2]),
+    ("mp7", ["v_smg_mp7"; 2]),
+    ("bizon", ["v_smg_bizon"; 2]),
+    ("mag7", ["v_shot_mag7"; 2]),
+    ("sawedoff", ["v_shot_sawedoff"; 2]),
+    ("negev", ["v_mach_negev"; 2]),
+    ("p2000", ["v_pist_hkp2000"; 2]),
+    ("tec9", ["v_pist_tec9"; 2]),
+    ("cz75a", ["v_pist_cz_75"; 2]),
+    ("revolver", ["v_pist_revolver"; 2]),
 ];
 
 /// The CS:GO viewmodels of the CS weapon named `name`: `[terrorist, counter-terrorist]`.
@@ -2235,6 +2644,16 @@ pub fn armor_penetration(index: u8) -> f32 {
         Some("mac10") => 0.95,
         Some("p228") => 1.25,
         Some("scout") => 1.7,
+        Some("m4a4") => 1.4,
+        Some("mp7") => 1.25,
+        Some("bizon") => 1.26,
+        Some("mag7") => 1.5,
+        Some("sawedoff") => 1.5,
+        Some("negev") => 1.42,
+        Some("p2000") => 1.01,
+        Some("tec9") => 1.812,
+        Some("cz75a") => 1.553,
+        Some("revolver") => 1.864,
         _ => 1.0,
     }
 }
@@ -2295,6 +2714,16 @@ pub fn display_name(index: u8) -> Option<&'static str> {
         "g3sg1" => "G3/SG-1",
         "sg550" => "SG 550",
         "m249" => "M249",
+        "m4a4" => "M4A4",
+        "mp7" => "MP7",
+        "bizon" => "PP-Bizon",
+        "mag7" => "MAG-7",
+        "sawedoff" => "Sawed-Off",
+        "negev" => "Negev",
+        "p2000" => "P2000",
+        "tec9" => "Tec-9",
+        "cz75a" => "CZ75-Auto",
+        "revolver" => "R8 Revolver",
         other => other,
     })
 }
@@ -2327,8 +2756,10 @@ pub enum BuyTeam {
 #[must_use]
 pub fn buy_team(name: &str) -> BuyTeam {
     match name {
-        "ak47" | "galil" | "sg552" | "mac10" | "g3sg1" | "elite" => BuyTeam::Terrorists,
-        "m4a1" | "famas" | "aug" | "tmp" | "sg550" | "fiveseven" | "defuser" => {
+        "ak47" | "galil" | "sg552" | "mac10" | "g3sg1" | "elite" | "sawedoff" | "tec9" => {
+            BuyTeam::Terrorists
+        }
+        "m4a1" | "famas" | "aug" | "tmp" | "sg550" | "fiveseven" | "defuser" | "m4a4" | "mag7" | "p2000" => {
             BuyTeam::CounterTerrorists
         }
         _ => BuyTeam::Both,
@@ -3080,9 +3511,12 @@ mod tests {
 
     #[test]
     fn the_table_is_consistent() {
-        // One bit per gun in the per-weapon flags (`silencer_bit`), unique names and twins.
-        assert!(CS_WEAPONS.len() < 31);
+        // A bit in the per-weapon flags (`silencer_bit`) for each gun that keeps one (its
+        // silencer, burst mode or the Elites' next hand); unique names and twins.
         for (i, a) in CS_WEAPONS.iter().enumerate() {
+            if a.silencer.is_some() || a.burst.is_some() || a.dual {
+                assert_ne!(silencer_bit(i as u8 + 1), 0, "{} has no flag bit", a.name);
+            }
             for b in &CS_WEAPONS[i + 1..] {
                 assert_ne!(a.name, b.name);
                 assert_ne!(a.mw2_name, b.mw2_name, "{} and {} share a twin", a.name, b.name);
@@ -3095,7 +3529,6 @@ mod tests {
             assert!(a.zoom.is_empty() || a.zoom.iter().all(|z| *z < 90), "{}", a.name);
             assert_eq!(a.gated(), a.burst.is_some() || a.cycle_zoomed > 0.0);
         }
-        assert!(CS_KNIFE_INDEX as usize <= 31);
     }
 
     #[test]

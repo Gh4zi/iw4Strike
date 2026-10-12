@@ -652,6 +652,9 @@ fn source_model(
     let draws = studio
         .meshes
         .iter()
+        // CS:GO models carry alternatives in their body parts (the R8's speedloader, its fired
+        // rounds); like the engine, only each part's first model draws.
+        .filter(|mesh| format != Format::Csgo || mesh.body_model == 0)
         .filter_map(|mesh| {
             let material = loaded.materials.get(mesh.material)?;
             Some(CsViewmodelDraw {
