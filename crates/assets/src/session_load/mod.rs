@@ -38,6 +38,28 @@ use common_walks::*;
 use match_walk::*;
 
 pub use common_cache::{CommonKey, CommonSet, ShellCommon, load_shell_common};
+
+const KEEP_FOR_NEXT_LOAD_ENV: &str = "IW4L_KEEP_LOADED_ASSETS";
+const KEEP_FOR_NEXT_LOAD_MIN_RAM_GIB: u64 = 24;
+
+/// Whether a load keeps what it decoded for the next one: the resident copy of the prepared
+/// match (a same-map load then opens no zone and decodes nothing) and the common set's
+/// common_mp first-person image payloads (the next map skips ~0.8 s of parallel decode).
+///
+/// Both stay resident through every match: the resident copy holds every decoded image of the
+/// map (~0.8 GiB on Favela), the payloads ~0.4 GiB more. On a machine without much more RAM
+/// than a match uses, that is what pushed the game into page faults mid-match, so they are kept
+/// only with at least `KEEP_FOR_NEXT_LOAD_MIN_RAM_GIB` installed, or when it cannot be read.
+/// `IW4L_KEEP_LOADED_ASSETS=0|1` decides it either way.
+fn keep_for_next_load() -> bool {
+    static KEEP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *KEEP.get_or_init(|| match std::env::var(KEEP_FOR_NEXT_LOAD_ENV).as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => diag::total_physical_memory_bytes()
+            .is_none_or(|bytes| bytes >= KEEP_FOR_NEXT_LOAD_MIN_RAM_GIB << 30),
+    })
+}
 pub use common_walks::{
     MatchMaterialSeed, apply_match_material_map, load_match_material_catalog,
     load_match_material_seed,

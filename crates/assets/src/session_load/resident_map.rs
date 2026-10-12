@@ -81,7 +81,11 @@ pub async fn load_prepared_match(
     let MatchLoadOutcome::Ready(mut prepared) = outcome else {
         return outcome;
     };
-    if let (Some(zone), Some(common)) = (stamp, common) {
+    if !keep_for_next_load() {
+        prepared.report.push(format!(
+            "resident map: not kept for a same-map load (under {KEEP_FOR_NEXT_LOAD_MIN_RAM_GIB} GiB of RAM; {KEEP_FOR_NEXT_LOAD_ENV}=1 keeps it)"
+        ));
+    } else if let (Some(zone), Some(common)) = (stamp, common) {
         let keeping = std::time::Instant::now();
         let resident = prepared.clone();
         prepared.report.push(format!(

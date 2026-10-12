@@ -639,3 +639,38 @@ fn timestamp_per_ns() -> f64 {
 pub fn thread_cpu_ns() -> Option<u64> {
     None
 }
+
+/// Physical memory installed, in bytes; `None` where it cannot be read.
+#[cfg(windows)]
+#[must_use]
+pub fn total_physical_memory_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut status = MEMORYSTATUSEX {
+        dwLength: size_of::<MEMORYSTATUSEX>() as u32,
+        dwMemoryLoad: 0,
+        ullTotalPhys: 0,
+        ullAvailPhys: 0,
+        ullTotalPageFile: 0,
+        ullAvailPageFile: 0,
+        ullTotalVirtual: 0,
+        ullAvailVirtual: 0,
+        ullAvailExtendedVirtual: 0,
+    };
+    // SAFETY: a writable MEMORYSTATUSEX whose dwLength is its size, as the call requires.
+    (unsafe { GlobalMemoryStatusEx(&mut status) } != 0).then_some(status.ullTotalPhys)
+}
+
+/// Physical memory installed, in bytes; `None` where it cannot be read.
+#[cfg(not(windows))]
+#[must_use]
+pub fn total_physical_memory_bytes() -> Option<u64> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kib = meminfo.lines().find_map(|line| {
+        line.strip_prefix("MemTotal:")?
+            .split_whitespace()
+            .next()?
+            .parse::<u64>()
+            .ok()
+    })?;
+    kib.checked_mul(1024)
+}
