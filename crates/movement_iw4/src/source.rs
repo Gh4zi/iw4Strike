@@ -661,13 +661,19 @@ fn csgo_command_wish(
 
 impl<C: CollisionBackend> Move<'_, C> {
     fn trace(&self, start: [f32; 3], end: [f32; 3], bounds: MoveBounds) -> Trace {
-        self.collision.trace(GroundTraceInput {
+        let input = GroundTraceInput {
             start,
             end,
             mins: bounds.mins,
             maxs: bounds.maxs,
             tracemask: bounds.tracemask,
-        })
+        };
+        // CS:GO's own box-brush rule, behind its edgebugs.
+        if self.profile.csgo.is_some() {
+            self.collision.trace_exact_boxes(input)
+        } else {
+            self.collision.trace(input)
+        }
     }
 
     fn player_trace(&self, start: [f32; 3], end: [f32; 3]) -> Trace {
@@ -2495,5 +2501,156 @@ mod tests {
         assert!(passed, "never got past the flange: {:?}", sim.ps.origin);
         assert!(airborne <= 2, "launched off the slope for {airborne} ticks");
         assert!(slowest > 150.0, "the flange cut the climb to {slowest}");
+    }
+    /// A platform as one axis-aligned box brush traced by MW2's brush code (`trace_iw4`): top at
+    /// z 0, its edge at x 0, the platform at negative x. `exact` picks the box rule CS:GO movement
+    /// asks for (`trace_exact_boxes`); off, every trace is MW2's.
+    struct EdgeBox {
+        exact: bool,
+    }
+
+    const EDGE_BOX_PLANES: [[f32; 4]; 6] = [
+        [1.0, 0.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0, 512.0],
+        [0.0, 1.0, 0.0, 512.0],
+        [0.0, -1.0, 0.0, 512.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, -1.0, 512.0],
+    ];
+
+    impl EdgeBox {
+        fn sweep(input: GroundTraceInput, rule: trace_iw4::BrushHitRule) -> Trace {
+            let mut best = Trace {
+                fraction: 1.0,
+                endpos: input.end,
+                ..Trace::default()
+            };
+            let brush = trace_iw4::BrushRef {
+                planes: &EDGE_BOX_PLANES,
+                contents: 1,
+                plane_surface_flags: &[],
+                glass_encoded: 0,
+            };
+            trace_iw4::trace_box_into_with(
+                [brush],
+                input.start,
+                input.end,
+                input.mins,
+                input.maxs,
+                input.tracemask,
+                rule,
+                &mut best,
+            );
+            best.hit_type = trace_iw4::HITTYPE_ENTITY;
+            best.hit_id = trace_iw4::ENTITYNUM_WORLD;
+            best
+        }
+    }
+
+    impl CollisionBackend for EdgeBox {
+        fn trace(&self, input: GroundTraceInput) -> Trace {
+            Self::sweep(input, trace_iw4::BrushHitRule::Iw4)
+        }
+
+        fn trace_exact_boxes(&self, input: GroundTraceInput) -> Trace {
+            let rule = if self.exact {
+                trace_iw4::BrushHitRule::ExactBoxTouch
+            } else {
+                trace_iw4::BrushHitRule::Iw4
+            };
+            Self::sweep(input, rule)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum EdgeOutcome {
+        Land,
+        Edgebug,
+        Miss,
+    }
+
+    /// CS:GO movement falling from `height` past the platform's edge while drifting off it at
+    /// `drift` units/s, timed so its hull's trailing side is about `trail` past the edge when its
+    /// feet reach the platform's top.
+    fn edge_fall(exact: bool, height: f32, drift: f32, trail: f32) -> EdgeOutcome {
+        let mut sim = Sim::csgo(EdgeBox { exact });
+        let fall_seconds = libm::sqrtf(2.0 * height / 800.0);
+        sim.ps.origin = [trail + 15.0 - drift * fall_seconds, 0.0, height];
+        sim.ps.velocity = [drift, 0.0, 0.0];
+        let mut stopped = false;
+        for _ in 0..200 {
+            let falling = sim.ps.velocity[2];
+            sim.tick(0, 0, 0, 0.0);
+            if sim.grounded() {
+                return EdgeOutcome::Land;
+            }
+            if falling < -100.0 && sim.ps.velocity[2] > -30.0 {
+                stopped = true;
+            }
+            if sim.ps.origin[2] < -64.0 {
+                break;
+            }
+        }
+        if stopped {
+            EdgeOutcome::Edgebug
+        } else {
+            EdgeOutcome::Miss
+        }
+    }
+
+    /// How many falls land, edgebug and miss: from 8 heights half a unit apart (so the feet cross
+    /// the platform's top at different points of a tick: the room left to slide off the edge in
+    /// that tick is the drift times the rest of the tick), each from start positions 1/256 unit
+    /// apart over 4 units around the edge.
+    fn edge_sweep(exact: bool, height: f32, drift: f32) -> [u32; 3] {
+        let mut counts = [0u32; 3];
+        for lift in 0..8 {
+            for step in 0..1024 {
+                let trail = -2.0 + step as f32 / 256.0;
+                let outcome = edge_fall(exact, height + lift as f32 * 0.5, drift, trail);
+                counts[outcome as usize] += 1;
+            }
+        }
+        counts
+    }
+
+    /// CS:GO movement edgebugs off a box brush's edge, falling slow or fast; and only where its
+    /// hull truly touches the platform, which MW2's rule, entering a face 0.125 early, does not
+    /// ask.
+    #[test]
+    fn csgo_edgebugs_happen_off_a_box_brush_edge() {
+        for (height, drift) in [(128.0, 100.0), (200.0, 250.0), (72.0, 50.0)] {
+            let iw4 = edge_sweep(false, height, drift);
+            let exact = edge_sweep(true, height, drift);
+            let edgebugs = exact[EdgeOutcome::Edgebug as usize];
+            assert!(edgebugs > 0, "no edgebug at {height}/{drift}: {exact:?}");
+            assert!(edgebugs <= iw4[EdgeOutcome::Edgebug as usize], "{iw4:?} {exact:?}");
+        }
+    }
+
+    /// CS:GO's box rule: a hull that leaves the platform's side before it reaches the top misses,
+    /// where MW2's rule calls it a hit; one that touches the top first hits under both.
+    #[test]
+    fn box_rule_needs_a_true_touch() {
+        let sweep = |start_z: f32, rule| {
+            EdgeBox::sweep(
+                GroundTraceInput {
+                    start: [14.95, 0.0, start_z],
+                    end: [15.95, 0.0, start_z - 1.0],
+                    mins: [-15.0, -15.0, 0.0],
+                    maxs: [15.0, 15.0, 72.0],
+                    tracemask: 1,
+                },
+                rule,
+            )
+            .fraction
+        };
+        use trace_iw4::BrushHitRule::{ExactBoxTouch, Iw4};
+        // Leaves the side (0.05 of the way) before it reaches the top (0.1 of the way).
+        assert!(sweep(0.1, Iw4) < 1.0);
+        assert_eq!(sweep(0.1, ExactBoxTouch), 1.0);
+        // Reaches the top (0.02) before it leaves the side.
+        assert!(sweep(0.02, Iw4) < 1.0);
+        assert!(sweep(0.02, ExactBoxTouch) < 1.0);
     }
 }

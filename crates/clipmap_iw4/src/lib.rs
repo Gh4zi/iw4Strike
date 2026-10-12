@@ -102,6 +102,8 @@ pub struct TraceExtents {
     pub mins: [f32; 3],
     pub maxs: [f32; 3],
     pub mask: u32,
+    /// How the world's brushes decide a hit (MW2's unless asked).
+    pub brush_rule: trace_iw4::BrushHitRule,
 }
 
 impl TraceExtents {
@@ -112,7 +114,13 @@ impl TraceExtents {
             mins,
             maxs,
             mask,
+            brush_rule: trace_iw4::BrushHitRule::Iw4,
         }
+    }
+
+    #[must_use]
+    pub fn with_brush_rule(self, brush_rule: trace_iw4::BrushHitRule) -> Self {
+        Self { brush_rule, ..self }
     }
 }
 

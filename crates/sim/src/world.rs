@@ -4160,6 +4160,34 @@ pub(crate) fn clip_trace(
     mask: u32,
     glass_is_solid: &dyn Fn(u16) -> bool,
 ) -> trace_iw4::Trace {
+    clip_trace_with_rule(
+        brushes,
+        bsp,
+        mesh,
+        start,
+        end,
+        mins,
+        maxs,
+        mask,
+        trace_iw4::BrushHitRule::Iw4,
+        glass_is_solid,
+    )
+}
+
+/// `clip_trace` with the world's brushes deciding hits by `brush_rule`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn clip_trace_with_rule(
+    brushes: &[SimBrush],
+    bsp: &SimClipBsp,
+    mesh: &SimClipMesh,
+    start: [f32; 3],
+    end: [f32; 3],
+    mins: [f32; 3],
+    maxs: [f32; 3],
+    mask: u32,
+    brush_rule: trace_iw4::BrushHitRule,
+    glass_is_solid: &dyn Fn(u16) -> bool,
+) -> trace_iw4::Trace {
     use std::cell::Cell;
 
     let map = clipmap_iw4::ClipMapRef {
@@ -4168,7 +4196,8 @@ pub(crate) fn clip_trace(
         leafbrushes: &bsp.leafbrushes,
         brushes,
     };
-    let ext = clipmap_iw4::TraceExtents::new(start, end, mins, maxs, mask);
+    let ext =
+        clipmap_iw4::TraceExtents::new(start, end, mins, maxs, mask).with_brush_rule(brush_rule);
     let mesh_ref = clipmap_iw4::ClipMeshRef {
         verts: &mesh.tables.verts,
         tri_indices: &mesh.tables.tri_indices,

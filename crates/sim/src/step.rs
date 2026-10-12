@@ -17,7 +17,7 @@ use crate::match_state::{ClientLifecycle, EventAudience, SimEvent};
 use crate::snapshot::Snapshot;
 use crate::world::{
     ClientId, SimBrush, SimClipBsp, SimClipMesh, SimState, Tick, clip_move_to_bmodels,
-    clip_move_to_model_brushes, clip_trace, give_weapon_to_ps_akimbo, gsc_give_weapon_is_akimbo,
+    clip_move_to_model_brushes, give_weapon_to_ps_akimbo, gsc_give_weapon_is_akimbo,
     inventory_add_weapon,
 };
 use playerstate_iw4::PlayerState;
@@ -2062,7 +2062,17 @@ struct ClipBackend<'a> {
 
 impl CollisionBackend for ClipBackend<'_> {
     fn trace(&self, input: GroundTraceInput) -> Trace {
-        let world_hit = clip_trace(
+        self.trace_with_rule(input, trace_iw4::BrushHitRule::Iw4)
+    }
+
+    fn trace_exact_boxes(&self, input: GroundTraceInput) -> Trace {
+        self.trace_with_rule(input, trace_iw4::BrushHitRule::ExactBoxTouch)
+    }
+}
+
+impl ClipBackend<'_> {
+    fn trace_with_rule(&self, input: GroundTraceInput, rule: trace_iw4::BrushHitRule) -> Trace {
+        let world_hit = crate::world::clip_trace_with_rule(
             self.brushes,
             self.bsp,
             self.mesh,
@@ -2071,6 +2081,7 @@ impl CollisionBackend for ClipBackend<'_> {
             input.mins,
             input.maxs,
             input.tracemask,
+            rule,
             &|piece| {
                 let damage = self
                     .glass_damage

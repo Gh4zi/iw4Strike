@@ -17,6 +17,52 @@ impl BrushRef<'_> {
 
 const SURFACE_CLIP_EPSILON: f32 = 0.125;
 
+/// How a sweep decides whether it meets a brush.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BrushHitRule {
+    /// MW2's: a sweep enters each face `SURFACE_CLIP_EPSILON` early.
+    #[default]
+    Iw4,
+    /// CS:GO's, for axis-aligned box brushes: the sweep meets the box when the exact time it
+    /// touches it (the latest entering face's `d1 / (d1 - d2)`) is no later than the exact time
+    /// it leaves it (the earliest leaving face's), with no epsilon, and touching just as it leaves
+    /// or ends counts. Where and on which face it stops are still MW2's. Other brushes keep MW2's
+    /// rule. Measured against CS:GO by its edgebug threshold: a hull crossing a platform's top
+    /// face as it leaves the platform's side edgebugs from 0.014 units of overlap with the edge
+    /// and misses at 0.0004.
+    ExactBoxTouch,
+}
+
+/// Every face of the brush is axis-aligned: the brush is a box.
+fn is_axial_box(planes: &[[f32; 4]]) -> bool {
+    planes.iter().all(|p| {
+        let axes = (0..3).filter(|&i| p[i] != 0.0).count();
+        axes == 1 && (0..3).any(|i| p[i].abs() == 1.0)
+    })
+}
+
+/// `BrushHitRule::ExactBoxTouch`'s test: whether the sweep truly touches the box. A sweep that
+/// starts inside every face is left to the rest of the trace.
+fn exact_box_meets(planes: &[[f32; 4]], start: [f32; 3], end: [f32; 3], cap: CapsuleSize) -> bool {
+    let mut enter = 0.0_f32;
+    let mut leave = 1.0_f32;
+    for plane in planes {
+        let n = [plane[0], plane[1], plane[2]];
+        let dist = plane[3] + cap.plane_radius(n);
+        let d1 = n[0] * start[0] + n[1] * start[1] + n[2] * start[2] - dist;
+        let d2 = n[0] * end[0] + n[1] * end[1] + n[2] * end[2] - dist;
+        if d1 > 0.0 {
+            if d2 > 0.0 {
+                return false;
+            }
+            enter = enter.max(d1 / (d1 - d2));
+        } else if d2 > 0.0 {
+            leave = leave.min(d1 / (d1 - d2));
+        }
+    }
+    enter <= leave
+}
+
 const WALKABLE_NORMAL_Z: f32 = 0.7;
 
 #[derive(Clone, Copy, Debug)]
@@ -115,6 +161,33 @@ pub fn trace_box_into<'a, I>(
 where
     I: IntoIterator<Item = BrushRef<'a>>,
 {
+    trace_box_into_with(
+        brushes,
+        start,
+        end,
+        mins,
+        maxs,
+        mask,
+        BrushHitRule::Iw4,
+        best,
+    )
+}
+
+/// `trace_box_into` deciding hits by `rule`.
+#[allow(clippy::too_many_arguments)]
+pub fn trace_box_into_with<'a, I>(
+    brushes: I,
+    start: [f32; 3],
+    end: [f32; 3],
+    mins: [f32; 3],
+    maxs: [f32; 3],
+    mask: u32,
+    rule: BrushHitRule,
+    best: &mut Trace,
+) -> u16
+where
+    I: IntoIterator<Item = BrushRef<'a>>,
+{
     let cap = CapsuleSize::from_bounds(mins, maxs);
     let start = [
         start[0] + cap.offset[0],
@@ -130,6 +203,12 @@ where
 
     for brush in brushes {
         if brush.contents & mask == 0 || brush.planes.is_empty() {
+            continue;
+        }
+        if rule == BrushHitRule::ExactBoxTouch
+            && is_axial_box(brush.planes)
+            && !exact_box_meets(brush.planes, start, end, cap)
+        {
             continue;
         }
         trace_through_brush(&brush, start, end, cap, best, &mut glass_encoded);

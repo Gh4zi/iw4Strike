@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use trace_iw4::{Trace, trace_box_into};
+use trace_iw4::{Trace, trace_box_into_with};
 
 use crate::{
     BrushView, ClipLeaf, ClipMapRef, ClipMeshRef, MeshWalkCensus, TraceExtents,
@@ -159,8 +159,15 @@ pub fn trace_leaf_brushes_into<B: BrushView>(
         .filter_map(|&id| map.brushes.get(id as usize))
         .filter(|b| crate::brush_glass_allowed(*b, glass_is_solid))
         .map(|b| crate::brush_ref(b));
-    let _ = trace_box_into(
-        selected, ext.start, ext.end, ext.mins, ext.maxs, ext.mask, best,
+    let _ = trace_box_into_with(
+        selected,
+        ext.start,
+        ext.end,
+        ext.mins,
+        ext.maxs,
+        ext.mask,
+        ext.brush_rule,
+        best,
     );
     n
 }
