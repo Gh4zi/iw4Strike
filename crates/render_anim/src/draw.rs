@@ -25,6 +25,8 @@ pub struct RemoteBodySurfaceDraw {
     pub reflection_probe_index: u8,
 
     pub scene_entnum: Option<u32>,
+    /// A CS:GO body is drawn in this body's place: it only casts its shadow.
+    pub shadow_only: bool,
 }
 
 pub const FPV_PACKED_UNAVAILABLE: &str =

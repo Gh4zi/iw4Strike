@@ -529,6 +529,7 @@ fn xmodel_lane_layout_hash(
         super::list::mix_content_id(&mut id, u64::from(draw.reflection_probe_index));
         let refusal = match draw.colour_refusal {
             Some(super::tess::xmodel::XModelColourRefusal::CameraFrustum) => 1,
+            Some(super::tess::xmodel::XModelColourRefusal::StandIn) => 2,
             None => 0,
         };
         super::list::mix_content_id(&mut id, refusal);
@@ -1881,7 +1882,10 @@ pub(crate) fn rebuild_xmodel_draw_lane(
         let source = u32::try_from(source).unwrap_or(u32::MAX);
         if matches!(
             draw.colour_refusal,
-            Some(super::tess::xmodel::XModelColourRefusal::CameraFrustum)
+            Some(
+                super::tess::xmodel::XModelColourRefusal::CameraFrustum
+                    | super::tess::xmodel::XModelColourRefusal::StandIn
+            )
         ) {
             lane.skipped_camera_frustum = lane.skipped_camera_frustum.saturating_add(1);
             continue;

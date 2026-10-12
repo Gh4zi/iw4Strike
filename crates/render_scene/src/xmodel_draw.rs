@@ -75,4 +75,7 @@ impl SunShadowCasterVolume {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum XModelColourRefusal {
     CameraFrustum,
+    /// Another model is drawn in its place (a CS:GO body for a MW2 one): it only casts its
+    /// shadow.
+    StandIn,
 }

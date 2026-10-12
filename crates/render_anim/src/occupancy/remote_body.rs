@@ -1344,9 +1344,7 @@ fn submit_remote_bodies(
     model_materials: Res<crate::anim::model_materials::PreparedModelMaterials>,
     mut last_catalog: Local<Option<Arc<render_material::RuntimeMaterialCatalog>>>,
 ) {
-    let mut items = submit.take();
-    // A CS:GO body is drawn instead.
-    items.retain(|item| !hidden.0.contains(&item.client));
+    let items = submit.take();
     let binds = std::mem::take(&mut binds.by_client);
     if items.is_empty() {
         if plan.decoded_n != 0 || plan.last_packed_id.is_some() {
@@ -1407,10 +1405,10 @@ fn submit_remote_bodies(
     }
 
     let packed_id = seated_packed_id(&seated);
-    let draw_id = seated_draw_id(&seated);
+    let draw_id = seated_draw_id(&seated, &hidden.0);
     if plan.last_packed_id == Some(packed_id) && seated_clients_match(&plan, &seated) {
         if plan.last_draw_id != Some(draw_id) {
-            refresh_remote_body_draws(&mut plan, &seated);
+            refresh_remote_body_draws(&mut plan, &seated, &hidden.0);
             plan.revisions.bump_draws();
             plan.revision = plan.revision.wrapping_add(1);
             plan.last_draw_id = Some(draw_id);
@@ -1488,6 +1486,8 @@ fn submit_remote_bodies(
                     probe,
                     mat_idx,
                     Some(item.client),
+                    // A CS:GO body is drawn instead; this one keeps casting the shadow.
+                    hidden.0.contains(&item.client),
                 );
             }
         }
@@ -1535,11 +1535,12 @@ fn seated_packed_id(seated: &[(RemoteBodySkinnedItem, u32, u8, u8)]) -> u64 {
     hasher.finish()
 }
 
-fn seated_draw_id(seated: &[(RemoteBodySkinnedItem, u32, u8, u8)]) -> u64 {
+fn seated_draw_id(seated: &[(RemoteBodySkinnedItem, u32, u8, u8)], stand_ins: &HashSet<u32>) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     seated.len().hash(&mut hasher);
     for (item, handle, scene_light, probe) in seated {
         item.client.hash(&mut hasher);
+        stand_ins.contains(&item.client).hash(&mut hasher);
         for lane in item.world_from_local.to_cols_array() {
             lane.to_bits().hash(&mut hasher);
         }
@@ -1566,11 +1567,13 @@ fn seated_clients_match(
 fn refresh_remote_body_draws(
     plan: &mut RemoteBodyDrawPlan,
     seated: &[(RemoteBodySkinnedItem, u32, u8, u8)],
+    stand_ins: &HashSet<u32>,
 ) {
     for draw in &mut plan.draws {
         let Some(ent) = draw.scene_entnum else {
             continue;
         };
+        draw.shadow_only = stand_ins.contains(&ent);
         let Some((_, handle, scene_light, probe, world)) =
             seated
                 .iter()

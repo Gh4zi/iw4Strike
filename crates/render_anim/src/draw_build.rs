@@ -181,6 +181,7 @@ pub fn push_remote_body_cpu_draw(
     reflection_probe_index: u8,
     material: u32,
     scene_entnum: Option<u32>,
+    shadow_only: bool,
 ) {
     if lighting_handle == 0 || index_count == 0 {
         return;
@@ -195,6 +196,7 @@ pub fn push_remote_body_cpu_draw(
         scene_light_index,
         reflection_probe_index,
         scene_entnum,
+        shadow_only,
     });
 }
 
