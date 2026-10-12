@@ -135,6 +135,153 @@ fn main() {
         }
         return;
     }
+    if let Some(label) = filter.strip_prefix("pose:") {
+        // pose:<sequence>: the sequence played over the rest pose at rest pose parameters, and
+        // where it puts a few bones (model space: origin and axes).
+        let mut locals = model.rest.clone();
+        let mut params = model.default_pose_params();
+        // Standing still, as the player animation state has it.
+        for (name, value) in [("aim_blend_stand_idle", 1.0), ("stand", 1.0)] {
+            if let Some(p) = model.pose_param(name) {
+                params[p] = value;
+            }
+        }
+        let seq = model.sequence_by_label(label).expect("sequence");
+        mdl_source::blend::accumulate(&model, &mut locals, seq, 0.0, 1.0, &params);
+        let world = model.world_from_locals(&locals);
+        for name in ["pelvis", "head_0", "hand_R", "weapon_hand_R", "ValveBiped.weapon_bone", "hand_L"] {
+            let Some(b) = model.bones.iter().position(|bone| bone.name == name) else {
+                continue;
+            };
+            let m = &world[b];
+            println!(
+                "{name:24} at [{:7.2} {:7.2} {:7.2}] x [{:5.2} {:5.2} {:5.2}] y [{:5.2} {:5.2} {:5.2}] z [{:5.2} {:5.2} {:5.2}]",
+                m[0][3], m[1][3], m[2][3], m[0][0], m[1][0], m[2][0], m[0][1], m[1][1], m[2][1], m[0][2], m[1][2], m[2][2]
+            );
+        }
+        return;
+    }
+    if let Some(seq) = filter.strip_prefix("move:") {
+        // move:<sequence index>: each of its animations' linear movement records.
+        let seq: usize = seq.parse().expect("sequence index");
+        let i32_at = |at: usize| i32::from_le_bytes(mdl[at..at + 4].try_into().unwrap());
+        let i16_at = |at: usize| i16::from_le_bytes(mdl[at..at + 2].try_into().unwrap());
+        let f32_at = |at: usize| f32::from_le_bytes(mdl[at..at + 4].try_into().unwrap());
+        let at = i32_at(192) as usize + seq * 212;
+        let count = (i32_at(at + 68) * i32_at(at + 72)) as usize;
+        for i in 0..count {
+            let anim = i16_at(at + i32_at(at + 60) as usize + i * 2) as usize;
+            let desc = i32_at(184) as usize + anim * 100;
+            println!(
+                "anim {anim} fps {} frames {} movements {}",
+                f32_at(desc + 8),
+                i32_at(desc + 16),
+                i32_at(desc + 20)
+            );
+            for m in 0..i32_at(desc + 20) as usize {
+                let ma = desc + i32_at(desc + 24) as usize + m * 44;
+                println!(
+                    "  end {} flags {:#x} v0 {} v1 {} angle {} vector [{} {} {}] position [{} {} {}]",
+                    i32_at(ma),
+                    i32_at(ma + 4),
+                    f32_at(ma + 8),
+                    f32_at(ma + 12),
+                    f32_at(ma + 16),
+                    f32_at(ma + 20),
+                    f32_at(ma + 24),
+                    f32_at(ma + 28),
+                    f32_at(ma + 32),
+                    f32_at(ma + 36),
+                    f32_at(ma + 40)
+                );
+            }
+        }
+        return;
+    }
+    if let Some(wanted) = filter.strip_prefix("meta:") {
+        // meta:<label part>: pose parameters, then each matching sequence's flags, blend grid,
+        // its pose parameters, autolayers and activity modifiers.
+        let i32_at = |at: usize| i32::from_le_bytes(mdl[at..at + 4].try_into().unwrap());
+        let i16_at = |at: usize| i16::from_le_bytes(mdl[at..at + 2].try_into().unwrap());
+        let f32_at = |at: usize| f32::from_le_bytes(mdl[at..at + 4].try_into().unwrap());
+        let cstr = |at: usize| {
+            let end = mdl[at..].iter().position(|&c| c == 0).unwrap_or(0);
+            String::from_utf8_lossy(&mdl[at..at + end]).into_owned()
+        };
+        let params: Vec<String> = (0..i32_at(300) as usize)
+            .map(|p| {
+                let pa = i32_at(304) as usize + p * 20;
+                let name = cstr(pa + i32_at(pa) as usize);
+                println!(
+                    "param {p} {name} flags {:#x} start {} end {} loop {}",
+                    i32_at(pa + 4),
+                    f32_at(pa + 8),
+                    f32_at(pa + 12),
+                    f32_at(pa + 16)
+                );
+                name
+            })
+            .collect();
+        let param = |p: i32| usize::try_from(p).ok().and_then(|p| params.get(p)).map_or("-", String::as_str);
+        for (s, seq) in model.sequences.iter().enumerate() {
+            if !wanted.is_empty() && !seq.label.contains(wanted) {
+                continue;
+            }
+            let at = i32_at(192) as usize + s * 212;
+            let groups = (i32_at(at + 68), i32_at(at + 72));
+            println!(
+                "seq {s} {} flags {:#x} grid {groups:?} params {}[{} {}] {}[{} {}] posekey {} cyclepose {}",
+                seq.label,
+                i32_at(at + 12),
+                param(i32_at(at + 76)),
+                f32_at(at + 84),
+                f32_at(at + 92),
+                param(i32_at(at + 80)),
+                f32_at(at + 88),
+                f32_at(at + 96),
+                i32_at(at + 160),
+                param(i32_at(at + 180)),
+            );
+            if i32_at(at + 160) != 0 {
+                let keys: Vec<f32> = (0..(groups.0 + groups.1) as usize)
+                    .map(|k| f32_at(at + i32_at(at + 160) as usize + k * 4))
+                    .collect();
+                println!("  posekeys {keys:?}");
+            }
+            let anims: Vec<String> = (0..(groups.0 * groups.1) as usize)
+                .map(|i| {
+                    let anim = i16_at(at + i32_at(at + 60) as usize + i * 2) as usize;
+                    let desc = i32_at(184) as usize + anim * 100;
+                    format!("{anim}:{:#x}", i32_at(desc + 12))
+                })
+                .collect();
+            println!("  anims {}", anims.join(" "));
+            for l in 0..i32_at(at + 148) as usize {
+                let la = at + i32_at(at + 152) as usize + l * 24;
+                let other = i16_at(la) as usize;
+                println!(
+                    "  autolayer {other} {} pose {} flags {:#x} start {} peak {} tail {} end {}",
+                    model.sequences.get(other).map_or("?", |s| s.label.as_str()),
+                    param(i32::from(i16_at(la + 2))),
+                    i32_at(la + 4),
+                    f32_at(la + 8),
+                    f32_at(la + 12),
+                    f32_at(la + 16),
+                    f32_at(la + 20)
+                );
+            }
+            let mods: Vec<String> = (0..i32_at(at + 188) as usize)
+                .map(|m| {
+                    let ma = at + i32_at(at + 184) as usize + m * 4;
+                    cstr(ma + i32_at(ma) as usize)
+                })
+                .collect();
+            if !mods.is_empty() {
+                println!("  actmods {}", mods.join(" "));
+            }
+        }
+        return;
+    }
     if let Some(label) = filter.strip_prefix("weights:") {
         // weights:<sequence>: the bones the sequence moves and how much.
         let seq = model

@@ -1,5 +1,6 @@
 // Counter-Strike world models (CS:S `w_*.mdl`) in players' hands, drawn in world space after the
-// world against the scene depth. Vertices are already in the model's frame (rest pose baked).
+// world against the scene depth. Vertices are already in the model's frame (rest pose baked),
+// except a skinned model's (a CS:GO body): those blend up to four bones of its palette first.
 
 #import bevy_render::view::View
 
@@ -12,16 +13,22 @@ struct Instance {
     // Direction toward the sun (world) and its colour, zero in shadow.
     sun_dir: vec4<f32>,
     sun: vec4<f32>,
+    // x = 1 when the vertices are skinned by `bones`.
+    flags: vec4<f32>,
 }
 
 @group(1) @binding(0) var<uniform> inst: Instance;
 @group(1) @binding(1) var skin_tex: texture_2d<f32>;
 @group(1) @binding(2) var skin_samp: sampler;
+// Three rows per bone (row-major 3x4), model space.
+@group(1) @binding(3) var<storage, read> bones: array<vec4<f32>>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) bone_ids: u32,
+    @location(4) weights: vec4<f32>,
 }
 
 struct VsOut {
@@ -30,13 +37,52 @@ struct VsOut {
     @location(1) normal: vec3<f32>,
 }
 
+fn bone_point(bone: u32, p: vec3<f32>) -> vec3<f32> {
+    let r0 = bones[bone * 3u];
+    let r1 = bones[bone * 3u + 1u];
+    let r2 = bones[bone * 3u + 2u];
+    return vec3<f32>(dot(r0.xyz, p) + r0.w, dot(r1.xyz, p) + r1.w, dot(r2.xyz, p) + r2.w);
+}
+
+fn bone_dir(bone: u32, d: vec3<f32>) -> vec3<f32> {
+    let r0 = bones[bone * 3u];
+    let r1 = bones[bone * 3u + 1u];
+    let r2 = bones[bone * 3u + 2u];
+    return vec3<f32>(dot(r0.xyz, d), dot(r1.xyz, d), dot(r2.xyz, d));
+}
+
 @vertex
 fn vs_world(in: VsIn) -> VsOut {
     var out: VsOut;
-    let world = inst.world_from_model * vec4<f32>(in.position, 1.0);
+    var position = in.position;
+    var normal = in.normal;
+    if (inst.flags.x > 0.5) {
+        let ids = vec4<u32>(
+            in.bone_ids & 0xffu,
+            (in.bone_ids >> 8u) & 0xffu,
+            (in.bone_ids >> 16u) & 0xffu,
+            (in.bone_ids >> 24u) & 0xffu,
+        );
+        var w = in.weights;
+        let total = w.x + w.y + w.z + w.w;
+        if (total <= 0.0) {
+            w = vec4<f32>(1.0, 0.0, 0.0, 0.0);
+        } else {
+            w = w / total;
+        }
+        position = bone_point(ids.x, in.position) * w.x
+            + bone_point(ids.y, in.position) * w.y
+            + bone_point(ids.z, in.position) * w.z
+            + bone_point(ids.w, in.position) * w.w;
+        normal = bone_dir(ids.x, in.normal) * w.x
+            + bone_dir(ids.y, in.normal) * w.y
+            + bone_dir(ids.z, in.normal) * w.z
+            + bone_dir(ids.w, in.normal) * w.w;
+    }
+    let world = inst.world_from_model * vec4<f32>(position, 1.0);
     out.clip = view.clip_from_world * world;
     out.uv = in.uv;
-    out.normal = (inst.world_from_model * vec4<f32>(in.normal, 0.0)).xyz;
+    out.normal = (inst.world_from_model * vec4<f32>(normal, 0.0)).xyz;
     return out;
 }
 

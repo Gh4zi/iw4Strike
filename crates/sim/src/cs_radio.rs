@@ -120,6 +120,22 @@ pub(crate) fn grenade_call(world: &mut FrameWorld, tick: Tick, id: ClientId, gre
     send_sound(world, tick, audience, &alias, origin);
 }
 
+/// Tells clients each side's MW2 faction (the server info `cs_factions` = "<allies> <axis>"),
+/// which CS:GO agents they draw the players as.
+pub(crate) fn publish_factions(world: &mut FrameWorld) {
+    let (Some(allies), Some(axis)) = (game_faction(world, true), game_faction(world, false)) else {
+        return;
+    };
+    let value = format!("{allies} {axis}");
+    if let Some(mut runtime) = world.ecs().get_resource_mut::<crate::script::Runtime>()
+        && (runtime.dvars.get("cs_factions") != Some(&value)
+            || !runtime.server_info.contains("cs_factions"))
+    {
+        runtime.server_info.insert("cs_factions".to_owned());
+        runtime.dvars.insert("cs_factions".to_owned(), value);
+    }
+}
+
 /// The MW2 faction a team wears on this map (`game["allies"]` / `game["axis"]`).
 fn game_faction(world: &mut FrameWorld, allies: bool) -> Option<String> {
     let runtime = world.ecs().get_resource::<crate::script::Runtime>()?;

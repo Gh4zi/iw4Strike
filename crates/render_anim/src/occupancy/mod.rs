@@ -3,6 +3,7 @@ pub mod cs_scope;
 pub(crate) mod cs2_assets;
 pub mod cs_viewmodel;
 pub mod cs_world_model;
+pub mod csgo_body;
 pub mod dyn_ent;
 pub mod dyn_ent_phys;
 pub mod fpv_present;

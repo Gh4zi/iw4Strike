@@ -1,12 +1,15 @@
 //! Source engine assets as Counter-Strike: Source ships them, read at runtime from the user's own
 //! install: VPK archives, VTF textures, VMT materials, studio models and sound scripts.
 
+pub mod blend;
 pub mod kv;
 pub mod studio;
 pub mod vpk;
 pub mod vtf;
 
-pub use studio::{Animation, Attachment, BodyPart, BoneFrame, EVENT_CLIENT_SOUND, StudioModel};
+pub use studio::{
+    Animation, Attachment, AutoLayer, BodyPart, BoneFrame, EVENT_CLIENT_SOUND, PoseParam, StudioModel,
+};
 pub use vpk::Vpk;
 
 /// A model material resolved to its base texture.
@@ -82,6 +85,12 @@ pub fn load_material(vpk: &Vpk, dirs: &[String], name: &str) -> Material {
 
 /// Load `path` (`models/weapons/v_rif_ak47.mdl`) with its `.vvd`, `.dx90.vtx` and materials.
 pub fn load_model(vpk: &Vpk, path: &str) -> Result<LoadedModel, String> {
+    load_model_with(vpk, path, true)
+}
+
+/// [`load_model`], taking the sequences of the models it includes only when `includes`: a
+/// CS:GO player model includes its whole animation set, kept once and shared instead.
+pub fn load_model_with(vpk: &Vpk, path: &str, includes: bool) -> Result<LoadedModel, String> {
     let stem = path.trim_end_matches(".mdl");
     let read = |p: String| vpk.read(&p).ok_or_else(|| format!("{p} not in the pack"));
     let mdl = read(format!("{stem}.mdl"))?;
@@ -90,7 +99,7 @@ pub fn load_model(vpk: &Vpk, path: &str) -> Result<LoadedModel, String> {
     let ani = vpk.read(&format!("{stem}.ani"));
     let mut model = StudioModel::parse_with_ani(&mdl, &vvd, &vtx, ani.as_deref())?;
     // Sequences kept in other models (`$includemodel`: CS:GO's knives keep theirs apart).
-    for include in model.includes.clone() {
+    for include in model.includes.clone().into_iter().filter(|_| includes) {
         let include = include.replace('\\', "/").to_ascii_lowercase();
         let path = if include.starts_with("models/") {
             include

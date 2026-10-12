@@ -76,6 +76,17 @@ pub fn register_remote_body_systems(app: &mut App) {
         .init_resource::<PreparedRemoteKits>()
         .init_resource::<crate::occupancy::cs_world_model::CsHeldWeaponTags>()
         .init_resource::<crate::occupancy::cs_world_model::CsWorldModels>()
+        .init_resource::<crate::occupancy::csgo_body::CsgoBodies>()
+        .init_resource::<crate::occupancy::csgo_body::CsgoBodyHidden>()
+        .init_resource::<crate::occupancy::csgo_body::CsgoBodyDraws>()
+        .add_systems(
+            Update,
+            crate::occupancy::csgo_body::update_csgo_bodies
+                .after(pose_remote_bodies)
+                .before(crate::occupancy::cs_world_model::update_cs_world_models)
+                .before(submit_remote_bodies)
+                .in_set(ClientSet::Present),
+        )
         .add_systems(
             Update,
             (
@@ -895,6 +906,7 @@ impl<'a> RemotePoseFrame<'a> {
                     .and_then(|stance| xmodel_runtime::hold_weapon_direction(dobj, &world, &stance))
                     .map(|dir| transform.rotation * dir);
                 held.push(crate::occupancy::cs_world_model::CsHeldWeaponTag {
+                    entity: persist_key,
                     weapon,
                     world_from_tag: transform.to_matrix() * *bone,
                     muzzle,
@@ -1300,6 +1312,7 @@ fn enqueue_remote_body_lighting(
 }
 
 fn submit_remote_bodies(
+    hidden: Res<crate::occupancy::csgo_body::CsgoBodyHidden>,
     mut plan: ResMut<RemoteBodyDrawPlan>,
     gaps: Res<RenderPresentationGaps>,
     mut submit: ResMut<RemoteBodySkinnedQueue>,
@@ -1310,7 +1323,9 @@ fn submit_remote_bodies(
     model_materials: Res<crate::anim::model_materials::PreparedModelMaterials>,
     mut last_catalog: Local<Option<Arc<render_material::RuntimeMaterialCatalog>>>,
 ) {
-    let items = submit.take();
+    let mut items = submit.take();
+    // A CS:GO body is drawn instead.
+    items.retain(|item| !hidden.0.contains(&item.client));
     let binds = std::mem::take(&mut binds.by_client);
     if items.is_empty() {
         if plan.decoded_n != 0 || plan.last_packed_id.is_some() {

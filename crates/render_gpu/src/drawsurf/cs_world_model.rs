@@ -5,6 +5,9 @@
 //! pose already baked into them, one draw per textured mesh) with its world placement and the
 //! light where it is. They are drawn in world space with the view's own matrices, after the
 //! world and against its depth, so walls and players in front hide them.
+//!
+//! A skinned instance (a CS:GO player body) brings its bones' model-space matrices: its vertices
+//! stay in bind space and blend up to four bones on the GPU before the world placement.
 
 use std::collections::HashMap;
 use std::num::NonZeroU64;
@@ -15,7 +18,7 @@ use bevy::mesh::VertexBufferLayout;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::binding_types::{
-    sampler, texture_2d, uniform_buffer, uniform_buffer_sized,
+    sampler, storage_buffer_read_only_sized, texture_2d, uniform_buffer, uniform_buffer_sized,
 };
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
@@ -38,8 +41,10 @@ use super::depth_range::{GFX_DEPTH_RANGE_SCENE, reverse_z_viewport_depth};
 use super::scene_depth::{SCENE_DEPTH_FORMAT, SceneDepthTexture};
 
 const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/cs_world_model.wgsl";
-/// `Instance` in the shader: a 4x4 matrix and three vec4s.
-const INSTANCE_SIZE: u64 = 64 + 3 * 16;
+/// `Instance` in the shader: a 4x4 matrix and four vec4s.
+const INSTANCE_SIZE: u64 = 64 + 4 * 16;
+/// One bone in the palette: three rows of a 3x4 matrix.
+const BONE_SIZE: u64 = 48;
 
 /// One CS model placed in the world this frame.
 #[derive(Clone, Debug)]
@@ -52,6 +57,9 @@ pub struct CsWorldModelInstance {
     /// Direction toward the sun (world) and its colour; zero when the model is in shadow.
     pub sun_dir: [f32; 3],
     pub sun: [f32; 3],
+    /// A skinned model's bones this frame: row-major 3x4 model-space matrices (bone pose times
+    /// its bind inverse), indexed by the vertices' `bones`. `None` draws the vertices as they are.
+    pub bones: Option<Arc<Vec<[[f32; 4]; 3]>>>,
 }
 
 /// What the main world wants drawn this frame.
@@ -77,11 +85,13 @@ struct CsWorldModelPipelineKey {
     fullbright: bool,
 }
 
-/// Vertex buffers by model id, and this frame's per-instance uniforms.
+/// Vertex buffers by model id, and this frame's per-instance uniforms and bone palettes (a
+/// rigid instance shares the one-bone identity palette).
 #[derive(Resource, Default)]
 struct CsWorldModelGpu {
     vertices: HashMap<u64, Buffer>,
-    instances: Vec<Buffer>,
+    instances: Vec<(Buffer, Option<Buffer>)>,
+    identity_bones: Option<Buffer>,
 }
 
 #[derive(Component)]
@@ -117,6 +127,16 @@ impl SpecializedRenderPipeline for CsWorldModelPipeline {
                             format: VertexFormat::Float32x2,
                             offset: 24,
                             shader_location: 2,
+                        },
+                        VertexAttribute {
+                            format: VertexFormat::Uint32,
+                            offset: 32,
+                            shader_location: 3,
+                        },
+                        VertexAttribute {
+                            format: VertexFormat::Unorm8x4,
+                            offset: 36,
+                            shader_location: 4,
                         },
                     ],
                 }],
@@ -177,6 +197,7 @@ fn init_pipeline(mut commands: Commands, asset_server: Res<AssetServer>) {
                     uniform_buffer_sized(false, NonZeroU64::new(INSTANCE_SIZE)),
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
+                    storage_buffer_read_only_sized(false, NonZeroU64::new(BONE_SIZE)),
                 ),
             ),
         ),
@@ -197,6 +218,14 @@ fn prepare_cs_world_models(
 ) {
     let gpu = &mut *gpu;
     gpu.instances.clear();
+    if gpu.identity_bones.is_none() {
+        let identity: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+        gpu.identity_bones = Some(device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("cs_world_model_identity_bones"),
+            contents: bytemuck::cast_slice(&identity),
+            usage: BufferUsages::STORAGE,
+        }));
+    }
     // Upload models seen for the first time; keep the buffers of the ones still drawn.
     gpu.vertices.retain(|id, _| {
         extracted
@@ -221,17 +250,26 @@ fn prepare_cs_world_models(
                 bytes.extend_from_slice(&v.to_le_bytes());
             }
         }
-        for colour in [instance.ambient, instance.sun_dir, instance.sun] {
+        let skinned = instance.bones.as_ref().filter(|bones| !bones.is_empty());
+        let flags = [f32::from(u8::from(skinned.is_some())), 0.0, 0.0];
+        for colour in [instance.ambient, instance.sun_dir, instance.sun, flags] {
             for v in [colour[0], colour[1], colour[2], 0.0] {
                 bytes.extend_from_slice(&v.to_le_bytes());
             }
         }
-        gpu.instances
-            .push(device.create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("cs_world_model_instance"),
-                contents: &bytes,
-                usage: BufferUsages::UNIFORM,
-            }));
+        let uniform = device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("cs_world_model_instance"),
+            contents: &bytes,
+            usage: BufferUsages::UNIFORM,
+        });
+        let bones = skinned.map(|bones| {
+            device.create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("cs_world_model_bones"),
+                contents: bytemuck::cast_slice(bones.as_slice()),
+                usage: BufferUsages::STORAGE,
+            })
+        });
+        gpu.instances.push((uniform, bones));
     }
 }
 
@@ -287,8 +325,11 @@ fn draw_cs_world_models(
         return;
     }
     let layout = cache.get_bind_group_layout(&pipeline.mesh_layout);
+    let Some(identity_bones) = gpu.identity_bones.as_ref() else {
+        return;
+    };
     let mut prepared = Vec::new();
-    for (instance, uniform) in extracted.0.instances.iter().zip(&gpu.instances) {
+    for (instance, (uniform, bones)) in extracted.0.instances.iter().zip(&gpu.instances) {
         let Some(vertices) = gpu.vertices.get(&instance.model.id) else {
             continue;
         };
@@ -315,6 +356,7 @@ fn draw_cs_world_models(
                     uniform.as_entire_buffer_binding(),
                     &image.texture_view,
                     &image.sampler,
+                    bones.as_ref().unwrap_or(identity_bones).as_entire_buffer_binding(),
                 )),
             );
             prepared.push((id, bind, vertices, draw.first_vertex, draw.vertex_count));

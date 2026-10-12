@@ -29,6 +29,8 @@ use render_gpu::{
 /// A body's weapon hand this frame, and the weapon it holds.
 #[derive(Clone, Copy, Debug)]
 pub struct CsHeldWeaponTag {
+    /// The body's entity number.
+    pub entity: u32,
     pub weapon: u32,
     pub world_from_tag: Mat4,
     /// The MW2 twin's muzzle (`tag_flash`, x along the barrel) in the tag's frame.
@@ -833,6 +835,7 @@ impl CsWorldModels {
 #[allow(clippy::too_many_arguments)]
 pub fn update_cs_world_models(
     tags: Res<CsHeldWeaponTags>,
+    bodies: Res<super::csgo_body::CsgoBodyDraws>,
     weapons: Option<Res<PreparedWeapons>>,
     presented: Res<net::PresentedSnapshot>,
     cg_clock: Option<Res<net::FrameClock>>,
@@ -846,6 +849,7 @@ pub fn update_cs_world_models(
     mut frame: ResMut<CsWorldModelsFrame>,
 ) {
     frame.instances.clear();
+    frame.instances.extend(bodies.0.iter().cloned());
     let planted = presented
         .snapshot()
         .and_then(super::cs_bomb::bomb_state)
@@ -863,6 +867,7 @@ pub fn update_cs_world_models(
             ambient: [0.6; 3],
             sun_dir: [0.0; 3],
             sun: [0.0; 3],
+            bones: None,
         });
     }
     let Some(weapons) = weapons else {
@@ -902,6 +907,7 @@ pub fn update_cs_world_models(
             ambient: [0.6; 3],
             sun_dir: [0.0; 3],
             sun: [0.0; 3],
+            bones: None,
         });
     }
     // Dropped CS weapons, lying where the item is, turned to its yaw.
@@ -938,6 +944,7 @@ pub fn update_cs_world_models(
             ambient: [0.6; 3],
             sun_dir: [0.0; 3],
             sun: [0.0; 3],
+            bones: None,
         });
     }
 }

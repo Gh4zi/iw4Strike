@@ -71,6 +71,14 @@ pub struct BoneFrame {
     pub rotation: [f32; 4],
 }
 
+impl BoneFrame {
+    /// The transform as a 3x4 matrix.
+    #[must_use]
+    pub fn matrix(&self) -> Mat3x4 {
+        matrix(self.rotation, self.position)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Event {
     /// Position in the sequence, 0..1.
@@ -79,11 +87,62 @@ pub struct Event {
     pub options: String,
 }
 
+/// A pose parameter (`mstudioposeparamdesc_t`): a named value a model's blend grids and
+/// layers read, from `start` to `end` (wrapping every `wrap` when non-zero).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PoseParam {
+    pub name: String,
+    pub start: f32,
+    pub end: f32,
+    pub wrap: f32,
+}
+
+/// A sequence played over another wherever that one plays (`mstudioautolayer_t`): its weight
+/// follows a pose parameter (`AL_POSE`) or the other's cycle between `start` and `end`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AutoLayer {
+    pub sequence: usize,
+    /// The pose parameter of an `AL_POSE` layer.
+    pub pose: Option<usize>,
+    pub flags: i32,
+    pub start: f32,
+    pub peak: f32,
+    pub tail: f32,
+    pub end: f32,
+}
+
+/// `Sequence::flags`: the sequence adds to the pose under it (`STUDIO_DELTA`).
+pub const SEQ_DELTA: i32 = 0x0004;
+/// A delta sequence applied after (in the frame of) the pose under it (`STUDIO_POST`).
+pub const SEQ_POST: i32 = 0x0010;
+/// `AutoLayer::flags`.
+pub const AL_SPLINE: i32 = 0x0040;
+pub const AL_XFADE: i32 = 0x0080;
+pub const AL_NOBLEND: i32 = 0x0200;
+pub const AL_LOCAL: i32 = 0x1000;
+pub const AL_POSE: i32 = 0x4000;
+
 #[derive(Clone, Debug)]
 pub struct Sequence {
     pub label: String,
     /// `ACT_VM_…` activity name, empty when none.
     pub activity: String,
+    /// `STUDIO_*` flags (`SEQ_DELTA`, `SEQ_POST`, looping, …).
+    pub flags: i32,
+    /// The pose parameters (`StudioModel::pose_params`) choosing a cell of the blend grid, by
+    /// axis, and the range each spans (`paramstart`/`paramend`).
+    pub params: [Option<usize>; 2],
+    pub param_range: [(f32, f32); 2],
+    /// The value of each grid column and row (`posekey`), when the grid is not even: the
+    /// first axis's `blend_size.0` values, then the second's `blend_size.1`.
+    pub pose_keys: Vec<f32>,
+    /// Activity modifiers (`rifle`, `crouch`, `moving`) the sequence is chosen by.
+    pub act_mods: Vec<String>,
+    /// The autolayers in full ([`autolayers`](Self::autolayers) holds their sequences).
+    pub layers: Vec<AutoLayer>,
+    /// Where (in cycle) a layer playing it has eased in, and starts easing out.
+    pub fade_in: f32,
+    pub fade_out: f32,
     pub fps: f32,
     pub looping: bool,
     pub num_frames: usize,
@@ -109,6 +168,11 @@ pub struct Animation {
     pub fps: f32,
     pub num_frames: usize,
     pub delta: bool,
+    /// No data at all (`STUDIO_ALLZEROS`): a sequence playing it only carries layers.
+    pub all_zeros: bool,
+    /// How far the animation carries the model over one cycle (its last linear movement
+    /// record's position; zero without one).
+    pub movement: [f32; 3],
     frames: Vec<BoneFrame>,
 }
 
@@ -183,6 +247,8 @@ pub struct StudioModel {
     pub includes: Vec<String>,
     /// Each bone's local rest transform.
     pub rest: Vec<BoneFrame>,
+    /// The pose parameters the sequences' blend grids and layers read.
+    pub pose_params: Vec<PoseParam>,
 }
 
 struct R<'a>(&'a [u8]);
@@ -297,6 +363,7 @@ impl StudioModel {
                     rotation: d.quat,
                 })
                 .collect(),
+            pose_params: parse_pose_params(&r).unwrap_or_default(),
         })
     }
 
@@ -334,6 +401,16 @@ impl StudioModel {
                 weights,
                 blends: Vec::new(),
                 autolayers: seq.autolayers.iter().map(|a| a + base).collect(),
+                layers: seq
+                    .layers
+                    .iter()
+                    .map(|l| AutoLayer {
+                        sequence: l.sequence + base,
+                        pose: None,
+                        ..l.clone()
+                    })
+                    .collect(),
+                params: [None; 2],
                 ..seq.clone()
             });
         }
@@ -523,6 +600,23 @@ impl StudioModel {
                 .map(|(bone, pose_to_bone)| concat(&world[*bone], pose_to_bone)),
         );
     }
+}
+
+/// `mstudioposeparamdesc_t`s: name offset, flags, start, end, loop (20 bytes each).
+fn parse_pose_params(r: &R<'_>) -> Result<Vec<PoseParam>, String> {
+    let count = r.usize(300)?.min(64);
+    let base = r.usize(304)?;
+    (0..count)
+        .map(|p| {
+            let at = base + p * 20;
+            Ok(PoseParam {
+                name: r.cstr(r.rel(at, 0)?)?,
+                start: r.f32(at + 8)?,
+                end: r.f32(at + 12)?,
+                wrap: r.f32(at + 16)?,
+            })
+        })
+        .collect()
 }
 
 /// Inverse of a rigid transform (rotation and translation).
@@ -827,6 +921,15 @@ fn decode_animation(
         fps,
         num_frames,
         delta: delta_anim,
+        all_zeros: flags & STUDIO_ALLZEROS != 0,
+        movement: match r.usize(desc + 20) {
+            // `mstudiomovement_t` (44 bytes): the position sits at 32.
+            Ok(count) if count > 0 => {
+                let last = (desc as i64 + i64::from(r.i32(desc + 24)?)) as usize + (count - 1) * 44;
+                r.vec3(last + 32).unwrap_or([0.0; 3])
+            }
+            _ => [0.0; 3],
+        },
         frames,
     })
 }
@@ -992,11 +1095,43 @@ fn parse_sequences(
             .map(|i| Ok(usize::try_from(r.i16(anim_slot + i * 2)?).unwrap_or(0)))
             .collect::<Result<Vec<_>, String>>()?;
         let autolayer_base = r.rel(at, 152)?;
-        // Only CS:S's player animations use these; a model without them still loads.
-        let autolayers = (0..r.usize(at + 148).unwrap_or(0).min(16))
-            .map(|l| Ok(usize::try_from(r.i16(autolayer_base + l * AUTOLAYER_LEN)?).unwrap_or(0)))
+        // Only player animations use these; a model without them still loads.
+        let layers = (0..r.usize(at + 148).unwrap_or(0).min(16))
+            .map(|l| {
+                let la = autolayer_base + l * AUTOLAYER_LEN;
+                Ok(AutoLayer {
+                    sequence: usize::try_from(r.i16(la)?).unwrap_or(0),
+                    pose: usize::try_from(r.i16(la + 2)?).ok(),
+                    flags: r.i32(la + 4)?,
+                    start: r.f32(la + 8)?,
+                    peak: r.f32(la + 12)?,
+                    tail: r.f32(la + 16)?,
+                    end: r.f32(la + 20)?,
+                })
+            })
             .collect::<Result<Vec<_>, String>>()
             .unwrap_or_else(|_| Vec::new());
+        let autolayers = layers.iter().map(|l| l.sequence).collect();
+        let param = |off: usize| r.i32(at + off).ok().and_then(|p| usize::try_from(p).ok());
+        let params = [param(76), param(80)];
+        let param_range = [
+            (r.f32(at + 84).unwrap_or(0.0), r.f32(at + 92).unwrap_or(0.0)),
+            (r.f32(at + 88).unwrap_or(0.0), r.f32(at + 96).unwrap_or(0.0)),
+        ];
+        let pose_keys = match r.i32(at + 160) {
+            Ok(index) if index != 0 => (0..blend_size.0 + blend_size.1)
+                .map(|k| r.f32(r.rel(at, 160)? + k * 4))
+                .collect::<Result<Vec<_>, String>>()
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let act_mods = (0..r.usize(at + 188).unwrap_or(0).min(16))
+            .map(|m| {
+                let ma = r.rel(at, 184)? + m * 4;
+                r.cstr(r.rel(ma, 0)?)
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .unwrap_or_default();
         let weight_base = r.rel(at, 156)?;
         let weights = (0..defaults.len())
             .map(|b| r.f32(weight_base + b * 4))
@@ -1024,6 +1159,14 @@ fn parse_sequences(
         sequences.push(Sequence {
             label,
             activity,
+            flags,
+            params,
+            param_range,
+            pose_keys,
+            act_mods,
+            layers,
+            fade_in: r.f32(at + 104).unwrap_or(0.2),
+            fade_out: r.f32(at + 108).unwrap_or(0.2),
             fps,
             looping: flags & 1 != 0,
             num_frames,

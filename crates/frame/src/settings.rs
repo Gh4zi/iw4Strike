@@ -43,6 +43,9 @@ pub struct GameSettings {
     /// `cl_radar`: the radar, `csgo` (CS:GO's round radar, with CS:GO installed) or `mw2` (MW2's
     /// minimap).
     pub radar: String,
+    /// `cl_playermodels`: players drawn as CS:GO's agents with CS:GO's animations (`csgo`, with
+    /// CS:GO installed) or as MW2's soldiers (`mw2`).
+    pub player_models: String,
     /// `cl_player_ping_mute` (CS:GO's): teammates' pings shown with their sound (0), without it
     /// (1), or not at all (2).
     pub ping_mute: u8,
@@ -163,6 +166,7 @@ impl Default for GameSettings {
             right_hand: true,
             knife: "default".to_owned(),
             radar: "csgo".to_owned(),
+            player_models: "csgo".to_owned(),
             ping_mute: 0,
             loadout_pistol: "usp".to_owned(),
             loadout_m4: "m4a4".to_owned(),

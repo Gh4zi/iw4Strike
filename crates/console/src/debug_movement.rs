@@ -148,6 +148,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
                 .usage("cl_radar [csgo|mw2] — CS:GO's round radar (with CS:GO installed) or MW2's minimap"),
         );
     }
+    if registry.resolve("cl_playermodels").is_none() {
+        registry.register(crate::CommandSpec::new("cl_playermodels").usage(
+            "cl_playermodels [csgo|mw2] — players as CS:GO's agents with its animations (with CS:GO installed) or MW2's soldiers",
+        ));
+    }
     if registry.resolve("cl_loadout_pistol").is_none() {
         registry.register(crate::CommandSpec::new("cl_loadout_pistol").usage(
             "cl_loadout_pistol [usp|p2000] — the Counter-Terrorists' starting pistol (USP-S or P2000)",
@@ -572,6 +577,15 @@ pub(crate) fn route_movement_commands(
                     format!("cl_radar = {}", game.radar)
                 }
                 _ => "usage: cl_radar [csgo|mw2]".to_owned(),
+            },
+            "cl_playermodels" => match cmd.args.as_slice() {
+                [] => format!("cl_playermodels = {}", game.player_models),
+                [arg] if matches!(arg.trim(), "csgo" | "mw2") => {
+                    game.player_models = arg.trim().to_owned();
+                    game.touch();
+                    format!("cl_playermodels = {}", game.player_models)
+                }
+                _ => "usage: cl_playermodels [csgo|mw2]".to_owned(),
             },
             "cl_loadout_pistol" => match cmd.args.as_slice() {
                 [] => format!("cl_loadout_pistol = {}", game.loadout_pistol),

@@ -623,6 +623,9 @@ fn run_entity_types_system(ecs: &mut World) {
         crate::cs_economy::update_buy_bits(&mut world, tick);
         crate::cs_spotting::update(&mut world, tick);
         crate::cs_mapvote::update(&mut world, tick);
+        if movement_iw4::rules::CS_RULES {
+            crate::cs_radio::publish_factions(&mut world);
+        }
     }
 }
 

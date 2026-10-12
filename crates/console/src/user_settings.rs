@@ -451,6 +451,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("cl_righthand={}", u8::from(settings.right_hand)),
         format!("cl_knife={}", settings.knife),
         format!("cl_radar={}", settings.radar),
+        format!("cl_playermodels={}", settings.player_models),
         format!("cl_player_ping_mute={}", settings.ping_mute),
         format!("cl_loadout_pistol={}", settings.loadout_pistol),
         format!("cl_loadout_m4={}", settings.loadout_m4),
@@ -593,6 +594,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "cl_radar" | "ui_radar" => {
                 if matches!(value.trim(), "csgo" | "mw2") {
                     settings.radar = value.trim().to_owned();
+                }
+            }
+            "cl_playermodels" | "ui_playermodels" => {
+                if matches!(value.trim(), "csgo" | "mw2") {
+                    settings.player_models = value.trim().to_owned();
                 }
             }
             "cl_loadout_pistol" | "ui_loadout_pistol" => {

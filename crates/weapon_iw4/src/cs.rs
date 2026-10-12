@@ -2927,6 +2927,32 @@ pub fn armor_penetration(index: u8) -> f32 {
     }
 }
 
+/// The CS:GO player animations CS weapon `index` is held with: its class's sequence prefix
+/// (`rifle_aim`, `move_knife`, `pistol_reload`). The MAG-7 is held as a rifle, as in CS:GO.
+#[must_use]
+pub fn csgo_anim_class(index: u8) -> &'static str {
+    if is_knife(index) {
+        return "knife";
+    }
+    if cs_grenade(index).is_some() {
+        return "grenade";
+    }
+    if is_c4(index) {
+        return "c4";
+    }
+    match cs_weapon(index).map(|w| w.name) {
+        Some(
+            "glock" | "usp" | "p2000" | "p228" | "deagle" | "elite" | "fiveseven" | "tec9"
+            | "cz75a" | "revolver",
+        ) => "pistol",
+        Some("mac10" | "tmp" | "mp5" | "ump45" | "p90" | "mp7" | "bizon") => "smg",
+        Some("m3" | "xm1014" | "sawedoff") => "shotgun",
+        Some("awp" | "scout" | "g3sg1" | "sg550") => "sniper",
+        Some("m249" | "negev") => "heavy",
+        _ => "rifle",
+    }
+}
+
 /// The money a kill with CS weapon `index` pays (CS:GO's `kill award`): $1500 for the knife,
 /// $100 for the AWP, $600 for most SMGs, $900 for shotguns, $300 for the rest.
 #[must_use]
