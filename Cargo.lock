@@ -5485,10 +5485,13 @@ dependencies = [
  "hud",
  "hud_iw4",
  "lighting_iw4",
+ "naga",
  "perf",
  "render_backend",
  "render_frame",
  "render_material",
+ "wgpu",
+ "wgpu-naga-bridge",
 ]
 
 [[package]]

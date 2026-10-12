@@ -103,17 +103,22 @@ pub fn default_plugins_with_quiet_log(mut window: WindowPlugin) -> bevy::app::Pl
     if let Some(primary) = window.primary_window.as_mut() {
         primary.desired_maximum_frame_latency = core::num::NonZeroU32::new(frame_latency());
     }
-    let mut wgpu = WgpuSettings::default();
-    // Smaller GPU memory blocks: the default keeps 64-128 MiB host-visible blocks around after
-    // the load's uploads (~200 MB on Favela) on machines already short of RAM, and BR frame
-    // times did not move.
-    wgpu.memory_hints = bevy::render::settings::MemoryHints::MemoryUsage;
+    let mut wgpu = WgpuSettings {
+        // Smaller GPU memory blocks: the default keeps 64-128 MiB host-visible blocks around
+        // after the load's uploads (~200 MB on Favela) on machines already short of RAM, and BR
+        // frame times did not move.
+        memory_hints: bevy::render::settings::MemoryHints::MemoryUsage,
+        ..default()
+    };
     wgpu.features |= WgpuFeatures::TEXTURE_FORMAT_16BIT_NORM
         | WgpuFeatures::TEXTURE_COMPRESSION_BC
         | WgpuFeatures::POLYGON_MODE_LINE
         | WgpuFeatures::TEXTURE_BINDING_ARRAY
         | WgpuFeatures::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-        | WgpuFeatures::PARTIALLY_BOUND_BINDING_ARRAY;
+        | WgpuFeatures::PARTIALLY_BOUND_BINDING_ARRAY
+        // Exact material ports go to Vulkan as SPIR-V of our own (render_gpu `exact_pipeline`).
+        // Vulkan, D3D12 and Metal all offer it; only Vulkan gets SPIR-V.
+        | WgpuFeatures::PASSTHROUGH_SHADERS;
     let plugins = DefaultPlugins
         .set(window)
         .set(LogPlugin {

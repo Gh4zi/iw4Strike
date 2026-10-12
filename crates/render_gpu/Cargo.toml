@@ -26,6 +26,10 @@ render_backend.workspace = true
 render_frame.workspace = true
 render_material.workspace = true
 bevy.workspace = true
+# The exact ports' SPIR-V (`exact_pipeline.rs`): the same crates bevy's wgpu already uses.
+naga = { version = "29", features = ["wgsl-in", "spv-out"] }
+wgpu = { version = "29", default-features = false }
+wgpu-naga-bridge = "29"
 
 [lints]
 workspace = true

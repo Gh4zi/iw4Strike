@@ -78,6 +78,8 @@ pub(super) fn kick_extracted_colour_pipelines(
     pipeline: Res<ExactColourPipeline>,
     mut kicked: ResMut<ExactPipelineKickCache>,
     mut warmup: ResMut<WorldPipelineWarmup>,
+    adapter: Res<bevy::render::renderer::RenderAdapter>,
+    adapter_info: Res<bevy::render::renderer::RenderAdapterInfo>,
 ) {
     registry.poll();
 
@@ -99,7 +101,8 @@ pub(super) fn kick_extracted_colour_pipelines(
         &mut kicked,
         &mut warmup,
     );
-    registry.flush(&device);
+    let spirv = super::super::exact_pipeline::SpirvTarget::of(&device, &adapter, &adapter_info);
+    registry.flush(&device, spirv);
 }
 
 pub(super) fn kick_admitted_pipelines(

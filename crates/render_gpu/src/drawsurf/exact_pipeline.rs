@@ -46,6 +46,38 @@ pub(super) struct ExactPipelinePlan {
     pub(super) multisample: MultisampleState,
     pub(super) constants_layout: BindGroupLayout,
     pub(super) textures_layout: BindGroupLayout,
+    /// What the two layouts were made from (constants, textures): the port's SPIR-V binds by
+    /// them.
+    pub(super) binding_layouts: [BindGroupLayoutDescriptor; 2],
+}
+
+/// Where exact ports can go to the driver as SPIR-V of our own: a Vulkan device with
+/// `PASSTHROUGH_SHADERS`, and the features and downlevel flags wgpu validates WGSL against.
+#[derive(Clone, Copy)]
+pub(super) struct SpirvTarget {
+    features: bevy::render::render_resource::WgpuFeatures,
+    downlevel: bevy::render::render_resource::DownlevelFlags,
+}
+
+impl SpirvTarget {
+    /// `IW4L_SPIRV_PASSTHROUGH=0` keeps exact ports on wgpu's own WGSL path.
+    pub(super) fn of(
+        device: &RenderDevice,
+        adapter: &bevy::render::renderer::RenderAdapter,
+        info: &bevy::render::renderer::RenderAdapterInfo,
+    ) -> Option<Self> {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = *OFF
+            .get_or_init(|| std::env::var("IW4L_SPIRV_PASSTHROUGH").is_ok_and(|v| v.trim() == "0"));
+        let features = device.features();
+        (!off
+            && info.backend == wgpu::Backend::Vulkan
+            && features.contains(bevy::render::render_resource::WgpuFeatures::PASSTHROUGH_SHADERS))
+        .then(|| Self {
+            features,
+            downlevel: adapter.get_downlevel_capabilities().flags,
+        })
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -159,7 +191,7 @@ impl ExactPipelineRegistry {
         slot
     }
 
-    pub(super) fn flush(&mut self, device: &RenderDevice) {
+    pub(super) fn flush(&mut self, device: &RenderDevice, spirv: Option<SpirvTarget>) {
         if self.queued.is_empty() {
             return;
         }
@@ -169,7 +201,9 @@ impl ExactPipelineRegistry {
             let device = device.clone();
             let existing = self.modules.get(&module).cloned();
             self.jobs.push(
-                pool.spawn(async move { build_port(&device, module, source, existing, plans) }),
+                pool.spawn(
+                    async move { build_port(&device, module, source, existing, plans, spirv) },
+                ),
             );
         }
     }
@@ -207,6 +241,7 @@ fn build_port(
     source: ExactModuleSource,
     existing: Option<Arc<ShaderModule>>,
     plans: Vec<(ExactPipelineSlot, ExactPipelinePlan)>,
+    spirv: Option<SpirvTarget>,
 ) -> PortBuild {
     let label = format!(
         "iw4_exact_colour/{:016x}/{}{}",
@@ -222,11 +257,32 @@ fn build_port(
     let (shader, created) = match existing {
         Some(shader) => (shader, None),
         None => {
-            let shader = Arc::new(unsafe {
-                device.create_shader_module(ShaderModuleDescriptor {
-                    label: Some(&label),
-                    source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source.wgsl())),
-                })
+            let own = spirv.zip(plans.first()).map(|(target, (_, plan))| {
+                port_spirv(source.wgsl(), &plan.binding_layouts, target)
+            });
+            let shader = Arc::new(match own {
+                // SAFETY: SPIR-V naga wrote from WGSL it validated against this device's
+                // features, binding the layouts every pipeline of this port is made with.
+                Some(Ok(words)) => unsafe {
+                    device.wgpu_device().create_shader_module_passthrough(
+                        wgpu::ShaderModuleDescriptorPassthrough {
+                            label: Some(&label),
+                            spirv: Some(std::borrow::Cow::Owned(words)),
+                            ..Default::default()
+                        },
+                    )
+                },
+                own => {
+                    if let Some(Err(error)) = own {
+                        diag::warn!(World, "{label}: own SPIR-V failed, WGSL instead: {error}");
+                    }
+                    unsafe {
+                        device.create_shader_module(ShaderModuleDescriptor {
+                            label: Some(&label),
+                            source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source.wgsl())),
+                        })
+                    }
+                }
             });
             (shader.clone(), Some(shader))
         }
@@ -286,4 +342,70 @@ fn build_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// An exact port's WGSL as SPIR-V, written the way wgpu-hal's Vulkan backend writes a WGSL
+/// module created with unchecked runtime checks (what `RenderDevice::create_shader_module`
+/// asks for): the same validator, each group's entries in binding order taking dense Vulkan
+/// bindings, no bounds checks, no loop bounding, varyings labelled, point size forced.
+///
+/// Handed to the driver as is, the port leaves wgpu nothing to keep: a WGSL module keeps its
+/// naga IR and validation info for as long as any pipeline made from it lives, ~1.4 GB over
+/// Favela's ~5000 ports.
+fn port_spirv(
+    wgsl: &str,
+    layouts: &[BindGroupLayoutDescriptor; 2],
+    target: SpirvTarget,
+) -> Result<Vec<u32>, String> {
+    use naga::back::spv;
+    use naga::proc::{BoundsCheckPolicies, BoundsCheckPolicy};
+
+    let module = naga::front::wgsl::parse_str(wgsl).map_err(|error| error.to_string())?;
+    let info = wgpu_naga_bridge::create_validator(
+        target.features,
+        target.downlevel,
+        naga::valid::ValidationFlags::all(),
+    )
+    .validate(&module)
+    .map_err(|error| format!("{error:?}"))?;
+    let mut binding_map = spv::BindingMap::default();
+    for (group, layout) in layouts.iter().enumerate() {
+        let mut entries: Vec<_> = layout.entries.iter().collect();
+        entries.sort_by_key(|entry| entry.binding);
+        for (dense, entry) in entries.into_iter().enumerate() {
+            binding_map.insert(
+                naga::ResourceBinding {
+                    group: group as u32,
+                    binding: entry.binding,
+                },
+                spv::BindingInfo {
+                    descriptor_set: group as u32,
+                    binding: dense as u32,
+                    binding_array_size: entry.count.map(std::num::NonZeroU32::get),
+                },
+            );
+        }
+    }
+    let options = spv::Options {
+        // The newest version every Vulkan 1.1 device reads; wgpu picks up to 1.6 by device.
+        lang_version: (1, 3),
+        flags: spv::WriterFlags::LABEL_VARYINGS | spv::WriterFlags::FORCE_POINT_SIZE,
+        fake_missing_bindings: false,
+        binding_map,
+        capabilities: None,
+        bounds_check_policies: BoundsCheckPolicies {
+            index: BoundsCheckPolicy::Unchecked,
+            buffer: BoundsCheckPolicy::Unchecked,
+            image_load: BoundsCheckPolicy::Unchecked,
+            binding_array: BoundsCheckPolicy::Unchecked,
+        },
+        zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
+        force_loop_bounding: false,
+        ray_query_initialization_tracking: false,
+        use_storage_input_output_16: false,
+        debug_info: None,
+        task_dispatch_limits: None,
+        mesh_shader_primitive_indices_clamp: false,
+    };
+    spv::write_vec(&module, &info, &options, None).map_err(|error| error.to_string())
 }

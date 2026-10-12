@@ -618,6 +618,7 @@ fn exact_pipeline_plan(
         },
         constants_layout: registry.bind_group_layout(device, &port.constants_layout),
         textures_layout: registry.bind_group_layout(device, &port.textures_layout),
+        binding_layouts: [port.constants_layout.clone(), port.textures_layout.clone()],
     };
     (source, plan)
 }
