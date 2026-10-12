@@ -59,6 +59,24 @@ impl BotAddQueue {
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub struct BotHold(pub bool);
 
+/// CS:GO's `bot_mimic`: every bot sends the copied player's last command each tick, buttons and
+/// all, its view turned by `yaw_offset` (`bot_mimic_yaw_offset`, 180 by default so the bots
+/// face that player). `target` 0 is off, 1 the host, N client N - 1.
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct BotMimic {
+    pub target: u32,
+    pub yaw_offset: f32,
+}
+
+impl Default for BotMimic {
+    fn default() -> Self {
+        Self {
+            target: 0,
+            yaw_offset: 180.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BotTpTarget {
     All,
@@ -76,6 +94,9 @@ pub enum BotTpWhere {
     Above {
         height: f32,
     },
+
+    /// The host onto the bot's head (the first bot for `All`).
+    Ride,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

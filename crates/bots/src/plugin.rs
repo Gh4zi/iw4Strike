@@ -104,6 +104,7 @@ impl Plugin for BotsPlugin {
         app.init_resource::<BotRoster>()
             .init_resource::<BotAddQueue>()
             .init_resource::<BotHold>()
+            .init_resource::<crate::BotMimic>()
             .init_resource::<BotTpQueue>()
             .init_resource::<BotFireQueue>()
             .init_resource::<crate::BotTestControls>()
@@ -373,6 +374,49 @@ fn boot_bots(
     }
 }
 
+/// `bot ride`: the host onto the bot's head, facing as they were.
+fn ride_bot(
+    snapshot: &sim::Snapshot,
+    roster: &BotRoster,
+    target: BotTpTarget,
+    host: sim::ClientId,
+    actions: &mut ClientActionInbox,
+    request_ids: &mut net::ActionRequestIds,
+) {
+    let bot = match target {
+        BotTpTarget::All => roster.bots.first().map(|b| b.id),
+        BotTpTarget::Id(id) => roster.is_bot(id).then_some(id),
+    };
+    let player = |id| {
+        snapshot
+            .players
+            .iter()
+            .find(|(c, _)| *c == id)
+            .map(|(_, ps)| ps)
+    };
+    let (Some(bot_ps), Some(host_ps)) = (bot.and_then(player), player(host)) else {
+        diag::warn!(Sim, "bots: ride skipped — no bot or no host");
+        return;
+    };
+    let height = movement_iw4::rules::body_height(bot_ps).unwrap_or(72.0);
+    let origin = [
+        bot_ps.origin[0],
+        bot_ps.origin[1],
+        bot_ps.origin[2] + height + 1.0,
+    ];
+    let request_id = request_ids.allocate();
+    if let Err(error) = actions.push(
+        host,
+        ClientAction::Move {
+            request_id,
+            origin,
+            angles: host_ps.viewangles,
+        },
+    ) {
+        diag::warn!(Sim, "bots: ride not queued — {error}");
+    }
+}
+
 fn apply_bot_tp(
     mut queue: ResMut<BotTpQueue>,
     roster: Res<BotRoster>,
@@ -402,6 +446,10 @@ fn apply_bot_tp(
         })
         .flatten();
     for request in requests {
+        if request.where_ == BotTpWhere::Ride {
+            ride_bot(&snapshot, &roster, request.target, local.0, &mut actions, &mut request_ids);
+            continue;
+        }
         let ids: Vec<sim::ClientId> = match request.target {
             BotTpTarget::All => roster.bots.iter().map(|b| b.id).collect(),
             BotTpTarget::Id(id) => {
@@ -439,6 +487,8 @@ fn apply_bot_tp(
                     let origin = [ps.origin[0], ps.origin[1], ps.origin[2] + height];
                     (origin, aim_viewangles(origin, ps.origin))
                 }
+                // Moves the host, not the bot: handled above.
+                BotTpWhere::Ride => continue,
             };
             let request_id = request_ids.allocate();
             if let Err(error) = actions.push(
@@ -474,10 +524,66 @@ struct ThinkBots<'w> {
     actions: ResMut<'w, ClientActionInbox>,
     request_ids: ResMut<'w, net::ActionRequestIds>,
     hold: Res<'w, BotHold>,
+    mimic: Res<'w, crate::BotMimic>,
+    local: Res<'w, LocalPresentClient>,
     fire: ResMut<'w, BotFireQueue>,
     test: Res<'w, crate::BotTestControls>,
     reliable: ResMut<'w, ReliableEventHub>,
     meter: ResMut<'w, BotMeter>,
+}
+
+/// `bot_mimic`: each live bot sends the copied player's last command this tick, the view turned
+/// by the yaw offset. False when off or there is no one to copy, and
+/// the bots think as usual.
+fn mimic_bots(p: &mut ThinkBots) -> bool {
+    let target = match p.mimic.target {
+        0 => return false,
+        1 => p.local.0,
+        n => sim::ClientId(n - 1),
+    };
+    if p.roster.is_bot(target) {
+        return false;
+    }
+    let world = &p.world.0;
+    let (Some(source), Some(copied)) = (p.cmds.last_consumed(target), world.player(target)) else {
+        return false;
+    };
+    let view = copied.viewangles;
+    let look = [view[0], view[1] + p.mimic.yaw_offset, view[2]];
+    let run_scale = world.scales_for(copied.weapon).0;
+    for bot in &mut p.roster.bots {
+        let alive = world
+            .client_meta(bot.id)
+            .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive);
+        let Some(ps) = world.player(bot.id).filter(|_| alive) else {
+            bot.last_cmd = None;
+            continue;
+        };
+        let mut cmd = source;
+        cmd.server_time = p.clock.time_ms;
+        cmd.angles =
+            look_angles_from_degrees(std::array::from_fn(|axis| look[axis] - ps.delta_angles[axis]));
+        // The copied player's weapon, as CS:GO's mimic switches to it; a bot without it holds
+        // the one it has that runs closest to it, so the two keep pace (a runboost).
+        let weapon = if ps.weapons.contains(&(copied.weapon as i32)) {
+            copied.weapon
+        } else {
+            ps.weapons
+                .iter()
+                .filter(|&&w| w > 0)
+                .map(|&w| w as u32)
+                .min_by(|&a, &b| {
+                    let gap = |w| (world.scales_for(w).0 - run_scale).abs();
+                    gap(a).total_cmp(&gap(b))
+                })
+                .unwrap_or(ps.weapon)
+        };
+        cmd.weapon = weapon as u16;
+        cmd.weapon_mapped = weapon as u16;
+        bot.last_cmd = Some(cmd);
+        p.cmds.push(bot.id, None, cmd, None);
+    }
+    true
 }
 
 fn think_bots(mut p: ThinkBots) {
@@ -490,6 +596,9 @@ fn think_bots(mut p: ThinkBots) {
     }
     if p.roster.bots.is_empty() {
         p.fire.drain();
+        return;
+    }
+    if mimic_bots(&mut p) {
         return;
     }
 

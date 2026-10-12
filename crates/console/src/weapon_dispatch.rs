@@ -115,6 +115,17 @@ pub(crate) fn register_weapon_commands(
             "menuresponse <menu> <response> — send a script menu answer, as clicking it would (e.g. team_marinesopfor spectator)",
         ));
     }
+    if registry.resolve("bot_mimic").is_none() {
+        registry.register(
+            crate::CommandSpec::new("bot_mimic").usage(super::feature_dispatch::BOT_MIMIC_USAGE),
+        );
+    }
+    if registry.resolve("bot_mimic_yaw_offset").is_none() {
+        registry.register(
+            crate::CommandSpec::new("bot_mimic_yaw_offset")
+                .usage(super::feature_dispatch::BOT_MIMIC_YAW_USAGE),
+        );
+    }
     if registry.resolve("bot").is_none() {
         let mut spec = crate::CommandSpec::new("bot").usage(super::feature_dispatch::BOT_USAGE);
         for _ in 0..4 {
@@ -659,7 +670,7 @@ struct BotCompleter(WeaponArgCompletions);
 
 impl ArgCompleter for BotCompleter {
     fn complete(&self, prefix: &str) -> Vec<String> {
-        StaticCompleter::new(["add", "dummy", "hold", "give", "fire", "tp"]).complete(prefix)
+        StaticCompleter::new(["add", "dummy", "hold", "ride", "give", "fire", "tp"]).complete(prefix)
     }
     fn complete_with_context(&self, prefix: &str, args: &[&str]) -> Vec<String> {
         let Some(verb) = args.first() else {

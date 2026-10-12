@@ -3163,4 +3163,116 @@ mod tests {
         }
         assert_eq!(sim.ps.origin[0], 0.0);
     }
+
+    const OTHER: u16 = 1;
+
+    /// Ground through the origin facing `ground.normal`, and another player (a 32 wide, 72 tall
+    /// box) standing at `other`.
+    struct Pair {
+        ground: Ramp,
+        other: [f32; 3],
+        velocity: [f32; 3],
+        airborne: bool,
+    }
+
+    impl Pair {
+        fn new(ground: [f32; 3], other: &PlayerState) -> Self {
+            Self {
+                ground: Ramp { normal: ground },
+                other: other.origin,
+                velocity: other.velocity,
+                airborne: other.ground_entity_num == ENTITYNUM_NONE,
+            }
+        }
+    }
+
+    impl CollisionBackend for Pair {
+        fn trace(&self, input: GroundTraceInput) -> Trace {
+            let ground = self.ground.trace(input);
+            let o = self.other;
+            let planes = [
+                [1.0, 0.0, 0.0, o[0] + 16.0],
+                [-1.0, 0.0, 0.0, 16.0 - o[0]],
+                [0.0, 1.0, 0.0, o[1] + 16.0],
+                [0.0, -1.0, 0.0, 16.0 - o[1]],
+                [0.0, 0.0, 1.0, o[2] + 72.0],
+                [0.0, 0.0, -1.0, -o[2]],
+            ];
+            let mut body = Trace {
+                fraction: 1.0,
+                endpos: input.end,
+                ..Trace::default()
+            };
+            let brush = trace_iw4::BrushRef {
+                planes: &planes,
+                contents: 1,
+                plane_surface_flags: &[],
+                glass_encoded: 0,
+            };
+            trace_iw4::trace_box_into(
+                [brush],
+                input.start,
+                input.end,
+                input.mins,
+                input.maxs,
+                input.tracemask,
+                &mut body,
+            );
+            if body.fraction < ground.fraction {
+                body.hit_type = trace_iw4::HITTYPE_ENTITY;
+                body.hit_id = OTHER;
+                body
+            } else {
+                ground
+            }
+        }
+
+        fn player_ground(&self, entity: u16) -> Option<crate::PlayerGround> {
+            (entity == OTHER).then_some(crate::PlayerGround {
+                velocity: self.velocity,
+                airborne: self.airborne,
+                on_player: false,
+            })
+        }
+    }
+
+    /// A rider on a booster's head on ground facing `ground`, both running forward, the booster
+    /// a command behind (as a mimic bot is), the rider moved first: the ticks the rider stayed on
+    /// (up to `ticks`) and how many of them it spent in the air.
+    fn ride(ground: [f32; 3], ticks: usize) -> (usize, usize) {
+        let mut booster = Sim::csgo(Pair::new(ground, &PlayerState::ZERO));
+        booster.world.other = [0.0, 0.0, -10_000.0];
+        booster.ps.origin = [0.0, 0.0, 20.0];
+        booster.settle();
+        let mut rider = Sim::csgo(Pair::new(ground, &booster.ps));
+        rider.ps.origin = [booster.ps.origin[0], 0.0, booster.ps.origin[2] + 73.0];
+        rider.settle();
+        assert_eq!(rider.ps.ground_entity_num, i32::from(OTHER), "never got on");
+        let mut lagged = 0;
+        let mut airborne = 0;
+        for tick in 0..ticks {
+            rider.world = Pair::new(ground, &booster.ps);
+            rider.tick(127, 0, 0, 0.0);
+            booster.world = Pair::new(ground, &rider.ps);
+            booster.tick(lagged, 0, 0, 0.0);
+            lagged = 127;
+            if rider.ps.ground_entity_num != i32::from(OTHER) {
+                airborne += 1;
+            }
+            if rider.ps.origin[2] < booster.ps.origin[2] + 60.0 {
+                return (tick, airborne);
+            }
+        }
+        (ticks, airborne)
+    }
+
+    #[test]
+    fn riding_a_running_booster_stays_on() {
+        // Four seconds on its head at a run, flat or downhill up to 30 degrees, never leaving it.
+        for degrees in [0.0_f32, 10.0, 20.0, 30.0] {
+            let tilt = degrees.to_radians();
+            let (on, airborne) = ride([libm::sinf(tilt), 0.0, libm::cosf(tilt)], 400);
+            assert_eq!((on, airborne), (400, 0), "downhill {degrees} degrees");
+        }
+    }
 }

@@ -380,6 +380,9 @@ Your movement mode, `always_edgebug` and `always_pixelsurf` are saved, so you on
 | `map_restart` | Restart the match on the same map |
 | `bot add <count>` | Add bots that move and fight, for example `bot add 5` |
 | `bot dummy <count>` | Add bots that stand still (for aim practice) |
+| `bot_mimic 1` / `0` | Bots copy your keys, view, buttons and weapon every tick (runboost and boost practice) |
+| `bot_mimic_yaw_offset <degrees>` | Turns the bots' copied view: `180` faces you (default), `0` moves the way you do |
+| `bot ride` | Puts you on a bot's head |
 | `force_match_start` | 🔧 Skip the pre-match countdown |
 | `snd_ambient_volume <0-1>` | How loud the map's own ambience is (wind, engines, hum). Default `0.35` |
 | `game_paths` | Close the game and open the game folders window |

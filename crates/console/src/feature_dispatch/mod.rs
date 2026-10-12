@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bots::{
-    BotAddQueue, BotFireQueue, BotHold, BotRoster, BotTpQueue, BotTpRequest, BotTpTarget,
-    BotTpWhere,
+    BotAddQueue, BotFireQueue, BotHold, BotMimic, BotRoster, BotTpQueue, BotTpRequest,
+    BotTpTarget, BotTpWhere,
 };
 use hud::PendingSplash;
 use net::ClientActionInbox;
@@ -36,11 +36,12 @@ pub(crate) fn route_debug_feature_commands(
         ResMut<ConsoleLine>,
     ),
     mut bot_add: ResMut<BotAddQueue>,
-    (mut bot_hold, mut bot_tp, mut bot_fire, mut bot_test): (
+    (mut bot_hold, mut bot_tp, mut bot_fire, mut bot_test, mut bot_mimic): (
         ResMut<BotHold>,
         ResMut<BotTpQueue>,
         ResMut<BotFireQueue>,
         ResMut<bots::BotTestControls>,
+        ResMut<BotMimic>,
     ),
     (weapons, mut inbox, mut give_seq, roster): (
         Option<Res<assets::PreparedWeapons>>,
@@ -236,10 +237,42 @@ pub(crate) fn route_debug_feature_commands(
                 }
             },
 
+            "bot_mimic" => {
+                let msg = match cmd.args.as_slice() {
+                    [] => format!("bot_mimic = {}", bot_mimic.target),
+                    [arg] => match arg.parse::<u32>() {
+                        Ok(target) => {
+                            bot_mimic.target = target;
+                            format!("bot_mimic = {target}")
+                        }
+                        Err(_) => BOT_MIMIC_USAGE.to_owned(),
+                    },
+                    _ => BOT_MIMIC_USAGE.to_owned(),
+                };
+                echo(msg, console, line);
+            }
+            "bot_mimic_yaw_offset" => {
+                let msg = match cmd.args.as_slice() {
+                    [] => format!("bot_mimic_yaw_offset = {}", bot_mimic.yaw_offset),
+                    [arg] => match parse_finite(arg) {
+                        Ok(offset) => {
+                            bot_mimic.yaw_offset = offset;
+                            format!("bot_mimic_yaw_offset = {offset}")
+                        }
+                        Err(_) => BOT_MIMIC_YAW_USAGE.to_owned(),
+                    },
+                    _ => BOT_MIMIC_YAW_USAGE.to_owned(),
+                };
+                echo(msg, console, line);
+            }
             _ => {}
         }
     }
 }
+
+pub(crate) const BOT_MIMIC_USAGE: &str = "bot_mimic [0|1|N] — bots copy a player's keys, view and buttons every tick (CS:GO's): 1 copies you, N player N, 0 off";
+
+pub(crate) const BOT_MIMIC_YAW_USAGE: &str = "bot_mimic_yaw_offset [degrees] — turns the copied view: 180 (default) faces you, 0 moves the way you do (runboost practice)";
 
 pub(crate) fn resume_lifecycle_commands(
     mut dispatch: ResMut<ConsoleDispatch>,
@@ -384,7 +417,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
     }
 }
 
-pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] | fire [all|<id>] | attack all|<id> [on|off] | use <id> [on|off] | buy <id> <item> | weapon <id> <weapon> | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
+pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | ride [<id>] | give <id> <weapon> [att...] | fire [all|<id>] | attack all|<id> [on|off] | use <id> [on|off] | buy <id> <item> | weapon <id> <weapon> | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum BotVerb {
@@ -508,6 +541,21 @@ pub(crate) fn parse_bot_args(args: &[String]) -> Result<BotVerb, String> {
             Ok(BotVerb::Weapon(ClientId(id), args.get(2).cloned().ok_or_else(usage)?))
         }
         "tp" => parse_bot_tp(&args[1..]),
+        "ride" => {
+            let target = match args.get(1) {
+                None => BotTpTarget::All,
+                Some(s) => BotTpTarget::Id(ClientId(
+                    s.parse::<u32>().map_err(|_| "usage: bot ride [<id>]".to_owned())?,
+                )),
+            };
+            if args.len() > 2 {
+                return Err("usage: bot ride [<id>]".into());
+            }
+            Ok(BotVerb::Tp(BotTpRequest {
+                target,
+                where_: BotTpWhere::Ride,
+            }))
+        }
         _ => Err(BOT_USAGE.into()),
     }
 }

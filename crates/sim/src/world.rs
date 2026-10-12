@@ -3653,7 +3653,8 @@ impl SimState {
         self.pellet_fx.push(record);
     }
 
-    pub(crate) fn scales_for(&self, weapon: u32) -> (f32, f32, f32) {
+    /// The weapon's movement scales: run, aimed run, sprint time.
+    pub fn scales_for(&self, weapon: u32) -> (f32, f32, f32) {
         self.content
             .data
             .weapon_def_scales
