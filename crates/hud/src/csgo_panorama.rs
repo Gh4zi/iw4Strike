@@ -120,7 +120,7 @@ fn build_buy_wheels(doc: &mut panorama::Doc, files: &panorama::Files) -> Option<
 fn show_item_details(doc: &mut panorama::Doc, info: usize, item: &str) {
     use weapon_iw4::cs;
     doc.set_var(info, "item_name", crate::cs_buymenu::csgo_item_name(item));
-    doc.set_var(info, "cost", &cs::buy_price(item).unwrap_or(0).to_string());
+    doc.set_var(info, "cost", &cs::buy_price(item, sim::cs_settings::shooting_mode()).unwrap_or(0).to_string());
     let gun = cs::cs_weapon_by_name(item);
     let stats = doc.find_in(info, "WeaponStats");
     if let Some(stats) = stats {
@@ -951,7 +951,7 @@ pub(crate) fn update_csgo_panorama(
                 let Some(contents) = doc.find_in(button, "Contents") else {
                     continue;
                 };
-                let price = item.and_then(weapon_iw4::cs::buy_price);
+                let price = item.and_then(|item| weapon_iw4::cs::buy_price(item, sim::cs_settings::shooting_mode()));
                 if let Some(label) = doc.find_in(contents, "ItemName") {
                     doc.set_text(label, item.map_or("", crate::cs_buymenu::csgo_item_name));
                 }
@@ -1014,9 +1014,18 @@ pub(crate) fn update_csgo_panorama(
                 doc.set_class(info, "preview-container--hidden", true);
             }
         }
-        // Buy time left: buying closes 20 s into the round (`mp_buytime`).
+        // Buy time left (`mp_buytime`, from the server's `cs_buy_end`): during the freeze what
+        // is left of it and all the buy time, then the time to when buying ends.
         if let Some(countdown) = doc.find_in(menu_panel, "Countdown") {
-            let left = crate::cs_hud::round_seconds_left(snap).map_or(0, |s| (s - 95).max(0));
+            let info = crate::cs_hud::server_info(snap, "cs_buy_end").unwrap_or_default();
+            let left_ms = if let Some(buy) = info.strip_prefix("freeze ") {
+                let freeze = crate::cs_hud::round_seconds_left(snap).unwrap_or(0);
+                i64::from(freeze) * 1000 + buy.parse::<i64>().unwrap_or(0)
+            } else {
+                let now = snap.map_or(0, |s| i64::from(s.tick.0) * i64::from(sim::MATCH_TICK_MS));
+                info.parse::<i64>().map_or(0, |end| end - now)
+            };
+            let left = i32::try_from((left_ms.max(0) + 999) / 1000).unwrap_or(0);
             doc.set_var(countdown, "duration", &clock(left));
         }
     }

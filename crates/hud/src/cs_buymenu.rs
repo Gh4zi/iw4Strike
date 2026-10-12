@@ -779,7 +779,7 @@ fn own_classic_menus() -> HashMap<String, Vec<String>> {
                 "\\w{}. {}\\y\\R{}",
                 n + 1,
                 item_name(item),
-                cs::buy_price(item).unwrap_or(0)
+                cs::buy_price(item, sim::cs_settings::shooting_mode()).unwrap_or(0)
             ));
         }
         lines.push(String::new());
@@ -928,7 +928,7 @@ impl Buyer {
     }
 
     fn may_buy(&self, name: &str) -> bool {
-        self.side_allows(name) && cs::buy_price(name).is_some_and(|price| price <= self.money)
+        self.side_allows(name) && cs::buy_price(name, sim::cs_settings::shooting_mode()).is_some_and(|price| price <= self.money)
     }
 }
 
@@ -1531,7 +1531,7 @@ fn csgo_page(path: &str, loadout: u32) -> Option<Vec<Control>> {
             image: Some(csgo_picture(item)),
             ..csgo_control(Kind::Image, format!("picture{key}"), [x + 46.0, y + 6.0, 96.0, 72.0], String::new())
         });
-        let price = cs::buy_price(item).map_or(String::new(), |price| format!("${price}"));
+        let price = cs::buy_price(item, sim::cs_settings::shooting_mode()).map_or(String::new(), |price| format!("${price}"));
         controls.push(csgo_control(
             Kind::Label,
             format!("name{key}"),
@@ -1734,7 +1734,7 @@ fn act(menu: &mut CsBuyMenu, action: Action, buyer: &Buyer, now: f32) {
                 // Over full kevlar, the helmet alone costs $350.
                 let price = match name {
                     "vesthelm" if buyer.armor >= 100 => 350,
-                    other => cs::buy_price(other).unwrap_or(0),
+                    other => cs::buy_price(other, sim::cs_settings::shooting_mode()).unwrap_or(0),
                 };
                 (price > buyer.money).then(|| {
                     say(
@@ -1781,9 +1781,9 @@ fn autobuy(buyer: &Buyer) -> Vec<&'static str> {
             "vesthelm" if armoured => continue,
             "vesthelm" if buyer.armor >= 100 => 350,
             "vest" if armoured || buyer.armor >= 100 => continue,
-            "vesthelm" | "vest" => cs::buy_price(item).unwrap_or(i32::MAX),
+            "vesthelm" | "vest" => cs::buy_price(item, sim::cs_settings::shooting_mode()).unwrap_or(i32::MAX),
             _ if has_primary || !buyer.side_allows(item) => continue,
-            _ => cs::buy_price(item).unwrap_or(i32::MAX),
+            _ => cs::buy_price(item, sim::cs_settings::shooting_mode()).unwrap_or(i32::MAX),
         };
         if price > money {
             continue;

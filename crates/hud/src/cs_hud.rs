@@ -649,7 +649,7 @@ struct Ammo {
     grenade: Option<char>,
 }
 
-fn server_info<'a>(snap: Option<&'a sim::Snapshot>, key: &str) -> Option<&'a str> {
+pub(crate) fn server_info<'a>(snap: Option<&'a sim::Snapshot>, key: &str) -> Option<&'a str> {
     snap?
         .meta
         .objectives

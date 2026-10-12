@@ -545,7 +545,11 @@ pub(crate) fn cs_buy_defuser(world: &mut FrameWorld, id: ClientId) {
     {
         return;
     }
-    if !crate::cs_economy::pay(world, id, weapon_iw4::cs::CS_DEFUSE_KIT_PRICE) {
+    if !crate::cs_economy::pay(
+        world,
+        id,
+        weapon_iw4::cs::defuse_kit_price(crate::cs_settings::shooting_mode()),
+    ) {
         return;
     }
     if let Some(ps) = world.player_mut(id) {

@@ -130,24 +130,29 @@ pub(crate) fn attackers(world: &mut FrameWorld) -> Option<i32> {
     }
 }
 
-/// Whether the round still sells: all through the freeze (the script's `level.startTime` is set
-/// when it ends) and for the buy time after it.
-fn buy_time_open(world: &mut FrameWorld, tick: crate::Tick) -> bool {
+/// When the round stops selling (level ms), `None` all through the freeze (the script's
+/// `level.startTime` is set when it ends), and the buy time in ms.
+fn buy_end(world: &mut FrameWorld) -> (Option<i64>, i64) {
     let Some(runtime) = world.ecs().get_resource::<crate::script::Runtime>() else {
-        return true;
-    };
-    let Some(crate::script::Value::Int(start)) =
-        crate::script::host::restart::field(runtime, 0, "startTime")
-    else {
-        return true;
+        return (None, 0);
     };
     let seconds = runtime
         .dvars
         .get("scr_cs_buytime")
         .and_then(|value| value.parse::<f32>().ok())
         .unwrap_or(BUY_TIME_DEFAULT_SECONDS);
+    let buy_ms = (seconds * 1000.0) as i64;
+    let end = match crate::script::host::restart::field(runtime, 0, "startTime") {
+        Some(crate::script::Value::Int(start)) => Some(i64::from(start) + buy_ms),
+        _ => None,
+    };
+    (end, buy_ms)
+}
+
+/// Whether the round still sells: all through the freeze and for the buy time after it.
+fn buy_time_open(world: &mut FrameWorld, tick: crate::Tick) -> bool {
     let now = i64::from(tick.0) * i64::from(crate::MATCH_TICK_MS);
-    now - i64::from(start) < (seconds * 1000.0) as i64
+    buy_end(world).0.is_none_or(|end| now < end)
 }
 
 /// Where and when `id` may buy now (`playerstate_iw4::cs_buy` bits). Outside the bomb mode
@@ -184,8 +189,18 @@ pub(crate) fn buy_bits(world: &mut FrameWorld, tick: crate::Tick, id: ClientId) 
     time | if near { ZONE } else { 0 }
 }
 
-/// Refreshes every player's buy zone and buy time bits, for their HUD and buy menu.
+/// Refreshes every player's buy zone and buy time bits, for their HUD and buy menu, and tells
+/// clients when buying ends (`cs_buy_end`: the level ms, or `freeze <buy ms>` while the freeze
+/// runs) for the buy menu's countdown.
 pub(crate) fn update_buy_bits(world: &mut FrameWorld, tick: crate::Tick) {
+    let (end, buy_ms) = buy_end(world);
+    let value = end.map_or_else(|| format!("freeze {buy_ms}"), |end| end.to_string());
+    if let Some(mut runtime) = world.ecs().get_resource_mut::<crate::script::Runtime>()
+        && runtime.dvars.get("cs_buy_end") != Some(&value)
+    {
+        runtime.server_info.insert("cs_buy_end".to_owned());
+        runtime.dvars.insert("cs_buy_end".to_owned(), value);
+    }
     for id in world.client_ids_sorted() {
         let bits = buy_bits(world, tick, id);
         if let Some(ps) = world.player_mut(id)

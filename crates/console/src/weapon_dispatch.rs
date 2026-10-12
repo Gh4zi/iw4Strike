@@ -209,7 +209,7 @@ fn send_buy(
     if !alive(presented, local) {
         return "buy: not Alive".into();
     }
-    let price = weapon_iw4::cs::buy_price(name).unwrap_or(0);
+    let price = weapon_iw4::cs::buy_price(name, sim::cs_settings::shooting_mode()).unwrap_or(0);
     let money = presented.player(local).map_or(0, |ps| ps.cs_money as i32);
     if money < price && !(name == "vesthelm" && money >= 350) {
         return format!("buy: {name} costs ${price}, you have ${money}");

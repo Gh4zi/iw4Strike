@@ -2361,8 +2361,70 @@ pub const CS_C4_ARMING_SECONDS: f32 = 3.0;
 /// Defusing takes this long, or [`CS_DEFUSE_KIT_SECONDS`] with a defuse kit.
 pub const CS_DEFUSE_SECONDS: f32 = 10.0;
 pub const CS_DEFUSE_KIT_SECONDS: f32 = 5.0;
-/// `DEFUSEKIT_PRICE`; Counter-Terrorists only.
+/// `DEFUSEKIT_PRICE` (CS 1.6); Counter-Terrorists only.
 pub const CS_DEFUSE_KIT_PRICE: i32 = 200;
+/// CS:GO's defuse kit price (`item_defuser`'s "in game price").
+pub const CS_DEFUSE_KIT_PRICE_CSGO: i32 = 400;
+
+/// What a defuse kit costs under `shooting_mode`.
+#[must_use]
+pub fn defuse_kit_price(shooting_mode: u32) -> i32 {
+    if shooting_mode == crate::csgo::SHOOTING_CS16 {
+        CS_DEFUSE_KIT_PRICE
+    } else {
+        CS_DEFUSE_KIT_PRICE_CSGO
+    }
+}
+
+/// A defusal match's rules: seconds frozen at a round's start and of buying after it, round
+/// length in minutes, C4 timer, plant and defuse seconds, and the rounds to win, at most, and
+/// before the sides switch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CsRoundRules {
+    pub freeze_seconds: f32,
+    pub buy_seconds: f32,
+    pub round_minutes: f32,
+    pub bomb_seconds: f32,
+    pub plant_seconds: f32,
+    pub defuse_seconds: f32,
+    pub win_limit: u32,
+    pub round_limit: u32,
+    pub round_switch: u32,
+}
+
+/// The rules each `shooting_mode` plays by. CS:GO: competitive matchmaking
+/// (`gamemode_competitive.cfg` over the game's defaults): 15 s freeze, 20 s buying, 1.92 minute
+/// rounds, a 40 s C4 (`mp_c4timer`), 3 s plant (`WEAPON_C4_ARM_TIME`), 10 s defuse, 30 rounds
+/// (first to 16, sides switch at the half). CS 1.6: its own defaults (6 s freeze, 1.5 minutes of
+/// buying, a 45 s C4) in the match format the mode had before.
+#[must_use]
+pub fn cs_round_rules(shooting_mode: u32) -> CsRoundRules {
+    if shooting_mode == crate::csgo::SHOOTING_CS16 {
+        CsRoundRules {
+            freeze_seconds: 6.0,
+            buy_seconds: 90.0,
+            round_minutes: 1.9167,
+            bomb_seconds: 45.0,
+            plant_seconds: CS_C4_ARMING_SECONDS,
+            defuse_seconds: CS_DEFUSE_SECONDS,
+            win_limit: 13,
+            round_limit: 24,
+            round_switch: 12,
+        }
+    } else {
+        CsRoundRules {
+            freeze_seconds: 15.0,
+            buy_seconds: 20.0,
+            round_minutes: 1.92,
+            bomb_seconds: 40.0,
+            plant_seconds: CS_C4_ARMING_SECONDS,
+            defuse_seconds: CS_DEFUSE_SECONDS,
+            win_limit: 16,
+            round_limit: 30,
+            round_switch: 15,
+        }
+    }
+}
 /// CS:GO's knives a player can carry instead of their side's default one (`cl_knife`, with
 /// CS:GO installed): the setting's name, the viewmodel and what CS:GO calls it.
 pub const CSGO_KNIVES: [(&str, &str, &str); 20] = [
@@ -2978,13 +3040,14 @@ pub fn buy_alias(command: &str) -> Option<&'static str> {
     cs_buyable(name).map(|(buy, _, _)| buy)
 }
 
-/// The price of kevlar (`vest`) or kevlar and helmet (`vesthelm`), or of any weapon by buy name.
+/// The price under `shooting_mode` of kevlar (`vest`), kevlar and helmet (`vesthelm`), a
+/// defuse kit (`defuser`) or any weapon by buy name.
 #[must_use]
-pub fn buy_price(name: &str) -> Option<i32> {
+pub fn buy_price(name: &str, shooting_mode: u32) -> Option<i32> {
     match name {
         "vest" => Some(CS_KEVLAR_PRICE),
         "vesthelm" => Some(CS_KEVLAR_HELMET_PRICE),
-        "defuser" => Some(CS_DEFUSE_KIT_PRICE),
+        "defuser" => Some(defuse_kit_price(shooting_mode)),
         other => cs_buyable(other).map(|(_, _, price)| price),
     }
 }

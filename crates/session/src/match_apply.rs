@@ -1119,25 +1119,30 @@ fn preflight_match_install(
         // through `_tweakables`; 0 turns regeneration off (the match config sets 5).
         // An unranked (private) match: `level.rankedMatch` is false, so `_rank` gives no XP,
         // no "+50" popups or rank-ups, and `_missions` runs no challenges.
-        const CS_DVARS: [(&str, &str); 12] = [
-            // Seconds every round after the first starts frozen (CS 1.6/CS:S `mp_freezetime`).
-            ("scr_cs_freezetime", "6"),
+        const CS_DVARS: [(&str, &str); 4] = [
             ("scr_player_healthregentime", "0"),
             ("xblive_privatematch", "1"),
             // No killcams for now, the final one included (user, 2026-10-07).
             ("scr_game_allowkillcam", "0"),
-            // Defusal (Search and Destroy), CS2 competitive format; the bounds MW2 registers
-            // these with are raised by `cs_script_patches`.
-            ("scr_sd_winlimit", "13"),
-            ("scr_sd_roundlimit", "24"),
-            ("scr_sd_roundswitch", "12"),
-            ("scr_sd_timelimit", "1.9167"),
-            ("scr_sd_planttime", "3"),
-            ("scr_sd_defusetime", "10"),
-            ("scr_sd_bombtimer", "40"),
             ("scr_sd_numlives", "1"),
         ];
-        for (name, value) in CS_DVARS {
+        // Defusal (Search and Destroy) by the shooting mode's rules: seconds every round after
+        // the first starts frozen (`mp_freezetime`) and of buying after, then the bomb mode's
+        // own (the bounds MW2 registers these with are raised by `cs_script_patches`).
+        let rules = weapon_iw4::cs::cs_round_rules(sim::cs_settings::shooting_mode());
+        let mode_dvars = [
+            ("scr_cs_freezetime", rules.freeze_seconds.to_string()),
+            ("scr_cs_buytime", rules.buy_seconds.to_string()),
+            ("scr_sd_winlimit", rules.win_limit.to_string()),
+            ("scr_sd_roundlimit", rules.round_limit.to_string()),
+            ("scr_sd_roundswitch", rules.round_switch.to_string()),
+            ("scr_sd_timelimit", rules.round_minutes.to_string()),
+            ("scr_sd_planttime", rules.plant_seconds.to_string()),
+            ("scr_sd_defusetime", rules.defuse_seconds.to_string()),
+            ("scr_sd_bombtimer", rules.bomb_seconds.to_string()),
+        ];
+        let mode_dvars = mode_dvars.iter().map(|(name, value)| (*name, value.as_str()));
+        for (name, value) in CS_DVARS.into_iter().chain(mode_dvars) {
             match script_dvars
                 .iter_mut()
                 .find(|(set, _)| set.eq_ignore_ascii_case(name))
