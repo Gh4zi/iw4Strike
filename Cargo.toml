@@ -51,6 +51,7 @@ members = [
     "crates/mdl_source2",
     "crates/movement_iw4",
     "crates/net",
+    "crates/panorama",
     "crates/iw4l-master",
     "crates/perf",
     "crates/playerstate_iw4",
@@ -155,6 +156,7 @@ mdl_source2 = { path = "crates/mdl_source2" }
 master_protocol = { path = "crates/master_protocol" }
 movement_iw4 = { path = "crates/movement_iw4" }
 net = { path = "crates/net" }
+panorama = { path = "crates/panorama" }
 perf = { path = "crates/perf" }
 playerstate_iw4 = { path = "crates/playerstate_iw4" }
 render = { path = "crates/render" }

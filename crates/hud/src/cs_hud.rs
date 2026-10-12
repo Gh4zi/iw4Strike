@@ -193,7 +193,7 @@ enum IconFont {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FeedLine {
-    start_ms: i32,
+    pub(crate) start_ms: i32,
     pub(crate) attacker: Option<(String, Color)>,
     pub(crate) victim: (String, Color),
     icon: (IconFont, char),
@@ -204,6 +204,8 @@ pub(crate) struct FeedLine {
     pub(crate) headshot: bool,
     /// The local player killed or died.
     pub(crate) local: bool,
+    /// The local player made the kill.
+    pub(crate) killer: bool,
 }
 
 /// CS:S death notices: the newest last, at most [`FEED_LINES`].
@@ -340,6 +342,7 @@ pub(crate) fn spawn_cs_hud(
     mut assets: ResMut<CsHudAssets>,
     mut goldsrc: ResMut<crate::cs16_hud::Cs16HudAssets>,
     mut csgo: ResMut<crate::csgo_hud::CsgoHudAssets>,
+    mut panorama: ResMut<crate::csgo_panorama::CsgoPanorama>,
 ) {
     if !replaces_mw2_hud() || !existing.is_empty() {
         return;
@@ -351,6 +354,10 @@ pub(crate) fn spawn_cs_hud(
     // Playing with CS:GO: its HUD instead of the CS:S panels or CS 1.6's sprites.
     if let Some(found) = crate::csgo_hud::load(&mut fonts, &mut images) {
         *csgo = found;
+        // CS:GO's own Panorama HUD when its packed UI reads; the hand-built one otherwise.
+        if let Some(found) = crate::csgo_panorama::load(&mut fonts) {
+            *panorama = found;
+        }
     }
     // Playing with CS 1.6 or Condition Zero: CS 1.6's sprite HUD instead of the CS:S panels.
     if !csgo.active
@@ -374,6 +381,10 @@ pub(crate) fn spawn_cs_hud(
             },
         ))
         .with_children(|hud| {
+            if panorama.active {
+                crate::csgo_panorama::spawn_root(hud, &mut panorama);
+                return;
+            }
             if csgo.active {
                 crate::csgo_hud::spawn_parts(hud, &csgo);
                 return;
@@ -612,6 +623,7 @@ pub(crate) fn obituary(
         headshot: hud_iw4::obituary_mod(payload.event_parm) == Some(hud_iw4::MOD_HEAD_SHOT),
         local: (has_attacker && is_local(payload.attacker_entity_num))
             || is_local(payload.other_entity_num),
+        killer: has_attacker && is_local(payload.attacker_entity_num),
     });
     while feed.lines.len() > FEED_LINES {
         feed.lines.pop_front();

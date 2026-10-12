@@ -544,7 +544,7 @@ fn feed_color(color: Color) -> Color {
 }
 
 /// The two sides' rounds won: the Counter-Terrorists' and the Terrorists'.
-fn scores(snap: Option<&sim::Snapshot>) -> Option<[i32; 2]> {
+pub(crate) fn scores(snap: Option<&sim::Snapshot>) -> Option<[i32; 2]> {
     let snap = snap?;
     let scores = snap.meta.objectives.scores;
     let terrorists = match snap
