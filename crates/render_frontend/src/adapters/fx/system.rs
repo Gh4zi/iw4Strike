@@ -730,7 +730,7 @@ fn commit_fx_transaction(
                 light.origin,
                 light.axis[0],
                 light.radius,
-                light.color_bgr,
+                light.color_rgb,
                 spot_cone,
             )),
             Err(lighting_iw4::AddOmniLightRefuse::Cap) => {
@@ -748,7 +748,7 @@ fn commit_fx_transaction(
             Ok(()) => env.dlights.scene.push(lighting_iw4::omni_light_pack(
                 light.origin,
                 light.radius,
-                light.color_bgr,
+                light.color_rgb,
             )),
             Err(lighting_iw4::AddOmniLightRefuse::Cap) => {
                 env.dlights.cap_full = env.dlights.cap_full.saturating_add(1);

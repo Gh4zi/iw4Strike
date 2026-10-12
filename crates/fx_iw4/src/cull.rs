@@ -93,12 +93,17 @@ pub fn cull_elem_light(
     cull_sphere(planes, count, pos, size0)
 }
 
+/// A light element's colour as the scene light takes it: red, green, blue, scaled.
+///
+/// It returned blue, green, red, which the light pack and the shader then read as red, green,
+/// blue: every FX light (muzzle flashes, impacts, explosions) came out with red and blue
+/// swapped, so a warm orange flash lit its surroundings teal.
 #[inline]
-pub fn elem_light_color_bgr(color_rgba: [u8; 4], scale: f32) -> [f32; 3] {
+pub fn elem_light_color_rgb(color_rgba: [u8; 4], scale: f32) -> [f32; 3] {
     let s = scale * (crate::FX_RECIP_255 as f32);
     [
-        color_rgba[2] as f32 * s,
-        color_rgba[1] as f32 * s,
         color_rgba[0] as f32 * s,
+        color_rgba[1] as f32 * s,
+        color_rgba[2] as f32 * s,
     ]
 }

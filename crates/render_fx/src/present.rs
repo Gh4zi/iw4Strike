@@ -19,7 +19,7 @@ use fx::{
 use fx_iw4::{
     FX_ELEM_ATLAS_OFF, FX_ELEM_ATLAS_SIZE, FX_RAND_CH_COLOR, FX_RAND_CH_SCALE, FX_RAND_CH_SIZE0,
     FxElemType, apply_lighting_frac_bgra, build_cloud, clamp_elem_rotation_time, cull_cloud,
-    cull_elem_light, effect_def_needs_lighting_sample, elem_light_color_bgr,
+    cull_elem_light, effect_def_needs_lighting_sample, elem_light_color_rgb,
     elem_uses_lighting_frac, evaluate_rotation_total, evaluate_scale, evaluate_size0,
     evaluate_size1, get_elem_angles_axis, get_velocity_at_time, random_table_f32, sprite_atlas_uv,
     vec3_normalize, vis_blocker_add_prepared,
@@ -1462,7 +1462,7 @@ pub fn build_fx_verts(
             is_spot: ctx.elem_type == FxElemType::SpotLight as u8,
             origin: ctx.origin,
             radius: size0,
-            color_bgr: elem_light_color_bgr(color, scale),
+            color_rgb: elem_light_color_rgb(color, scale),
             axis,
         })
     };

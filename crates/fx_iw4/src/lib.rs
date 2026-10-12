@@ -95,7 +95,7 @@ pub use collide::{
 };
 pub use cull::{
     FX_ELEM_FLAG_CULL_DRAW_5_PLANES, cull_cloud, cull_cloud_plane_count, cull_cloud_radius,
-    cull_elem_for_spawn_allows, cull_elem_light, cull_sphere, elem_light_color_bgr,
+    cull_elem_for_spawn_allows, cull_elem_light, cull_sphere, elem_light_color_rgb,
 };
 pub use draw::{FX_DRAW_ELEM_HANDLER_PRESENT, FxElemType, draw_elem_handler_present};
 pub use effect_def::FxEffectDef;

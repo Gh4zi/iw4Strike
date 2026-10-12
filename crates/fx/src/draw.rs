@@ -204,7 +204,7 @@ pub struct FxElemLightInstance {
     pub is_spot: bool,
     pub origin: [f32; 3],
     pub radius: f32,
-    pub color_bgr: [f32; 3],
+    pub color_rgb: [f32; 3],
 
     pub axis: [[f32; 3]; 3],
 }
