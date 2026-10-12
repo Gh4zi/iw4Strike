@@ -2129,10 +2129,14 @@ fn segment_is_shield(collider: Option<ColliderId>) -> bool {
     )
 }
 
+/// `current_poses`: every alive player posed as of now, when the caller posed them for this
+/// shot and changed nothing since. The first emission traces against them instead of posing
+/// everyone again; damage it deals can change who is alive or where, so the rest pose afresh.
 pub(crate) fn phase_trace(
     world: &mut FrameWorld,
     tick: Tick,
     emissions: &[Emission],
+    mut current_poses: Option<Vec<crate::bullet_collision::PlayerCollisionPose>>,
 ) -> TracePhaseOutput {
     let mut output = TracePhaseOutput::default();
     let mut pending: std::collections::VecDeque<_> =
@@ -2141,7 +2145,7 @@ pub(crate) fn phase_trace(
         let Some(facts) = world.combat_facts_for(em.weapon) else {
             continue;
         };
-        let query = world.lagcomp_query_for(em.attacker, tick);
+        let query = world.lagcomp_query_with(em.attacker, tick, current_poses.take());
         let end = [
             em.origin[0] + em.direction[0] * em.max_range,
             em.origin[1] + em.direction[1] * em.max_range,

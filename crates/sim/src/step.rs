@@ -529,11 +529,20 @@ fn run_players_system(ecs: &mut World) {
                     Some(hitbox_ids.as_slice())
                 };
                 world.record_collision_history(tick, 0, hitboxes);
-                if world.publishes_snapshot() {
+                // The authority record just posed every alive player as of now; the shot traces
+                // against those poses rather than posing everyone again.
+                let current_poses = if world.publishes_snapshot() {
                     world.record_entity_collision_history(tick);
-                }
+                    world
+                        .collision_history()
+                        .latest()
+                        .filter(|frame| frame.tick == tick)
+                        .map(|frame| frame.poses.clone())
+                } else {
+                    None
+                };
                 let emissions = phase_emit(&world, core::slice::from_ref(&shot));
-                phase_trace(&mut world, tick, &emissions);
+                phase_trace(&mut world, tick, &emissions, current_poses);
             }
             crate::equipment::phase_offhand(&mut world, tick, &[(*id, cmd)]);
             let fall = movement_iw4::rules::fall_damage(landing_speed);

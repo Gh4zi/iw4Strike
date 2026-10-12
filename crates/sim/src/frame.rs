@@ -485,6 +485,21 @@ impl FrameWorld<'_> {
         })
     }
 
+    pub(crate) fn lagcomp_query_with(
+        &self,
+        attacker: ClientId,
+        current: Tick,
+        current_poses: Option<Vec<crate::bullet_collision::PlayerCollisionPose>>,
+    ) -> crate::bullet_collision::LagcompQuery {
+        SimState::lagcomp_query_with(
+            self,
+            attacker,
+            current,
+            |id| player_ref(self.ecs, id).copied(),
+            current_poses,
+        )
+    }
+
     pub(crate) fn alive_origins(&self) -> Vec<[f32; 3]> {
         self.client_ids_sorted()
             .into_iter()

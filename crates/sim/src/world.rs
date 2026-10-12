@@ -2053,9 +2053,22 @@ impl SimState {
         current: Tick,
         player: impl Fn(ClientId) -> Option<PlayerState>,
     ) -> crate::bullet_collision::LagcompQuery {
+        self.lagcomp_query_with(attacker, current, player, None)
+    }
+
+    /// `lagcomp_query_for`, given the poses `alive_collision_poses` would compute right now if
+    /// the caller already has them: a shot is traced straight after the record that posed every
+    /// player for it. Used only when the plan is to trace against the current authority.
+    pub(crate) fn lagcomp_query_with(
+        &self,
+        attacker: ClientId,
+        current: Tick,
+        player: impl Fn(ClientId) -> Option<PlayerState>,
+        current_poses: Option<Vec<crate::bullet_collision::PlayerCollisionPose>>,
+    ) -> crate::bullet_collision::LagcompQuery {
         let plan = self.lagcomp_plan(attacker, current);
         crate::bullet_collision::LagcompQuery {
-            players: self.lagcomp_players(current, plan, player),
+            players: self.lagcomp_players(current, plan, player, current_poses),
             entities: self.lagcomp_entities(current, plan),
         }
     }
@@ -2065,12 +2078,13 @@ impl SimState {
         current: Tick,
         plan: LagcompPlan,
         player: impl Fn(ClientId) -> Option<PlayerState>,
+        current_poses: Option<Vec<crate::bullet_collision::PlayerCollisionPose>>,
     ) -> crate::bullet_collision::HistorySample {
         use crate::bullet_collision::{HistoryClampReason, HistorySample, HistorySampleVerdict};
 
         match plan {
             LagcompPlan::CurrentAuthority { reason } => HistorySample {
-                poses: self.alive_collision_poses(player),
+                poses: current_poses.unwrap_or_else(|| self.alive_collision_poses(player)),
                 verdict: HistorySampleVerdict::CurrentAuthority {
                     tick: current,
                     reason,
