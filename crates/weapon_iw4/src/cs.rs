@@ -2363,6 +2363,52 @@ pub const CS_DEFUSE_SECONDS: f32 = 10.0;
 pub const CS_DEFUSE_KIT_SECONDS: f32 = 5.0;
 /// `DEFUSEKIT_PRICE` (CS 1.6); Counter-Terrorists only.
 pub const CS_DEFUSE_KIT_PRICE: i32 = 200;
+/// CS:GO's radio voices (`scripts/talker/<voice>.txt`) a team speaks in, one for each MW2
+/// faction it may wear ([`csgo_radio_voice`]).
+pub const CSGO_RADIO_VOICES: [&str; 6] = ["phoenix", "leet", "balkan", "separatist", "sas", "seal"];
+/// The grenades whose throw makes a radio call ([`csgo_grenade_radio`]).
+pub const CSGO_RADIO_GRENADES: [&str; 3] = ["hegrenade", "flashbang", "smokegrenade"];
+
+/// The CS:GO voice of MW2 faction `faction` (`game["allies"]` / `game["axis"]`): TF141 the
+/// SAS, the Rangers and SEALs the SEALs, the Russians the Balkan, the Arabs the Elite Crew, the
+/// militia the Separatists, the opforce the Phoenix; else the side's (`allies`) default.
+#[must_use]
+pub fn csgo_radio_voice(faction: &str, allies: bool) -> &'static str {
+    match faction {
+        "sas" | "tf141" => "sas",
+        "seals" | "us_army" => "seal",
+        "russian" => "balkan",
+        "arab" => "leet",
+        "militia" => "separatist",
+        "opforce_composite" => "phoenix",
+        _ if allies => "seal",
+        _ => "phoenix",
+    }
+}
+
+/// The talker concept a throw of CS grenade `grenade` (buy name) calls (`ThrowGrenade`).
+#[must_use]
+pub fn csgo_grenade_concept(grenade: &str) -> &'static str {
+    match grenade {
+        "flashbang" => "Radio.Flashbang",
+        "smokegrenade" => "Radio.Smoke",
+        _ => "Radio.FireInTheHole",
+    }
+}
+
+/// The short name of a throw's call in its sound alias.
+#[must_use]
+pub fn csgo_grenade_radio(grenade: &str) -> &'static str {
+    match grenade {
+        "flashbang" => "flashbang",
+        "smokegrenade" => "smoke",
+        _ => "fireinthehole",
+    }
+}
+
+/// Where radio call sound aliases live: `<prefix><voice>/<call>`.
+pub const CSGO_RADIO_ALIAS_PREFIX: &str = "csgo/radio/";
+
 /// CS:GO's defuse kit price (`item_defuser`'s "in game price").
 pub const CS_DEFUSE_KIT_PRICE_CSGO: i32 = 400;
 

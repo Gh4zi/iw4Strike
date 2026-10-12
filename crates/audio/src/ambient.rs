@@ -303,6 +303,7 @@ pub(crate) fn install_sound_bank(
                             // Counter-Strike's own weapon sounds, read from the local install.
                             asset_audio::append_cs_weapon_sounds(&mut catalog);
                             asset_audio::append_csgo_weapon_sounds(&mut catalog);
+                            asset_audio::append_csgo_radio_calls(&mut catalog);
                             asset_audio::append_css_weapon_sounds(&mut catalog);
                             (Arc::new(catalog), gaps)
                         }),

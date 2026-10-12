@@ -122,6 +122,11 @@ fn symbol_name(runtime: &Runtime, id: u32) -> Option<Arc<str>> {
 
 /// Field `name` of script object `object` (`0` is `level`). Field names are case-insensitive;
 /// the compiler keeps them lowercase.
+/// Field `name` of the script's `game` array (`game["allies"]`).
+pub(crate) fn game_field(runtime: &Runtime, name: &str) -> Option<Value> {
+    field(runtime, GAME_OBJECT, name)
+}
+
 pub(crate) fn field(runtime: &Runtime, object: u64, name: &str) -> Option<Value> {
     let program = runtime.program.as_ref()?;
     let name = name.to_ascii_lowercase();

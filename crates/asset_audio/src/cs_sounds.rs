@@ -16,7 +16,7 @@ pub const CSGO_SOUND_PREFIX: &str = "csgo/";
 
 /// The CS:GO sound script groups our guns, knife, grenades and bomb play from (`weapon_ak47.`
 /// …): their shots and the sounds their animations call. CS:GO's other weapon sounds stay unread.
-const CSGO_SOUND_GROUPS: [&str; 40] = [
+const CSGO_SOUND_GROUPS: [&str; 46] = [
     // A head hit: on a helmet, on a bare head (each with the shooter's feedback version).
     "player.damagehelmet",
     "player.damageheadshot",
@@ -55,6 +55,13 @@ const CSGO_SOUND_GROUPS: [&str; 40] = [
     "weapon_revolver.",
     "weapon_knife.",
     "weapon_hegrenade.",
+    // The grenades in hand: drawing one and pulling its pin.
+    "hegrenade.draw",
+    "hegrenade.pullpin",
+    "flashbang.draw",
+    "flashbang.pullpin",
+    "smokegrenade.draw",
+    "smokegrenade.pullpin",
     "weapon_flashbang.",
     "weapon_smokegrenade.",
     "weapon_c4.",
@@ -675,6 +682,99 @@ pub fn append_csgo_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         pak.display()
     );
     added
+}
+
+/// Add CS:GO's grenade radio calls: each of [`weapon_iw4::cs::CSGO_RADIO_VOICES`] making the call
+/// of each of [`weapon_iw4::cs::CSGO_RADIO_GRENADES`], as a 2D alias
+/// (`csgo/radio/<voice>/<call>`) whose variants are the lines its talker response picks
+/// from (`scripts/talker/<voice>.txt`: `scene "scenes/<voice>/<line>.vcd"`, spoken by
+/// `sound/player/vo/<voice>/<line>.wav`). Returns how many calls were added; 0 without CS:GO.
+pub fn append_csgo_radio_calls(catalog: &mut SoundCatalog) -> usize {
+    use weapon_iw4::cs::{
+        CSGO_RADIO_ALIAS_PREFIX, CSGO_RADIO_GRENADES, CSGO_RADIO_VOICES, csgo_grenade_concept,
+        csgo_grenade_radio,
+    };
+    let Some(pak) = asset_transport::find_csgo_pak() else {
+        return 0;
+    };
+    let vpk = match mdl_source::Vpk::open(&pak) {
+        Ok(vpk) => vpk,
+        Err(error) => {
+            diag::warn!(Audio, "csgo radio: {error}");
+            return 0;
+        }
+    };
+    let Some(player) = template(catalog, PLAYER_TEMPLATES, "fire_plr") else {
+        return 0;
+    };
+    let (mut added, mut bytes, mut skipped) = (0usize, 0usize, 0usize);
+    for voice in CSGO_RADIO_VOICES {
+        let Some(script) = vpk.read(&format!("scripts/talker/{voice}.txt")) else {
+            continue;
+        };
+        let script = String::from_utf8_lossy(&script);
+        for grenade in CSGO_RADIO_GRENADES {
+            let alias = format!("{CSGO_RADIO_ALIAS_PREFIX}{voice}/{}", csgo_grenade_radio(grenade));
+            let response = format!("{}{voice}", csgo_grenade_concept(grenade));
+            let mut clips = Vec::new();
+            for (i, scene) in talker_scenes(&script, &response).iter().enumerate() {
+                let Some(line) = scene.strip_prefix("scenes/") else {
+                    continue;
+                };
+                let wave = format!("sound/player/vo/{}.wav", line.trim_end_matches(".vcd"));
+                match vpk.read(&wave).as_deref().and_then(decode_wav) {
+                    Some((rate, channels, pcm16)) => {
+                        bytes += pcm16.len();
+                        clips.push(LooseClip {
+                            name: format!("{alias}#{i}"),
+                            rate,
+                            channels,
+                            pcm16,
+                        });
+                    }
+                    None => skipped += 1,
+                }
+            }
+            if !clips.is_empty() && catalog.add_loose_alias_tuned(&alias, &player, clips, steady_pitch) {
+                added += 1;
+            }
+        }
+    }
+    diag::info!(
+        Audio,
+        "csgo radio: {added} grenade calls ({:.1} MB PCM, {skipped} lines missing)",
+        bytes as f64 / 1_048_576.0
+    );
+    added
+}
+
+/// The scenes talker response `name` picks from: the `scene "..."` lines of its block.
+fn talker_scenes(script: &str, name: &str) -> Vec<String> {
+    let mut lines = script.lines();
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        let Some(rest) = line
+            .strip_prefix("Response")
+            .or_else(|| line.strip_prefix("response"))
+        else {
+            continue;
+        };
+        if !rest.trim().eq_ignore_ascii_case(name) {
+            continue;
+        }
+        let mut scenes = Vec::new();
+        for line in lines.by_ref() {
+            let line = line.trim();
+            if line.starts_with('}') {
+                break;
+            }
+            if let Some(scene) = line.strip_prefix("scene").and_then(|rest| rest.split('"').nth(1)) {
+                scenes.push(scene.to_ascii_lowercase());
+            }
+        }
+        return scenes;
+    }
+    Vec::new()
 }
 
 pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {

@@ -318,6 +318,7 @@ dependencies = [
  "fastfile_iw5",
  "fastfile_t5",
  "mdl_source",
+ "weapon_iw4",
 ]
 
 [[package]]

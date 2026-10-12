@@ -1524,6 +1524,7 @@ fn launch_cs_grenade(world: &mut FrameWorld, tick: Tick, id: ClientId, weapon: u
     if world.publishes_snapshot() {
         let ps = *world.player(id).expect("present player");
         throw_cs_grenade(world, tick, id, &ps, grenade);
+        crate::cs_radio::grenade_call(world, tick, id, grenade.name);
     }
 }
 

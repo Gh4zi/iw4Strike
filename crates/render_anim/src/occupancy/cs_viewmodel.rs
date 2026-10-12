@@ -1859,8 +1859,12 @@ pub fn update_cs_viewmodel(
                 if let Some(sequence) = sequence {
                     start(playing, sequence, 1.0);
                 }
-                // CS radios every grenade throw (`Radio("%!MRAD_FIREINHOLE")`).
-                if playing.grenade_state != THROWN && ps.cs_grenade == THROWN {
+                // CS 1.6 radios every grenade throw (`Radio("%!MRAD_FIREINHOLE")`); under CS:GO
+                // the server sends the call to the whole team (`cs_radio`).
+                if playing.grenade_state != THROWN
+                    && ps.cs_grenade == THROWN
+                    && ps.cs_shooting_mode == weapon_iw4::csgo::SHOOTING_CS16
+                {
                     play_local_or(&mut sounds, FIRE_IN_THE_HOLE, FIRE_IN_THE_HOLE_GOLDSRC);
                 }
                 playing.grenade_state = ps.cs_grenade;
