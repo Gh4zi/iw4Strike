@@ -171,6 +171,8 @@ pub struct ScriptModelPlayAnim {
 #[derive(Clone, Debug)]
 pub struct AuthorityDObjState {
     pub current_model: String,
+    /// `current_model`, shared: every collision history frame names each entity's model.
+    model_key: std::sync::Arc<str>,
     pub model_revision: u32,
     pub pose_revision: u32,
     pub capability: Option<std::sync::Arc<xmodel_runtime::RetainedModelCapability>>,
@@ -341,6 +343,7 @@ impl AuthorityDObjState {
     ) -> Self {
         Self {
             current_model: current_model.clone(),
+            model_key: current_model.as_str().into(),
             model_revision: 1,
             pose_revision: 1,
             capability,
@@ -550,6 +553,7 @@ impl AuthorityDObjState {
     ) {
         self.model_revision = self.model_revision.wrapping_add(1);
         self.current_model = current_model.clone();
+        self.model_key = current_model.as_str().into();
         self.semantic_state.composition =
             xmodel_runtime::DObjCompositionDescriptor::single(self.model_revision, current_model);
         self.capability = capability;
@@ -782,7 +786,7 @@ pub struct EntityCollisionTraceGeom {
 
     pub dobj_contents: Option<u32>,
 
-    pub model_key: Option<String>,
+    pub model_key: Option<std::sync::Arc<str>>,
     pub linked_brushes: Vec<LinkedBrushCollisionBrush>,
 }
 
@@ -869,7 +873,7 @@ impl EntityCollisionCapabilities {
                     .as_ref()
                     .and_then(|capability| capability.contents)
             }),
-            model_key: self.dobj.as_ref().map(|state| state.current_model.clone()),
+            model_key: self.dobj.as_ref().map(|state| state.model_key.clone()),
             linked_brushes: self.linked_brushes.clone(),
         }
     }

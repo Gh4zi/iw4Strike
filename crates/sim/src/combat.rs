@@ -2772,7 +2772,7 @@ fn hit_dump(
         bone.map(|b| b.center),
         bone.map(|b| b.half_size),
         row.dobj_contents,
-        row.model_key.clone(),
+        row.model_key.as_deref().map(str::to_owned),
     )
 }
 
