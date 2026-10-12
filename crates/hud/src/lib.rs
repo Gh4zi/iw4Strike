@@ -9,6 +9,7 @@ mod cs16_hud;
 mod cs_hud;
 mod csgo_hud;
 mod csgo_panorama;
+mod csgo_radar;
 mod csgo_scoreboard;
 mod cs_round_banner;
 mod cs_scoreboard;

@@ -37,6 +37,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         crate::gpu_list::register(app);
+        crate::csgo_radar::register(app);
         let _ = crate::scorebar::milliseconds();
         app.init_resource::<frame::ScreenEffectsView>()
             .init_resource::<HudImages>()

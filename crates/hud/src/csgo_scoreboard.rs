@@ -93,6 +93,13 @@ fn attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
 
 impl Scoreboard {
     /// Shows the board (`show`) with `data`, building it the first time.
+    /// Hides the board (its data is only gathered while it shows).
+    pub(crate) fn hide(&self, doc: &mut Doc) {
+        if let Some(board) = doc.find("Scoreboard") {
+            doc.set_visible(board, false);
+        }
+    }
+
     pub(crate) fn update(&mut self, doc: &mut Doc, files: &Files, show: bool, data: &Data) {
         let Some(board) = doc.find("Scoreboard") else {
             return;

@@ -76,6 +76,8 @@ pub struct Doc {
     despawn: Vec<usize>,
     /// Panels whose live transform moved since the last sync.
     live_dirty: Vec<usize>,
+    /// Panels by id (lower case), in the order they were made.
+    ids: HashMap<String, Vec<usize>>,
 }
 
 /// The main element of a layout document: the first child of `<root>` that is not its styles,
@@ -141,6 +143,7 @@ impl Doc {
             reapply: Vec::new(),
             despawn: Vec::new(),
             live_dirty: Vec::new(),
+            ids: HashMap::new(),
         };
         let xml = doc.read_layout(files, layout)?;
         let main = main_element(&xml)?.clone();
@@ -302,6 +305,9 @@ impl Doc {
             ..Panel::default()
         };
         let index = self.panels.len();
+        if let Some(id) = &panel.id {
+            self.ids.entry(id.to_ascii_lowercase()).or_default().push(index);
+        }
         self.panels.push(panel);
         if let Some(parent) = parent {
             self.panels[parent].children.push(index);
@@ -333,6 +339,36 @@ impl Doc {
     /// The first live panel with `id` under `scope` (itself included).
     #[must_use]
     pub fn find_in(&self, scope: usize, id: &str) -> Option<usize> {
+        // The panels with that id under the scope: one is the answer, more are told apart in
+        // tree order.
+        let candidates = self.ids.get(&id.to_ascii_lowercase())?;
+        let mut found = None;
+        for &p in candidates {
+            if self.panels[p].removed || !self.within(p, scope) {
+                continue;
+            }
+            if found.is_some() {
+                return self.find_in_tree(scope, id);
+            }
+            found = Some(p);
+        }
+        found
+    }
+
+    /// Whether `panel` is `scope` or under it.
+    fn within(&self, panel: usize, scope: usize) -> bool {
+        let mut at = Some(panel);
+        while let Some(p) = at {
+            if p == scope {
+                return true;
+            }
+            at = self.panels[p].parent;
+        }
+        false
+    }
+
+    /// [`Self::find_in`] by walking the tree.
+    fn find_in_tree(&self, scope: usize, id: &str) -> Option<usize> {
         let p = &self.panels[scope];
         if p.removed {
             return None;
@@ -340,7 +376,7 @@ impl Doc {
         if p.id.as_deref().is_some_and(|own| own.eq_ignore_ascii_case(id)) {
             return Some(scope);
         }
-        p.children.iter().find_map(|&c| self.find_in(c, id))
+        p.children.iter().find_map(|&c| self.find_in_tree(c, id))
     }
 
     /// The first live panel with `id`.

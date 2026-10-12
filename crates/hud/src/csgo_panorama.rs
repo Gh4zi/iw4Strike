@@ -512,66 +512,6 @@ struct RadarTrack {
 }
 
 /// Draws MW2's minimap `(width, height, rgba)` into `out` as CS:GO's round radar sees it:
-/// `size` pixels across, `range` world units across, centred on `at` and turned so `yaw`
-/// points up; black off the map, faded out at the rim.
-fn draw_radar(
-    out: &mut [u8],
-    size: u32,
-    map: (u32, u32, &[u8]),
-    bounds: &hud_iw4::CompassMapBounds,
-    at: [f32; 2],
-    yaw: f32,
-    range: f32,
-) {
-    let (w, h, rgba) = map;
-    let (sin, cos) = yaw.to_radians().sin_cos();
-    let forward = [cos, sin];
-    let right = [sin, -cos];
-    let east = [bounds.north[1], -bounds.north[0]];
-    let south = [-bounds.north[0], -bounds.north[1]];
-    let units = range / size as f32;
-    let radius = size as f32 * 0.5;
-    let texel = |x: i64, y: i64| -> [f32; 4] {
-        if x < 0 || y < 0 || x >= i64::from(w) || y >= i64::from(h) {
-            return [0.0, 0.0, 0.0, 255.0];
-        }
-        let i = ((y as usize) * w as usize + x as usize) * 4;
-        rgba.get(i..i + 4).map_or([0.0, 0.0, 0.0, 255.0], |p| {
-            [f32::from(p[0]), f32::from(p[1]), f32::from(p[2]), 255.0]
-        })
-    };
-    for j in 0..size {
-        for i in 0..size {
-            let dx = i as f32 + 0.5 - radius;
-            let dy = j as f32 + 0.5 - radius;
-            let o = ((j * size + i) * 4) as usize;
-            let edge = (radius - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
-            if edge <= 0.0 {
-                out[o..o + 4].copy_from_slice(&[0, 0, 0, 0]);
-                continue;
-            }
-            let world = [
-                at[0] + (dx * right[0] - dy * forward[0]) * units,
-                at[1] + (dx * right[1] - dy * forward[1]) * units,
-            ];
-            let delta = [world[0] - bounds.upper_left[0], world[1] - bounds.upper_left[1]];
-            let u = (east[0] * delta[0] + east[1] * delta[1]) / bounds.world_size[0];
-            let v = (south[0] * delta[0] + south[1] * delta[1]) / bounds.world_size[1];
-            let (fx, fy) = (u * w as f32 - 0.5, v * h as f32 - 0.5);
-            let (x0, y0) = (fx.floor(), fy.floor());
-            let (tx, ty) = (fx - x0, fy - y0);
-            let (x0, y0) = (x0 as i64, y0 as i64);
-            let (a, b, c, d) = (texel(x0, y0), texel(x0 + 1, y0), texel(x0, y0 + 1), texel(x0 + 1, y0 + 1));
-            for k in 0..3 {
-                let top = a[k] + (b[k] - a[k]) * tx;
-                let bottom = c[k] + (d[k] - c[k]) * tx;
-                out[o + k] = (top + (bottom - top) * ty) as u8;
-            }
-            out[o + 3] = (edge * 255.0) as u8;
-        }
-    }
-}
-
 /// The equipment icon of what a buy name sells (`icons/equipment/<name>.svg`).
 fn buy_icon(item: &str) -> &str {
     match item {
@@ -617,7 +557,8 @@ pub(crate) struct CsgoPanorama {
     feed_seen: i32,
     buy: Option<BuyWheels>,
     /// The radar's map texture and its size in pixels, and its players' icon packages.
-    radar_image: Option<(Handle<Image>, u32)>,
+    /// The radar's map material, the overview it shows and the panel entity it is on.
+    radar_material: Option<(Handle<crate::csgo_radar::RadarMaterial>, String, Option<Entity>)>,
     radar_icons: Vec<usize>,
     /// The bomb sites A and B (where their radar objectives are), for the map whose minimap
     /// this names.
@@ -747,7 +688,11 @@ pub(crate) fn update_csgo_panorama(
     weapons: Option<Res<PreparedWeapons>>,
     view: Res<ViewSubject>,
     feed: Res<crate::cs_hud::CsKillFeed>,
-    (time, mut images): (Res<Time>, ResMut<Assets<Image>>),
+    (time, mut images, mut radar_materials): (
+        Res<Time>,
+        ResMut<Assets<Image>>,
+        ResMut<Assets<crate::csgo_radar::RadarMaterial>>,
+    ),
     (compass, mut hud_images, mut gaps, cameras): (
         Option<Res<assets::SessionCompass>>,
         ResMut<crate::images::HudImages>,
@@ -1031,38 +976,40 @@ pub(crate) fn update_csgo_panorama(
         if let (Some(ps), Some(drawable), Some(inner)) =
             (ps, drawable, doc.find_in(radar, "Radar__Round--Inner"))
         {
-            let size = (RADAR_SIZE * doc.scale).round().max(16.0) as u32;
-            if state.radar_image.as_ref().is_none_or(|(_, s)| *s != size) {
-                let image = Image::new_fill(
-                    bevy::render::render_resource::Extent3d {
-                        width: size,
-                        height: size,
-                        depth_or_array_layers: 1,
-                    },
-                    bevy::render::render_resource::TextureDimension::D2,
-                    &[0, 0, 0, 0],
-                    bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-                    bevy::asset::RenderAssetUsages::default(),
-                );
-                state.radar_image = Some((images.add(image), size));
-            }
-            if let Some((handle, size)) = state.radar_image.clone() {
+            // The overview goes to the GPU once; the radar turns and moves over it there.
+            if state
+                .radar_material
+                .as_ref()
+                .is_none_or(|(_, name, _)| *name != drawable.image_name)
+            {
                 let map_ns = hud_images.map_namespace();
-                if let Some((w, h, rgba)) = hud_images.rgba(map_ns, &drawable.image_name)
-                    && let Some(mut image) = images.get_mut(&handle)
-                    && let Some(data) = image.data.as_mut()
-                {
-                    draw_radar(
-                        data,
-                        size,
-                        (*w, *h, rgba.as_slice()),
-                        &drawable.bounds,
-                        [ps.origin[0], ps.origin[1]],
-                        ps.viewangles[1],
-                        drawable.max_range,
-                    );
+                if let Some((w, h, rgba)) = hud_images.rgba(map_ns, &drawable.image_name) {
+                    let map = images.add(crate::csgo_radar::map_image(*w, *h, rgba.clone()));
+                    let material = radar_materials.add(crate::csgo_radar::RadarMaterial {
+                        params: crate::csgo_radar::RadarParams::default(),
+                        map,
+                    });
+                    state.radar_material = Some((material, drawable.image_name.clone(), None));
                 }
-                doc.set_image_handle(inner, Some(handle));
+            }
+            if let Some((material, _, bound)) = state.radar_material.as_mut() {
+                let params = crate::csgo_radar::RadarParams::new(
+                    &drawable.bounds,
+                    [ps.origin[0], ps.origin[1]],
+                    ps.viewangles[1],
+                    drawable.max_range,
+                );
+                if radar_materials.get(&*material).is_some_and(|m| m.params != params)
+                    && let Some(mut m) = radar_materials.get_mut(&*material)
+                {
+                    m.params = params;
+                }
+                if let Some(entity) = doc.entity(inner).filter(|e| *bound != Some(*e)) {
+                    commands
+                        .entity(entity)
+                        .insert(bevy::ui_render::prelude::MaterialNode(material.clone()));
+                    *bound = Some(entity);
+                }
             }
             let local_team = snap
                 .and_then(|s| s.meta.for_client(local.0))
@@ -1476,9 +1423,13 @@ pub(crate) fn update_csgo_panorama(
     {
         let down = actions.as_ref().is_some_and(|a| a.client.kb.scores.active);
         let show = snap.is_some_and(|snap| crate::scoreboard::displayed(down, snap, local.0));
-        let map = identity.as_ref().map_or(String::new(), |i| map_title(&i.zone));
-        let data = scoreboard_data(snap, local.0, scores.as_deref(), weapons.as_deref(), map);
-        state.scoreboard.update(doc, files, show, &data);
+        if show {
+            let map = identity.as_ref().map_or(String::new(), |i| map_title(&i.zone));
+            let data = scoreboard_data(snap, local.0, scores.as_deref(), weapons.as_deref(), map);
+            state.scoreboard.update(doc, files, true, &data);
+        } else {
+            state.scoreboard.hide(doc);
+        }
     }
 
     if let Some(money) = doc.find("HudMoney") {
