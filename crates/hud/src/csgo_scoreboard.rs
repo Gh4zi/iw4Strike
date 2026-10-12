@@ -43,6 +43,7 @@ pub(crate) struct Line {
     pub assists: i32,
     pub deaths: i32,
     pub score: i32,
+    pub mvps: u32,
     /// Shown for teammates only (CS:GO hides the other side's money).
     pub money: Option<i32>,
     /// `dictPlayerStatusImage`: 0 none, 1 dead, 2 carrying the C4, 7 a defuse kit.
@@ -455,8 +456,11 @@ fn fill_row(doc: &mut Doc, row: &Row, line: &Line) {
     if let Some(&cell) = row.cells.get("mvps") {
         for id in ["star-image", "star-count"] {
             if let Some(panel) = doc.find_in(cell, id) {
-                doc.set_class(panel, "hidden", true);
+                doc.set_class(panel, "hidden", line.mvps == 0);
             }
+        }
+        if let Some(panel) = doc.find_in(cell, "star-count") {
+            doc.set_text(panel, &line.mvps.to_string());
         }
     }
     if let Some(&cell) = row.cells.get("status")

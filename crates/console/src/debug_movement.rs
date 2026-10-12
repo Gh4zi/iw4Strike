@@ -429,7 +429,7 @@ pub(crate) fn route_movement_commands(
                     game.touch();
                     format!("cl_roundbanner = {}", game.round_banner)
                 }
-                _ => "usage: cl_roundbanner [css|cs16|mw2]".to_owned(),
+                _ => "usage: cl_roundbanner [csgo|css|cs16|mw2]".to_owned(),
             },
             "snd_timer_warning_volume" => match cmd.args.as_slice() {
                 [] => format!("snd_timer_warning_volume = {:.2}", game.timer_warning_volume),

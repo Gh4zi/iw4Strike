@@ -1657,6 +1657,7 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
             out.put_i32(ping.placed_ms);
         }
     }
+    out.put_u16(u16::try_from(meta.cs_mvps).unwrap_or(u16::MAX));
     debug_assert!(meta.client_dvars.len() <= u16::MAX as usize);
     out.put_u16(meta.client_dvars.len() as u16);
     for (name, value) in &meta.client_dvars {
@@ -1896,6 +1897,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         }),
         _ => return Err(WireError::Malformed("bad cs_ping tag")),
     };
+    let cs_mvps = u32::from(input.get_u16()?);
     let mut client_dvars = Vec::new();
     for _ in 0..input.get_u16()? {
         client_dvars.push((get_text(input)?, get_text(input)?));
@@ -1996,6 +1998,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         player_card_nameplate,
         cs_spotted,
         cs_ping,
+        cs_mvps,
         client_dvars,
         shellshock,
         view_effects,

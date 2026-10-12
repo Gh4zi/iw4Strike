@@ -37,6 +37,8 @@ pub(super) const IW4: &[Builtin] = &[
     Builtin::new(Function, "combineangles", Script, false),
     Builtin::new(Function, "cos", Script, false),
     Builtin::new(Function, "createprintchannel", Script, true),
+    // Counter-Strike fork: the round's MVP as it ends.
+    Builtin::new(Function, "csroundmvp", Script, false),
     Builtin::new(Function, "deleteglass", Script, false),
     Builtin::new(Function, "destroyglass", Script, false),
     Builtin::new(Function, "distance", Script, false),
@@ -323,6 +325,8 @@ pub(super) const IW4: &[Builtin] = &[
     Builtin::new(Method, "createlootmail", Entity, false),
     // Counter-Strike fork: the bomb mode's plant and defuse money.
     Builtin::new(Method, "csaddmoney", Player, false),
+    // Counter-Strike fork: who planted or defused the round's bomb, for its MVP.
+    Builtin::new(Method, "csbombcredit", Player, false),
     // Counter-Strike fork: whether a player carries a defuse kit.
     Builtin::new(Method, "cshasdefusekit", Player, false),
     Builtin::new(Method, "damageconetrace", Entity, false),

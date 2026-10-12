@@ -155,6 +155,11 @@ pub struct ClientMatchState {
     pub(crate) cs_spotted: bool,
     /// The spot the player last pinged (`cs_radio::player_ping`).
     pub(crate) cs_ping: Option<CsPing>,
+    /// This round's enemy kills and health taken from enemies, for its MVP (`cs_economy`).
+    pub(crate) cs_round_kills: u32,
+    pub(crate) cs_round_damage: i32,
+    /// Rounds the player was the MVP of this match.
+    pub(crate) cs_mvps: u32,
 }
 
 /// What a surviving CS player keeps from one round to the next: guns and grenades with their
@@ -274,6 +279,7 @@ impl ClientMatchState {
             player_card_nameplate: self.player_card_nameplate,
             cs_spotted: self.cs_spotted,
             cs_ping: self.cs_ping,
+            cs_mvps: self.cs_mvps,
             client_dvars: self.client_dvars.clone(),
             shellshock: self.shellshock.clone(),
             view_effects: self.view_effects.clone(),
@@ -330,6 +336,7 @@ impl ClientMatchState {
         self.player_card_nameplate = meta.player_card_nameplate;
         self.cs_spotted = meta.cs_spotted;
         self.cs_ping = meta.cs_ping;
+        self.cs_mvps = meta.cs_mvps;
         self.client_dvars = meta.client_dvars.clone();
         self.shellshock = meta.shellshock.clone();
         self.view_effects = meta.view_effects.clone();

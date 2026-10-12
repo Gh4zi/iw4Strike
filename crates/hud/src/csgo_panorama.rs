@@ -34,6 +34,7 @@ fn sublayout(tag: &str) -> Option<&'static str> {
         "csgohudradar" => "file://{resources}/layout/hud/hudradar.xml",
         "csgohudreticle" => "file://{resources}/layout/hud/hudreticle.xml",
         "csgoscoreboard" => "file://{resources}/layout/scoreboard.xml",
+        "csgohudwinpanel" => "file://{resources}/layout/hud/hudwinpanel.xml",
         _ => return None,
     })
 }
@@ -219,6 +220,9 @@ struct RadarIcon {
     fade: f32,
 }
 
+/// How long the round-end panel stays up: the round restarts 7 s after it is decided.
+const WIN_PANEL_SECONDS: f32 = 6.5;
+
 /// How many teammates' pings show on screen at once.
 const PING_MARKERS: usize = 10;
 /// CS:GO's ping marker (`PlayerPing`, laid out 1024 pixels across) at the size it shows on screen.
@@ -323,6 +327,7 @@ fn scoreboard_data(
             assists: row.score.assists,
             deaths: row.score.deaths,
             score: row.score.score,
+            mvps: snap.meta.for_client(sim::ClientId(client)).map_or(0, |m| m.cs_mvps),
             money: ps.filter(|_| teammate).map(|ps| ps.cs_money as i32),
             status,
             local: client == local.0,
@@ -451,6 +456,10 @@ pub(crate) struct CsgoPanorama {
     radar_sites: (String, [Option<[f32; 2]>; 2]),
     /// The scoreboard (TAB).
     scoreboard: crate::csgo_scoreboard::Scoreboard,
+    /// The last `cs_round_end` seen (`None` before the first snapshot), and the round whose win
+    /// panel is up and since when.
+    win_seen: Option<Option<String>>,
+    win_shown: Option<(String, f32)>,
     /// The on-screen ping markers (`PlayerPing` snippets).
     ping_markers: Vec<usize>,
     /// The radar's memory of each player, by client number.
@@ -1112,6 +1121,93 @@ pub(crate) fn update_csgo_panorama(
             for (id, on) in [("DefaultIcon", !ping.danger), ("DangerIcon", ping.danger)] {
                 if let Some(icon) = doc.find_in(marker, id) {
                     doc.set_visible(icon, on);
+                }
+            }
+        }
+    }
+
+    // The round-end panel (`CCSGO_HudWinPanel`, `cl_roundbanner csgo`): when a round is decided
+    // (a new `cs_round_end`), the winners' banner with CS:GO's title and the round's MVP
+    // (`cs_round_mvp`) and why; up until the next round starts.
+    if let Some(panel) = doc.find("HudWinPanel") {
+        let round_end = crate::cs_hud::server_info(snap, "cs_round_end").map(str::to_owned);
+        if snap.is_some() && state.win_seen.as_ref() != Some(&round_end) {
+            // A value already there when we join is an old round: only a change shows.
+            if state.win_seen.is_some()
+                && let Some(end) = &round_end
+            {
+                state.win_shown = Some((end.clone(), now));
+            }
+            state.win_seen = Some(round_end);
+        }
+        let up = state
+            .win_shown
+            .as_ref()
+            .filter(|(_, since)| now - *since < WIN_PANEL_SECONDS)
+            .filter(|_| settings.round_banner == "csgo" && !view.in_killcam())
+            .map(|(end, _)| end.clone());
+        doc.set_class(panel, "WinPanelRoot--ShowAnim", up.is_some());
+        doc.set_class(panel, "WinPanelRoot--ForceHide", up.is_none());
+        for id in [
+            "RoundImpactScoreReport",
+            "id-survival-winpanel",
+            "Funfact",
+            "Progress",
+            "Medals",
+            "MedalStats",
+            "RankUp",
+            "GunGameExtra",
+        ] {
+            if let Some(row) = doc.find_in(panel, id) {
+                doc.set_class(row, "WinPanelRow--Hidden", true);
+                doc.set_visible(row, false);
+            }
+        }
+        if let Some(end) = up {
+            let winner = end.split_whitespace().nth(1).unwrap_or("");
+            doc.set_class(panel, "WinPanelRoot--TWin", winner == "t");
+            doc.set_class(panel, "WinPanelRoot--CTWin", winner == "ct");
+            doc.set_class(panel, "WinPanelRoot--Draw", winner != "t" && winner != "ct");
+            if let Some(title) = doc.find_in(panel, "Title") {
+                doc.set_text(
+                    title,
+                    match winner {
+                        "t" => "#SFUI_WinPanel_T_Win",
+                        "ct" => "#SFUI_WinPanel_CT_Win",
+                        _ => "#SFUI_WinPanel_Round_Draw",
+                    },
+                );
+            }
+            // The MVP (`ShowMVP`), for this round only.
+            let mvp = crate::cs_hud::server_info(snap, "cs_round_mvp")
+                .and_then(|value| value.strip_prefix(&format!("{end}|")))
+                .and_then(|rest| rest.split_once('|'))
+                .and_then(|(client, reason)| {
+                    let client = client.parse::<u32>().ok()?;
+                    let meta = snap?.meta.for_client(sim::ClientId(client))?;
+                    let name = entity_iw4::client_state_name(&meta.name)?.to_owned();
+                    Some((name, reason.to_owned()))
+                });
+            if let Some(mvp_panel) = doc.find_in(panel, "MVP") {
+                doc.set_class(mvp_panel, "MVP--Hidden", mvp.is_none());
+                doc.set_visible(mvp_panel, mvp.is_some());
+            }
+            for id in ["MVPMusicKit", "MVPGunGameAvatars", "MVPAvatar"] {
+                if let Some(part) = doc.find_in(panel, id) {
+                    doc.set_visible(part, false);
+                }
+            }
+            if let Some((name, reason)) = mvp {
+                doc.set_var(panel, "mvp", &name);
+                if let Some(label) = doc.find_in(panel, "MVPWinnerName") {
+                    doc.set_text(
+                        label,
+                        match reason.as_str() {
+                            "bombplant" => "#Panorama_winpanel_mvp_award_bombplant",
+                            "bombdefuse" => "#Panorama_winpanel_mvp_award_bombdefuse",
+                            _ => "#Panorama_winpanel_mvp_award_kills",
+                        },
+                    );
                 }
             }
         }

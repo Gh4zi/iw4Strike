@@ -1147,6 +1147,22 @@ fn register_body(registry: &mut NativeRegistry) {
         }
         Ok(Value::Undefined)
     });
+    registry.register(Method, "csbombcredit", |world, receiver, args| {
+        let id = client_of(world, receiver)?;
+        let what = string(args, 0)?;
+        let mut frame = FrameWorld::from_world(world);
+        crate::cs_economy::credit_bomb(&mut frame, id, &what);
+        Ok(Value::Undefined)
+    });
+    registry.register(crate::script::Namespace::Function, "csroundmvp", |world, _, args| {
+        let round_end = string(args, 0)?;
+        let why = string(args, 1)?;
+        let mut frame = FrameWorld::from_world(world);
+        if crate::cs_economy::economy(&mut frame) {
+            crate::cs_economy::round_mvp(&mut frame, &round_end, &why);
+        }
+        Ok(Value::Undefined)
+    });
     registry.register(Method, "isonladder", |world, receiver, _| {
         let id = client_of(world, receiver)?;
         let frame = FrameWorld::from_world(world);

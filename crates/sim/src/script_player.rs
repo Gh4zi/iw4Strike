@@ -404,7 +404,10 @@ pub(crate) fn damage(
         }),
     };
     let commit = hit.commit;
+    let before = world.player(intent.target).map_or(0, |ps| ps.health.max(0));
     crate::script::player_damage(world.ecs(), tick, &hit);
+    let after = world.player(intent.target).map_or(0, |ps| ps.health.max(0));
+    crate::cs_economy::count_damage(world, intent.attacker, intent.target, before - after);
     let meta = world.client_meta(intent.target);
     if meta.is_some_and(|m| {
         m.lifecycle == ClientLifecycle::Dead && m.life_sequence == intent.target_life

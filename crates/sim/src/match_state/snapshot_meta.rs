@@ -86,6 +86,9 @@ pub struct ClientSnapshotMeta {
     /// The spot the player last pinged for their team (`player_ping`).
     pub cs_ping: Option<CsPing>,
 
+    /// Rounds the player was the MVP of this match (the scoreboard's stars).
+    pub cs_mvps: u32,
+
     pub client_dvars: Vec<(String, String)>,
 
     pub shellshock: Option<hud_iw4::ShockParams>,

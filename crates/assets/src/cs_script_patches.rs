@@ -198,7 +198,8 @@ const PATCHES: &[Patch] = &[
          && level.aliveCount[game[\"attackers\"]] > 0 ) csWhy = \"target_saved\"; \
          else if ( csWin == \"ct\" ) csWhy = \"ts_eliminated\"; \
          csEnd = getTime() + \" \" + csWin + \" \" + csWhy; \
-         setDvar( \"cs_round_end\", csEnd ); makeDvarServerInfo( \"cs_round_end\", csEnd ); }\n\
+         setDvar( \"cs_round_end\", csEnd ); makeDvarServerInfo( \"cs_round_end\", csEnd ); \
+         csRoundMvp( csEnd, csWhy ); }\n\
          \tthread maps\\mp\\gametypes\\_gamelogic::endGame( winningTeam, endReasonText );",
         "defusal: CS round-end radio voice, and the round's winner and reason for the CS banner \
          (`cs_round_end`)",
@@ -526,8 +527,10 @@ const PATCHES: &[Patch] = &[
     once(
         SD,
         "player playSound( \"mp_bomb_plant\" );",
-        "player playSound( \"cs_c4_plant\" ); if ( !level.gameEnded ) player csAddMoney( 300 );",
-        "CS C4: plant sound, and CS:GO's $300 to the planter (`cash_player_bomb_planted`)",
+        "player playSound( \"cs_c4_plant\" ); if ( !level.gameEnded ) player csAddMoney( 300 ); \
+         player csBombCredit( \"plant\" );",
+        "CS C4: plant sound, CS:GO's $300 to the planter (`cash_player_bomb_planted`), and the \
+         planter noted for the round's MVP",
     ),
     once(
         SD,
@@ -539,8 +542,9 @@ const PATCHES: &[Patch] = &[
         SD,
         "leaderDialog( \"bomb_defused\" );",
         "playSoundOnPlayers( \"cs_event_bombdefused\" ); player playSound( \"cs_c4_disarmed\" ); \
-         if ( !level.gameEnded ) player csAddMoney( 300 );",
-        "CS C4: \"The bomb has been defused\" on the radio, and CS:GO's $300 to the defuser",
+         if ( !level.gameEnded ) player csAddMoney( 300 ); player csBombCredit( \"defuse\" );",
+        "CS C4: \"The bomb has been defused\" on the radio, CS:GO's $300 to the defuser, and the \
+         defuser noted for the round's MVP",
     ),
     once(
         SD,

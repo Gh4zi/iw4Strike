@@ -119,6 +119,9 @@ pub(crate) fn reward_kill(
     } else {
         300
     };
+    if !teammate {
+        world.client_meta_mut(attacker).cs_round_kills += 1;
+    }
     let amount = if teammate { -TEAM_KILL_PENALTY } else { award };
     add_money(world, attacker, amount);
     diag::info!(
@@ -275,6 +278,94 @@ fn record_round(world: &mut FrameWorld, entry: &str, new_match: bool) {
     runtime.dvars.insert("cs_round_history".to_owned(), history);
 }
 
+/// Who planted and who defused this round's bomb (`csBombCredit`).
+#[derive(Resource, Default)]
+pub(crate) struct BombCredit {
+    planter: Option<ClientId>,
+    defuser: Option<ClientId>,
+}
+
+/// Credits `id` with planting (`plant`) or defusing (`defuse`) the round's bomb.
+pub(crate) fn credit_bomb(world: &mut FrameWorld, id: ClientId, what: &str) {
+    let mut credit = world.ecs().remove_resource::<BombCredit>().unwrap_or_default();
+    match what {
+        "plant" => credit.planter = Some(id),
+        "defuse" => credit.defuser = Some(id),
+        _ => {}
+    }
+    world.ecs().insert_resource(credit);
+}
+
+/// Counts health `attacker` took from an enemy `victim` toward the round's MVP.
+pub(crate) fn count_damage(world: &mut FrameWorld, attacker: ClientId, victim: ClientId, removed: i32) {
+    if removed <= 0 || attacker == victim || !economy(world) {
+        return;
+    }
+    let team = |world: &FrameWorld, id: ClientId| world.client_meta(id).map(|m| m.client_state_team);
+    if team(world, attacker) != team(world, victim) {
+        world.client_meta_mut(attacker).cs_round_damage += removed;
+    }
+}
+
+/// The round's MVP as it ends (`CalculateEndOfRoundMVP`, the bomb's MVPs): the planter when the
+/// bomb went off, the defuser when it was defused, else whoever of the winning side killed the
+/// most enemies (on a tie, took the most health from them). Their MVP count goes up and the
+/// clients learn it (`cs_round_mvp` = "<cs_round_end>|<client>|<kills, bombplant or
+/// bombdefuse>") for the win panel.
+pub(crate) fn round_mvp(world: &mut FrameWorld, round_end: &str, why: &str) {
+    let mut parts = round_end.split_whitespace();
+    let winner = parts.nth(1).unwrap_or("");
+    let attackers = attackers(world).unwrap_or(entity_iw4::TEAM_AXIS);
+    let defenders = if attackers == entity_iw4::TEAM_AXIS {
+        entity_iw4::TEAM_ALLIES
+    } else {
+        entity_iw4::TEAM_AXIS
+    };
+    let winning_team = match winner {
+        "t" => attackers,
+        "ct" => defenders,
+        _ => return,
+    };
+    let credit = world.ecs().get_resource::<BombCredit>().map(|c| (c.planter, c.defuser));
+    let bomb = match why {
+        "target_bombed" => credit.and_then(|c| c.0).map(|id| (id, "bombplant")),
+        "bomb_defused" => credit.and_then(|c| c.1).map(|id| (id, "bombdefuse")),
+        _ => None,
+    };
+    let mvp = bomb.or_else(|| {
+        let mut best: Option<(ClientId, u32, i32)> = None;
+        for id in world.client_ids_sorted() {
+            let Some(meta) = world.client_meta(id).filter(|m| m.client_state_team == winning_team)
+            else {
+                continue;
+            };
+            let (kills, damage) = (meta.cs_round_kills, meta.cs_round_damage);
+            let (top_kills, top_damage) = best.map_or((0, 0), |(_, k, d)| (k, d));
+            if kills > top_kills || (kills == top_kills && damage > top_damage) {
+                best = Some((id, kills, damage));
+            }
+        }
+        best.map(|(id, _, _)| (id, "kills"))
+    });
+    let Some((id, reason)) = mvp else {
+        return;
+    };
+    // A match's first decided round (no round money paid yet) starts the MVP count over.
+    if world.ecs().get_resource::<RoundLedger>().is_none() {
+        for other in world.client_ids_sorted() {
+            world.client_meta_mut(other).cs_mvps = 0;
+        }
+    }
+    world.client_meta_mut(id).cs_mvps += 1;
+    diag::info!(Sim, "cs round: client {} is the MVP ({reason})", id.0);
+    if let Some(mut runtime) = world.ecs().get_resource_mut::<crate::script::Runtime>() {
+        runtime.server_info.insert("cs_round_mvp".to_owned());
+        runtime
+            .dvars
+            .insert("cs_round_mvp".to_owned(), format!("{round_end}|{}|{reason}", id.0));
+    }
+}
+
 /// How the bomb mode's round ended, as its script left it at the restart.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct RoundEnd {
@@ -313,6 +404,13 @@ impl RoundLedger {
 pub(crate) fn settle_round(world: &mut FrameWorld, end: RoundEnd, reset: bool) {
     let kept = world.ecs().remove_resource::<RoundLedger>();
     let new_match = kept.is_none();
+    // A new round: its kills, damage and bomb credits start over.
+    for id in world.client_ids_sorted() {
+        let meta = world.client_meta_mut(id);
+        meta.cs_round_kills = 0;
+        meta.cs_round_damage = 0;
+    }
+    world.ecs().remove_resource::<BombCredit>();
     let mut ledger = kept.unwrap_or_else(RoundLedger::fresh);
     let previous = std::mem::replace(&mut ledger.won, end.won);
     let clients = world.client_ids_sorted();

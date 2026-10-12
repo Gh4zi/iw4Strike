@@ -1,5 +1,6 @@
 //! The round-end banner, in the look picked with `cl_roundbanner` (Options > Multiplayer):
-//! `css` CS:S's win panel (the winning side in its colour, the reason underneath, low in the
+//! `csgo` CS:GO's win panel (drawn by `csgo_panorama` from CS:GO's own layout), `css` CS:S's
+//! win panel (the winning side in its colour, the reason underneath, low in the
 //! middle of the screen), `cs16` CS 1.6's centre message ("Terrorists Win!", "Target
 //! Succesfully Bombed!"), or `mw2` MW2's own round outcome (its script HUD, left alone).
 //!
@@ -27,17 +28,19 @@ const DRAW_GREY: Color = Color::srgb(0.85, 0.85, 0.85);
 /// Banner looks, as `cl_roundbanner` names them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RoundBanner {
+    Csgo,
     Css,
     Cs16,
     Mw2,
 }
 
 impl RoundBanner {
-    pub const NAMES: [&'static str; 3] = ["css", "cs16", "mw2"];
+    pub const NAMES: [&'static str; 4] = ["csgo", "css", "cs16", "mw2"];
 
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         match name.trim().to_ascii_lowercase().as_str() {
+            "csgo" => Some(Self::Csgo),
             "css" | "source" => Some(Self::Css),
             "cs16" | "1.6" | "16" => Some(Self::Cs16),
             "mw2" => Some(Self::Mw2),
@@ -253,7 +256,11 @@ pub(crate) fn update_cs_round_banner(
     let up = banner
         .shown
         .filter(|&(_, _, since)| now - since < BANNER_SECONDS)
-        .filter(|_| style != RoundBanner::Mw2 && surface.is_ready() && !view.in_killcam());
+        .filter(|_| {
+            !matches!(style, RoundBanner::Mw2 | RoundBanner::Csgo)
+                && surface.is_ready()
+                && !view.in_killcam()
+        });
     let Some((side, reason, _)) = up else {
         for (mut node, _) in &mut panels {
             adopt_display(&mut node, Display::None);
@@ -272,7 +279,7 @@ pub(crate) fn update_cs_round_banner(
             let rect = ((width - w) * 0.5, 300.0 * unit, w, h);
             (title, why, color, 18.0, rect, Color::srgba(0.0, 0.0, 0.0, 0.78))
         }
-        RoundBanner::Cs16 | RoundBanner::Mw2 => {
+        RoundBanner::Cs16 | RoundBanner::Mw2 | RoundBanner::Csgo => {
             let rect = (0.0, 480.0 * 0.35 * unit, width, 24.0 * unit);
             (cs16_text(side, reason), "", Color::WHITE, 14.0, rect, Color::NONE)
         }

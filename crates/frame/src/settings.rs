@@ -97,8 +97,8 @@ pub struct GameSettings {
     /// `_vgui_menus`: the buy menu as a window you click (CS:S, or CS 1.6 VGUI), or 0 for
     /// CS 1.6's old numbered text menu.
     pub vgui_menus: bool,
-    /// `cl_roundbanner`: the round-end banner, `css` (CS:S win panel), `cs16` (CS 1.6 centre
-    /// message) or `mw2` (MW2's round outcome).
+    /// `cl_roundbanner`: the round-end banner, `csgo` (CS:GO's win panel), `css` (CS:S win
+    /// panel), `cs16` (CS 1.6 centre message) or `mw2` (MW2's round outcome).
     pub round_banner: String,
     pub brightness: f32,
     /// `shadows`: 0 off, 1 the sun's shadow only, 2 sun and spot-light shadows.
@@ -187,7 +187,7 @@ impl Default for GameSettings {
             voice_volume: 1.0,
             hrtf: false,
             vgui_menus: true,
-            round_banner: "css".to_owned(),
+            round_banner: "csgo".to_owned(),
             brightness: 0.0,
             shadows: Self::SHADOWS_ALL,
             depth_of_field: true,
