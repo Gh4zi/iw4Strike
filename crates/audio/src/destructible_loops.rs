@@ -4,7 +4,7 @@ use asset_core::AssetNamespace;
 use bevy::prelude::*;
 use net::PresentedSnapshot;
 
-use crate::ambient::SoundBankNamespace;
+use crate::ambient::{DESTRUCTIBLE_EMITTER_SLOT, SoundBankNamespace};
 use crate::backend::{AudioScope, MatchEpoch};
 use crate::playback::SoundBank;
 use crate::runtime::AudioRuntime;
@@ -23,6 +23,33 @@ pub(crate) struct DestructibleSources {
     next_version: u64,
     live: HashMap<u32, PresentedLoop>,
     pub desired: Vec<DesiredSource>,
+}
+
+/// Whether an alias plays one of MW2's ambient emitter sounds (`amb_emitters/`): a running
+/// AC unit, generator or wall fan, or a gas leak's hiss. These hum from map start like the map's
+/// own emitter loops, so they follow the ambient volume with them. A destructible's fire, sparks
+/// and alarms are not emitters and keep the SFX level.
+fn is_ambient_emitter(
+    bank: &asset_audio::SoundCatalog,
+    namespace: AssetNamespace,
+    alias: &str,
+) -> bool {
+    let emitter = |name: &str| {
+        let name = name.trim_start_matches(['/', '\\']).as_bytes();
+        name.len() > 13
+            && name[..12].eq_ignore_ascii_case(b"amb_emitters")
+            && matches!(name[12], b'/' | b'\\')
+    };
+    bank.sound_in(namespace, alias)
+        .and_then(|sound| sound.aliases.first())
+        .is_some_and(|row| {
+            row.loaded_name.as_deref().is_some_and(emitter)
+                || row.file_name.as_deref().is_some_and(emitter)
+                || row
+                    .streamed
+                    .as_ref()
+                    .is_some_and(|(dir, name)| emitter(dir) || emitter(name))
+        })
 }
 
 pub(crate) fn update(
@@ -102,7 +129,11 @@ pub(crate) fn update(
                             scope: AudioScope::Match,
                             epoch: epoch.0,
                             object: u64::from(owner),
-                            slot: 1,
+                            slot: if is_ambient_emitter(&bank.0, ns, alias) {
+                                DESTRUCTIBLE_EMITTER_SLOT
+                            } else {
+                                1
+                            },
                         },
                         version,
                         cue,

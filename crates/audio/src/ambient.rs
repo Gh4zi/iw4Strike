@@ -27,7 +27,11 @@ static AMBIENT_VOLUME: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(frame::GameSettings::AMBIENT_VOLUME_DEFAULT.to_bits());
 
 pub fn set_ambient_volume(volume: f32) {
-    let volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { 1.0 };
+    let volume = if volume.is_finite() {
+        volume.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
     AMBIENT_VOLUME.store(volume.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -38,10 +42,16 @@ pub fn ambient_volume() -> f32 {
 
 /// A source's level: the map's ambience scaled by `snd_ambient_volume`, anything else as is.
 pub(crate) fn source_level(source: &crate::sources::DesiredSource) -> f32 {
-    let ambience = matches!(source.key.slot, MAP_BED_SLOT | MAP_EMITTER_SLOT);
+    let ambience = matches!(
+        source.key.slot,
+        MAP_BED_SLOT | MAP_EMITTER_SLOT | DESTRUCTIBLE_EMITTER_SLOT
+    );
     source.gain * if ambience { ambient_volume() } else { 1.0 }
 }
 pub(crate) const MAP_EMITTER_SLOT: u32 = 3;
+/// A destructible's loop that is one of the map's ambient emitters (see
+/// `destructible_loops::is_ambient_emitter`).
+pub(crate) const DESTRUCTIBLE_EMITTER_SLOT: u32 = 7;
 
 #[derive(Resource, Default)]
 pub(crate) struct MapSources {
