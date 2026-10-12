@@ -1119,8 +1119,10 @@ fn preflight_match_install(
         // through `_tweakables`; 0 turns regeneration off (the match config sets 5).
         // An unranked (private) match: `level.rankedMatch` is false, so `_rank` gives no XP,
         // no "+50" popups or rank-ups, and `_missions` runs no challenges.
-        const CS_DVARS: [(&str, &str); 4] = [
+        const CS_DVARS: [(&str, &str); 5] = [
             ("scr_player_healthregentime", "0"),
+            // The intermission after a match, long enough for the map vote.
+            ("scr_intermissionTime", "20"),
             ("xblive_privatematch", "1"),
             // No killcams for now, the final one included (user, 2026-10-07).
             ("scr_game_allowkillcam", "0"),
@@ -1141,7 +1143,11 @@ fn preflight_match_install(
             ("scr_sd_defusetime", rules.defuse_seconds.to_string()),
             ("scr_sd_bombtimer", rules.bomb_seconds.to_string()),
         ];
-        let mode_dvars = mode_dvars.iter().map(|(name, value)| (*name, value.as_str()));
+        let vote_maps = map_vote_choices(zone);
+        let mode_dvars = mode_dvars
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .chain(std::iter::once(("cs_mapvote_maps", vote_maps.as_str())));
         for (name, value) in CS_DVARS.into_iter().chain(mode_dvars) {
             match script_dvars
                 .iter_mut()
@@ -1833,4 +1839,34 @@ fn stage_resource<T: Resource>(queue: &mut bevy::ecs::world::CommandQueue, resou
     queue.push(move |world: &mut World| {
         world.insert_resource(resource);
     });
+}
+
+/// The maps the end-of-match vote offers (`cs_mapvote_maps`): `zone`, then up to four other
+/// installed MW2 maps drawn at random.
+fn map_vote_choices(zone: &str) -> String {
+    let installed = asset_transport::games_root_from_env()
+        .map(|root| asset_transport::list_mp_maps(&root))
+        .unwrap_or_default();
+    let bare = |map: &str| map.strip_prefix("iw4:").unwrap_or(map).to_ascii_lowercase();
+    let zone = bare(zone);
+    let mut others: Vec<String> = asset_transport::group_mp_maps(&installed)[0]
+        .iter()
+        .map(|map| bare(map))
+        .filter(|map| *map != zone)
+        .collect();
+    others.sort();
+    others.dedup();
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| d.as_nanos() as u64)
+        | 1;
+    let mut picks = vec![zone];
+    while picks.len() < 5 && !others.is_empty() {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        picks.push(others.swap_remove(seed as usize % others.len()));
+    }
+    diag::info!(Sim, "cs map vote: the match ends with a vote among {}", picks.join(", "));
+    picks.join(" ")
 }

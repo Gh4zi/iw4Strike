@@ -1077,6 +1077,7 @@ struct FanoutQueues<'w> {
     gives: ResMut<'w, DumpGiveLog>,
     configuration_changes: ResMut<'w, DumpConfigurationChangeLog>,
     exit_level: MessageWriter<'w, ExitLevelCalled>,
+    next_zone: ResMut<'w, frame::NextMatchZone>,
 }
 
 fn fanout_loopback(
@@ -1121,6 +1122,15 @@ fn fanout_loopback(
         &tick.script_seats,
     );
     if tick.script_exit_level {
+        // The end-of-match vote's map, if one was held, is played next.
+        queues.next_zone.0 = tick
+            .snapshot
+            .meta
+            .objectives
+            .server_info
+            .iter()
+            .find(|(name, _)| name == "cs_mapvote")
+            .and_then(|(_, value)| sim::mapvote_next_map(value));
         queues.exit_level.write(ExitLevelCalled);
         diag::info!(Sim, "exitLevel: called by the match scripts");
     }

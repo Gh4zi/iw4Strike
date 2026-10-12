@@ -493,8 +493,16 @@ fn run_session_swap(
 fn run_exit_level(
     mut called: MessageReader<frame::ExitLevelCalled>,
     mut transition: ResMut<SessionSwapRequest>,
+    next: Option<ResMut<frame::NextMatchZone>>,
 ) {
     if called.read().next().is_none() {
+        return;
+    }
+    if let Some(zone) = next.and_then(|mut next| next.0.take()) {
+        match transition.request_zone(zone.clone()) {
+            Ok(id) => diag::info!(Sim, "session: exitLevel → {zone}, the map vote's pick (swap #{id})"),
+            Err(err) => diag::info!(Sim, "session: exitLevel → {zone} refused — {err}"),
+        }
         return;
     }
     match transition.request_menu() {

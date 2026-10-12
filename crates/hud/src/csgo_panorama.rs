@@ -35,6 +35,8 @@ fn sublayout(tag: &str) -> Option<&'static str> {
         "csgohudreticle" => "file://{resources}/layout/hud/hudreticle.xml",
         "csgoscoreboard" => "file://{resources}/layout/scoreboard.xml",
         "csgohudwinpanel" => "file://{resources}/layout/hud/hudwinpanel.xml",
+        "csgoendofmatch" => "file://{resources}/layout/endofmatch.xml",
+        "csgoendofmatchvotingpanel" => "file://{resources}/layout/endofmatch-voting.xml",
         _ => return None,
     })
 }
@@ -261,6 +263,42 @@ fn team_pings(snap: Option<&sim::Snapshot>, local: sim::ClientId, mute: u8) -> V
         .collect()
 }
 
+/// Whether the end-of-match map vote is open (the number keys vote).
+pub(crate) fn map_vote_open(snap: Option<&sim::Snapshot>) -> bool {
+    crate::cs_hud::server_info(snap, "cs_mapvote")
+            .and_then(parse_map_vote)
+            .is_some_and(|(_, _, _, winner)| winner.is_none())
+}
+
+/// The server's `cs_mapvote`: the maps, each one's votes, the votes a map needs, the winner.
+fn parse_map_vote(value: &str) -> Option<(Vec<String>, Vec<u32>, u32, Option<usize>)> {
+    let mut parts = value.split('|');
+    let maps = parts.next()?.split_whitespace().map(str::to_owned).collect();
+    let counts = parts.next()?.split_whitespace().filter_map(|c| c.parse().ok()).collect();
+    let needed = parts.next()?.parse().ok()?;
+    let winner = parts.next()?.parse().ok();
+    Some((maps, counts, needed, winner))
+}
+
+/// A map's MW2 loading screen, read from its zone's game folder, as a texture.
+fn map_picture(map: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
+    let root = asset_transport::games_root_from_env().ok()?;
+    let zone = asset_transport::find_zone_file(&root, map).ok()?;
+    let name = map.rsplit(':').next().unwrap_or(map);
+    let (width, height, rgba) = asset_material::decode_map_preview(&zone.path, name).ok()??;
+    Some(images.add(Image::new(
+        bevy::render::render_resource::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        rgba,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::default(),
+    )))
+}
+
 /// A map's name as a title: `mp_rust` is Rust.
 fn map_title(zone: &str) -> String {
     let name = zone.strip_prefix("mp_").unwrap_or(zone);
@@ -460,6 +498,10 @@ pub(crate) struct CsgoPanorama {
     /// panel is up and since when.
     win_seen: Option<Option<String>>,
     win_shown: Option<(String, f32)>,
+    /// The end-of-match vote's map tiles (the maps they show), and maps whose picture is still
+    /// to be read.
+    vote_tiles: Vec<(usize, String)>,
+    vote_pictures: Vec<(usize, String)>,
     /// The on-screen ping markers (`PlayerPing` snippets).
     ping_markers: Vec<usize>,
     /// The radar's memory of each player, by client number.
@@ -470,7 +512,7 @@ pub(crate) struct CsgoPanorama {
 pub(crate) fn load(fonts: &mut Assets<Font>) -> Option<CsgoPanorama> {
     let files = panorama::Files::open()?;
     let font_set = files.fonts(fonts)?;
-    let mut doc = panorama::Doc::load(&files, HUD_LAYOUT, &sublayout)?;
+    let mut doc = panorama::Doc::load(&files, HUD_LAYOUT, sublayout)?;
     // `cl_hud_color 0`, the default HUD colour.
     let root = doc.root();
     doc.set_class(root, "csgo-hud--cl-hud-color-0", true);
@@ -1208,6 +1250,67 @@ pub(crate) fn update_csgo_panorama(
                             _ => "#Panorama_winpanel_mvp_award_kills",
                         },
                     );
+                }
+            }
+        }
+    }
+
+    // The end-of-match map vote (`CSGOEndOfMatchVotingPanel`): once the match is over, a tile
+    // per map the server offers (its MW2 loading screen, its name and its number key, the votes
+    // for it out of those it needs), the one voted for selected and the winner ticked.
+    if let Some(eom) = doc.find("EndOfMatch") {
+        let vote = crate::cs_hud::server_info(snap, "cs_mapvote").and_then(parse_map_vote);
+        // The server offers the vote (`cs_mapvote`) only once the match is over.
+        let show = vote.is_some();
+        doc.set_class(eom, "eom--reveal", show);
+        doc.set_visible(eom, show);
+        if let Some((maps, counts, needed, winner)) = vote.filter(|_| show) {
+            if state.vote_tiles.is_empty()
+                && let Some(layout) = doc.find_in(eom, "id-eom-layout")
+            {
+                doc.load_snippet(files, layout, "snippet-eom-layout--default");
+                for id in ["eom-win", "eom-rank", "eom-skillgroup", "eom-drops", "id-content-navbar__tabs", "id-display-timer-progress-bar-container"] {
+                    if let Some(panel) = doc.find_in(eom, id) {
+                        doc.set_visible(panel, false);
+                    }
+                }
+                if let Some(voting) = doc.find_in(eom, "eom-voting") {
+                    doc.set_class(voting, "eom-panel--active", true);
+                }
+                if let Some(list) = doc.find_in(eom, "id-map-selection-list") {
+                    for map in &maps {
+                        let tile = doc.add_element(files, list, "RadioButton", &[]);
+                        doc.load_snippet(files, tile, "MapGroupSelection");
+                        if let Some(carousel) = doc.find_in(tile, "MapGroupImagesCarousel") {
+                            let picture = doc.add_element(
+                                files,
+                                carousel,
+                                "Panel",
+                                &[("class", "map-selection-btn__screenshot")],
+                            );
+                            state.vote_pictures.push((picture, map.clone()));
+                        }
+                        state.vote_tiles.push((tile, map.clone()));
+                    }
+                }
+            }
+            // A map's picture a frame, read from its zone's loading screen.
+            if let Some((picture, map)) = state.vote_pictures.pop()
+                && let Some(handle) = map_picture(&map, &mut images)
+            {
+                doc.set_image_handle(picture, Some(handle));
+            }
+            for (k, (tile, map)) in state.vote_tiles.iter().enumerate() {
+                if let Some(name) = doc.find_in(*tile, "MapGroupName") {
+                    doc.set_text(name, &format!("{}  {}", k + 1, map_title(map)));
+                }
+                if let Some(count) = doc.find_in(*tile, "id-map-selection-btn__count") {
+                    doc.set_text(count, &format!("{}/{needed}", counts.get(k).copied().unwrap_or(0)));
+                }
+                doc.set_selected(*tile, menu.last_map_vote == u8::try_from(k).ok());
+                if let Some(check) = doc.find_in(*tile, "id-map-selection-btn__winner") {
+                    doc.set_class(check, "appear", winner == Some(k));
+                    doc.set_visible(check, winner == Some(k));
                 }
             }
         }

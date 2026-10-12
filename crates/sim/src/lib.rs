@@ -18,6 +18,8 @@ pub mod hudelem;
 pub mod identities;
 pub mod input;
 mod cs_economy;
+mod cs_mapvote;
+pub use cs_mapvote::mapvote_next_map;
 mod cs_radio;
 mod cs_spotting;
 mod item;

@@ -73,6 +73,12 @@ pub enum ClientAction {
         request_id: ActionRequestId,
     },
 
+    /// A vote for the next map in the end-of-match vote: its place in the vote's list.
+    MapVote {
+        request_id: ActionRequestId,
+        index: u8,
+    },
+
     SpawnClient {
         request_id: ActionRequestId,
     },
@@ -217,6 +223,7 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::BuyWeapon { request_id, .. }
         | ClientAction::CsLoadout { request_id, .. }
         | ClientAction::PlayerPing { request_id }
+        | ClientAction::MapVote { request_id, .. }
         | ClientAction::SpawnClient { request_id }
         | ClientAction::ForceSpawn { request_id, .. }
         | ClientAction::SpawnIntermission { request_id }

@@ -316,6 +316,13 @@ const PATCHES: &[Patch] = &[
         times: 2,
         why: "round end: players can still be hurt and killed until the next round",
     },
+    // The match ends with CS:GO's vote for the next map: the level waits it out.
+    once(
+        GAMELOGIC,
+        "exitLevel( false );",
+        "if ( getDvar( \"cs_mapvote_maps\" ) != \"\" ) wait 15; exitLevel( false );",
+        "match end: the next map's vote (20 s, `cs_mapvote`) runs out before the level ends",
+    ),
     // CS round ends: the round is decided, everyone keeps moving for 7 s (escape the bomb, save a
     // gun), no freeze, blur or outro look until the match itself is over.
     once(

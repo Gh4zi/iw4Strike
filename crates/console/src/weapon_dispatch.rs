@@ -320,6 +320,15 @@ pub(crate) fn route_buy_menu(
             menu.rebuy();
         }
     }
+    for index in menu.take_map_votes() {
+        let action = ClientAction::MapVote {
+            request_id: seq.allocate(),
+            index,
+        };
+        if let Err(error) = inbox.push(local.0, action) {
+            diag::info!(Console, "map vote: {error}");
+        }
+    }
     for name in menu.take_purchases() {
         let message = send_buy(
             name,

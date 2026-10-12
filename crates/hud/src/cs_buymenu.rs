@@ -39,6 +39,10 @@ pub struct CsBuyMenu {
     ate_escape: bool,
     /// Buy names picked, for the console to send.
     purchases: Vec<&'static str>,
+    /// End-of-match map votes picked with the number keys (places in the vote's list), for the
+    /// console to send, and the last one.
+    map_votes: Vec<u8>,
+    pub(crate) last_map_vote: Option<u8>,
     /// `menuselect` picks waiting for the next frame.
     selected: Vec<u8>,
     /// `autobuy` / `rebuy` asked from the console, for the next frame.
@@ -106,6 +110,11 @@ impl CsBuyMenu {
     /// The buy names picked since the last call.
     pub fn take_purchases(&mut self) -> Vec<&'static str> {
         std::mem::take(&mut self.purchases)
+    }
+
+    /// The map votes picked since the last call.
+    pub fn take_map_votes(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.map_votes)
     }
 
     fn close(&mut self) {
@@ -983,6 +992,12 @@ pub(crate) fn update_cs_buymenu(
         .and_then(|a| a.menu_keys.as_mut().map(std::mem::take))
         .unwrap_or_default();
     picks.append(&mut menu.selected);
+    if crate::csgo_panorama::map_vote_open(presented.snapshot()) && menu.screen.is_none() {
+        for pick in picks.drain(..).filter(|&p| p >= 1) {
+            menu.map_votes.push(pick - 1);
+            menu.last_map_vote = Some(pick - 1);
+        }
+    }
     let now = time.elapsed_secs();
 
     let snap = presented.snapshot();
@@ -1084,8 +1099,10 @@ pub(crate) fn update_cs_buymenu(
         menu.close();
         menu.ate_escape = true;
     }
+    // The end-of-match map vote takes the number keys too.
+    let voting = crate::csgo_panorama::map_vote_open(presented.snapshot());
     if let Some(actions) = actions.as_mut() {
-        let want = menu.screen.is_some();
+        let want = menu.screen.is_some() || voting;
         if want != actions.menu_keys.is_some() {
             actions.menu_keys = want.then(Vec::new);
         }

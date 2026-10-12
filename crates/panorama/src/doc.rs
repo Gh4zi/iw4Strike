@@ -56,6 +56,8 @@ pub struct Doc {
     /// Rules by the key their subject needs: `#id`, `.class`, `tag`, or `*`.
     index: HashMap<String, Vec<usize>>,
     styles_loaded: Vec<String>,
+    /// The layout a custom panel tag stands for, for the snippets loaded later too.
+    sublayout: fn(&str) -> Option<&'static str>,
     /// The `@define`s of every sheet read so far.
     defines: HashMap<String, String>,
     snippets: HashMap<String, Element>,
@@ -112,9 +114,10 @@ impl Doc {
     pub fn load(
         files: &Files,
         layout: &str,
-        sublayout: &dyn Fn(&str) -> Option<&'static str>,
+        sublayout: fn(&str) -> Option<&'static str>,
     ) -> Option<Self> {
         let mut doc = Self {
+            sublayout,
             panels: Vec::new(),
             rules: Vec::new(),
             index: HashMap::new(),
@@ -128,7 +131,7 @@ impl Doc {
         };
         let xml = doc.read_layout(files, layout)?;
         let main = main_element(&xml)?.clone();
-        doc.root = doc.add(files, &main, None, sublayout);
+        doc.root = doc.add(files, &main, None, &sublayout);
         doc.reindex();
         Some(doc)
     }
@@ -184,6 +187,11 @@ impl Doc {
         self.rules.extend(parsed.rules);
         for (i, rule) in self.rules[first..].iter_mut().enumerate() {
             rule.order = first + i;
+        }
+        // A sheet a layout loaded later (a snippet's panel built from its own layout) joins the
+        // index the first load built.
+        if !self.index.is_empty() {
+            self.reindex();
         }
     }
 
@@ -497,7 +505,8 @@ impl Doc {
             }
         }
         for child in &element.children {
-            self.add(files, child, Some(panel), &|_| None);
+            let sublayout = self.sublayout;
+            self.add(files, child, Some(panel), &sublayout);
         }
         self.changed = true;
         true
@@ -537,7 +546,8 @@ impl Doc {
     /// Builds snippet `name` as a new last child of `parent`; its panel.
     pub fn add_snippet(&mut self, files: &Files, parent: usize, name: &str) -> Option<usize> {
         let element = self.snippets.get(name)?.clone();
-        let panel = self.add(files, &element, Some(parent), &|_| None);
+        let sublayout = self.sublayout;
+        let panel = self.add(files, &element, Some(parent), &sublayout);
         self.changed = true;
         Some(panel)
     }

@@ -622,6 +622,7 @@ fn run_entity_types_system(ecs: &mut World) {
     if world.publishes_snapshot() {
         crate::cs_economy::update_buy_bits(&mut world, tick);
         crate::cs_spotting::update(&mut world, tick);
+        crate::cs_mapvote::update(&mut world, tick);
     }
 }
 
@@ -899,6 +900,9 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
             }
             ClientAction::PlayerPing { .. } => {
                 crate::cs_radio::player_ping(world, tick, *id);
+            }
+            ClientAction::MapVote { index, .. } => {
+                crate::cs_mapvote::vote(world, *id, index);
             }
             ClientAction::ActionSlot {
                 request_id: _,

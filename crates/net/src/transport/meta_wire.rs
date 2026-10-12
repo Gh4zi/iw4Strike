@@ -548,6 +548,11 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u8(28);
             out.put_u32(request_id);
         }
+        ClientAction::MapVote { request_id, index } => {
+            out.put_u8(29);
+            out.put_u32(request_id);
+            out.put_u8(index);
+        }
         ClientAction::ActionSlot { request_id, slot } => {
             out.put_u8(19);
             out.put_u32(request_id);
@@ -675,6 +680,10 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
         }),
         28 => Ok(ClientAction::PlayerPing {
             request_id: input.get_u32()?,
+        }),
+        29 => Ok(ClientAction::MapVote {
+            request_id: input.get_u32()?,
+            index: input.get_u8()?,
         }),
         19 => Ok(ClientAction::ActionSlot {
             request_id: input.get_u32()?,
