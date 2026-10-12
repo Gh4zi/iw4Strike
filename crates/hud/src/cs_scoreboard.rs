@@ -139,6 +139,7 @@ pub(crate) fn update_cs_scoreboard(
     bridge: Option<Res<MasterBridge>>,
     mut state: ResMut<CsBoardState>,
     mut roots: Query<(Entity, &mut Node), With<CsBoardRoot>>,
+    panorama: Res<crate::csgo_panorama::CsgoPanorama>,
 ) {
     if !replaces_mw2_hud() {
         return;
@@ -146,6 +147,13 @@ pub(crate) fn update_cs_scoreboard(
     let Ok((root, mut node)) = roots.single_mut() else {
         return;
     };
+    // CS:GO's own scoreboard shows instead with CS:GO's HUD up.
+    if panorama.active {
+        if node.display != Display::None {
+            node.display = Display::None;
+        }
+        return;
+    }
     let down = actions.as_ref().is_some_and(|a| a.client.kb.scores.active);
     let board = presented
         .snapshot()

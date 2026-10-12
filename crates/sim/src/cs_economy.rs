@@ -212,7 +212,8 @@ pub(crate) fn update_buy_bits(world: &mut FrameWorld, tick: crate::Tick) {
     let (end, buy_ms) = buy_end(world);
     let value = end.map_or_else(|| format!("freeze {buy_ms}"), |end| end.to_string());
     if let Some(mut runtime) = world.ecs().get_resource_mut::<crate::script::Runtime>()
-        && runtime.dvars.get("cs_buy_end") != Some(&value)
+        && (runtime.dvars.get("cs_buy_end") != Some(&value)
+            || !runtime.server_info.contains("cs_buy_end"))
     {
         runtime.server_info.insert("cs_buy_end".to_owned());
         runtime.dvars.insert("cs_buy_end".to_owned(), value);
@@ -256,6 +257,24 @@ pub(crate) fn side_may_buy(world: &mut FrameWorld, id: ClientId, name: &str) -> 
     (team == BuyTeam::Terrorists) == terrorist
 }
 
+/// Adds a round to the match's round history (`cs_round_history`, for the scoreboard's
+/// timeline): two letters a round, the side that won it (`C`, `T`) and how (`e` everyone
+/// dead, `b` the bomb went off, `d` it was defused, `t` the time ran out). A new match starts
+/// it over.
+fn record_round(world: &mut FrameWorld, entry: &str, new_match: bool) {
+    let Some(mut runtime) = world.ecs().get_resource_mut::<crate::script::Runtime>() else {
+        return;
+    };
+    let mut history = if new_match {
+        String::new()
+    } else {
+        runtime.dvars.get("cs_round_history").cloned().unwrap_or_default()
+    };
+    history.push_str(entry);
+    runtime.server_info.insert("cs_round_history".to_owned());
+    runtime.dvars.insert("cs_round_history".to_owned(), history);
+}
+
 /// How the bomb mode's round ended, as its script left it at the restart.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct RoundEnd {
@@ -292,12 +311,32 @@ impl RoundLedger {
 /// Pays the round that just ended (CS 1.6 `RestartRound`), or after a side switch (`reset`)
 /// starts everyone over with $800.
 pub(crate) fn settle_round(world: &mut FrameWorld, end: RoundEnd, reset: bool) {
-    let mut ledger = world
-        .ecs()
-        .remove_resource::<RoundLedger>()
-        .unwrap_or_else(RoundLedger::fresh);
+    let kept = world.ecs().remove_resource::<RoundLedger>();
+    let new_match = kept.is_none();
+    let mut ledger = kept.unwrap_or_else(RoundLedger::fresh);
     let previous = std::mem::replace(&mut ledger.won, end.won);
     let clients = world.client_ids_sorted();
+    // The round goes into the history the scoreboard's timeline shows, the last before a
+    // halftime too.
+    let won_by = [entity_iw4::TEAM_AXIS, entity_iw4::TEAM_ALLIES]
+        .into_iter()
+        .find(|&team| end.won[team as usize] > previous[team as usize]);
+    let terrorists_alive = clients.iter().any(|id| {
+        world.client_meta(*id).is_some_and(|m| {
+            m.client_state_team == end.attackers
+                && m.lifecycle == crate::match_state::ClientLifecycle::Alive
+        })
+    });
+    let entry = match won_by {
+        Some(team) if team == end.attackers => {
+            if end.bomb_exploded { "Tb" } else { "Te" }
+        }
+        Some(_) if end.bomb_defused => "Cd",
+        Some(_) if terrorists_alive => "Ct",
+        Some(_) => "Ce",
+        None => "",
+    };
+    record_round(world, entry, new_match);
     if reset {
         let fresh = RoundLedger::fresh();
         ledger.losses = fresh.losses;

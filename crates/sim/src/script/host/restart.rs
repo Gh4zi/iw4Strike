@@ -221,6 +221,8 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
             crate::cs_economy::settle_round(&mut frame, round_end, halftime || sides_changed);
         }
     }
+    // The round history the round money just added to, read after `dvars` was.
+    let round_history = world.resource::<Runtime>().dvars.get("cs_round_history").cloned();
     for id in huds {
         super::hud::destroy(world, id);
     }
@@ -258,6 +260,15 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
     {
         let mut runtime = world.resource_mut::<Runtime>();
         runtime.dvars = dvars;
+        if let Some(history) = round_history {
+            runtime.dvars.insert("cs_round_history".to_owned(), history);
+        }
+        // The CS server info the game keeps (not the script): the new runtime has none marked.
+        for name in ["cs_round_history", "cs_buy_end"] {
+            if runtime.dvars.contains_key(name) {
+                runtime.server_info.insert(name.to_owned());
+            }
+        }
         runtime.local_presentation_dvars = local_presentation_dvars;
         runtime.local_presentation_client = local_presentation_client;
         runtime.pending_local_dvars = pending_local_dvars;

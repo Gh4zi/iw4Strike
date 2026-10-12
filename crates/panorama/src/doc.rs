@@ -56,6 +56,8 @@ pub struct Doc {
     /// Rules by the key their subject needs: `#id`, `.class`, `tag`, or `*`.
     index: HashMap<String, Vec<usize>>,
     styles_loaded: Vec<String>,
+    /// The `@define`s of every sheet read so far.
+    defines: HashMap<String, String>,
     snippets: HashMap<String, Element>,
     root: usize,
     /// Logical pixels per Panorama pixel.
@@ -117,6 +119,7 @@ impl Doc {
             rules: Vec::new(),
             index: HashMap::new(),
             styles_loaded: Vec::new(),
+            defines: HashMap::new(),
             snippets: HashMap::new(),
             root: 0,
             scale: 1.0,
@@ -173,7 +176,7 @@ impl Doc {
             diag::debug!(World, "panorama: no stylesheet {src}");
             return;
         };
-        let parsed = css::parse(&text, self.rules.len());
+        let parsed = css::parse_with(&text, self.rules.len(), &mut self.defines);
         for import in &parsed.imports {
             self.load_styles(files, import);
         }
@@ -236,6 +239,22 @@ impl Doc {
             && let Some(main) = main_element(&xml)
         {
             children.push(main.clone());
+        }
+        // A frame showing a snippet (`<Frame snippet="stat--MONEY"/>`) becomes it: the snippet's
+        // classes, attributes and children, the frame's own attributes winning.
+        if element.name.eq_ignore_ascii_case("Frame")
+            && let Some(snippet) = element
+                .attr("snippet")
+                .and_then(|name| self.snippets.get(name))
+                .cloned()
+        {
+            classes.extend(snippet.attr("class").unwrap_or("").split_whitespace().map(str::to_owned));
+            for (k, v) in &snippet.attrs {
+                if !k.eq_ignore_ascii_case("class") && element.attr(k).is_none() {
+                    attrs.push((k.clone(), v.clone()));
+                }
+            }
+            children.extend(snippet.children.iter().cloned());
         }
         children.extend(element.children.iter().cloned());
         let attr = |key: &str| {
@@ -482,6 +501,37 @@ impl Doc {
         }
         self.changed = true;
         true
+    }
+
+    /// A new `tag` panel (`Panel`, `Label`, `Image`, ...) with `attrs` (`id`, `class`, `text`,
+    /// `src`) as the last child of `parent`, as `$.CreatePanel` makes one.
+    pub fn add_element(&mut self, files: &Files, parent: usize, tag: &str, attrs: &[(&str, &str)]) -> usize {
+        let element = Element {
+            name: tag.to_owned(),
+            attrs: attrs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect(),
+            children: Vec::new(),
+        };
+        let panel = self.add(files, &element, Some(parent), &|_| None);
+        self.changed = true;
+        panel
+    }
+
+    /// The frames snippet `name`'s top panel holds, in order: each one's snippet and attributes.
+    #[must_use]
+    pub fn snippet_frames(&self, name: &str) -> Vec<(String, Vec<(String, String)>)> {
+        self.snippets.get(name).map_or_else(Vec::new, |root| {
+            root.children
+                .iter()
+                .filter(|child| child.name.eq_ignore_ascii_case("Frame"))
+                .filter_map(|frame| Some((frame.attr("snippet")?.to_owned(), frame.attrs.clone())))
+                .collect()
+        })
+    }
+
+    /// Attribute `key` of snippet `name`'s top panel (`data-stat`).
+    #[must_use]
+    pub fn snippet_attr(&self, name: &str, key: &str) -> Option<String> {
+        self.snippets.get(name)?.attr(key).map(str::to_owned)
     }
 
     /// Builds snippet `name` as a new last child of `parent`; its panel.
@@ -798,6 +848,41 @@ impl Doc {
                 }
             }
         }
+        // A full-size panel in a parent its children size (`fit-children`): Panorama sizes the
+        // parent by its other children, then the panel to it; stretched across the parent's
+        // flow, as CSS does that.
+        let parent_fits = |width: bool| {
+            p.parent.is_some_and(|q| {
+                let ps = &self.panels[q].style;
+                matches!(if width { ps.width } else { ps.height }, Len::Fit)
+            })
+        };
+        if s.width == Len::Percent(100.0) && parent_fits(true) {
+            match parent_flow {
+                Flow::None => {
+                    node.width = Val::Auto;
+                    node.justify_self = JustifySelf::Stretch;
+                }
+                Flow::Down | Flow::DownWrap => {
+                    node.width = Val::Auto;
+                    node.align_self = AlignSelf::Stretch;
+                }
+                Flow::Right | Flow::RightWrap => {}
+            }
+        }
+        if s.height == Len::Percent(100.0) && parent_fits(false) {
+            match parent_flow {
+                Flow::None => {
+                    node.height = Val::Auto;
+                    node.align_self = AlignSelf::Stretch;
+                }
+                Flow::Right | Flow::RightWrap => {
+                    node.height = Val::Auto;
+                    node.align_self = AlignSelf::Stretch;
+                }
+                Flow::Down | Flow::DownWrap => {}
+            }
+        }
         if s.height == Len::Percent(100.0) && margined(s.margin[1], s.margin[3]) {
             node.height = Val::Auto;
             match parent_flow {
@@ -883,7 +968,7 @@ impl Doc {
         // Background: a colour, or a gradient over nothing.
         match &s.background {
             Some(Paint::Color(c)) => {
-                e.insert(BackgroundColor(style::tint(*c, None, opacity)));
+                e.insert(BackgroundColor(dark_overlay(style::tint(*c, None, opacity))));
                 e.remove::<BackgroundGradient>();
             }
             Some(Paint::Gradient(g)) => {
@@ -896,7 +981,7 @@ impl Doc {
                             .stops
                             .iter()
                             .map(|(t, c)| {
-                                ColorStop::new(style::tint(*c, None, opacity), Val::Percent(t * 100.0))
+                                ColorStop::new(dark_overlay(style::tint(*c, None, opacity)), Val::Percent(t * 100.0))
                             })
                             .collect(),
                     })]),
@@ -1053,4 +1138,15 @@ impl Doc {
         }
         e.insert(node);
     }
+}
+
+/// A dark see-through background as Panorama blends it: over the colours as they are (gamma),
+/// where Bevy blends the light behind it (linear), which lets a black panel at 88% show twice as
+/// much of the scene. For black the alpha that dims the same is 1 - (1 - alpha)^2.2.
+fn dark_overlay(color: Color) -> Color {
+    let c = color.to_srgba();
+    if c.alpha >= 1.0 || c.red.max(c.green).max(c.blue) > 0.2 {
+        return color;
+    }
+    Color::srgba(c.red, c.green, c.blue, 1.0 - (1.0 - c.alpha).powf(2.2))
 }

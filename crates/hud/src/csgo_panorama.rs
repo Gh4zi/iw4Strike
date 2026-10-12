@@ -33,6 +33,7 @@ fn sublayout(tag: &str) -> Option<&'static str> {
         "csgobuymenu" => "file://{resources}/layout/buymenu.xml",
         "csgohudradar" => "file://{resources}/layout/hud/hudradar.xml",
         "csgohudreticle" => "file://{resources}/layout/hud/hudreticle.xml",
+        "csgoscoreboard" => "file://{resources}/layout/scoreboard.xml",
         _ => return None,
     })
 }
@@ -256,6 +257,80 @@ fn team_pings(snap: Option<&sim::Snapshot>, local: sim::ClientId, mute: u8) -> V
         .collect()
 }
 
+/// A map's name as a title: `mp_rust` is Rust.
+fn map_title(zone: &str) -> String {
+    let name = zone.strip_prefix("mp_").unwrap_or(zone);
+    name.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map_or(String::new(), |first| first.to_uppercase().chain(chars).collect())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// What the scoreboard shows: each side's players (the scoreboard's kills, assists, deaths,
+/// score and ping; money and the C4 or kit for teammates only, as CS:GO shows them), the sides'
+/// rounds, the server's round history, the match's length by its rules, the map and the clock.
+fn scoreboard_data(
+    snap: Option<&sim::Snapshot>,
+    local: sim::ClientId,
+    scores: Option<&net::Scoreboard>,
+    weapons: Option<&PreparedWeapons>,
+    map: String,
+) -> crate::csgo_scoreboard::Data {
+    use crate::csgo_scoreboard::{Data, Line, Side};
+    let rules = weapon_iw4::cs::cs_round_rules(sim::cs_settings::shooting_mode());
+    let mut data = Data {
+        lines: Vec::new(),
+        scores: crate::csgo_hud::scores(snap).unwrap_or([0, 0]),
+        history: crate::cs_hud::server_info(snap, "cs_round_history").unwrap_or_default().to_owned(),
+        max_rounds: rules.round_limit,
+        half: rules.round_switch,
+        map,
+        clock: clock(crate::cs_hud::round_seconds_left(snap).unwrap_or(0)),
+    };
+    let Some(snap) = snap else {
+        return data;
+    };
+    let fallback = net::parse_scoreboard_cmd(&net::format_scoreboard_from_snapshot(snap));
+    let parsed = scores.filter(|s| s.cmd.is_some()).map_or(&fallback, |s| &s.parsed);
+    let local_team = snap.meta.for_client(local).map_or(0, |m| m.client_state_team);
+    for row in crate::scoreboard::rows_from_parsed(snap, parsed) {
+        let team = row.score.team;
+        let Some(terrorist) = crate::cs_hud::is_terrorist(Some(snap), team) else {
+            continue;
+        };
+        let client = row.score.client as u32;
+        let ps = snap.players.iter().find(|(id, _)| id.0 == client).map(|(_, ps)| ps);
+        let teammate = local_team != 0 && team == local_team;
+        let status = if row.dead {
+            1
+        } else if teammate && ps.zip(weapons).is_some_and(|(ps, w)| crate::cs_hud::carries_c4(ps, w)) {
+            2
+        } else if teammate && ps.is_some_and(|ps| ps.cs_defuser != 0) {
+            7
+        } else {
+            0
+        };
+        data.lines.push(Line {
+            client,
+            side: if terrorist { Side::T } else { Side::Ct },
+            name: row.name.clone(),
+            dead: row.dead,
+            ping: row.score.ping,
+            kills: row.score.kills,
+            assists: row.score.assists,
+            deaths: row.score.deaths,
+            score: row.score.score,
+            money: ps.filter(|_| teammate).map(|ps| ps.cs_money as i32),
+            status,
+            local: client == local.0,
+        });
+    }
+    data
+}
+
 /// What the radar remembers of a player: where they were last seen, when, and when they died.
 struct RadarTrack {
     at: [f32; 2],
@@ -374,6 +449,8 @@ pub(crate) struct CsgoPanorama {
     /// The bomb sites A and B (where their radar objectives are), for the map whose minimap
     /// this names.
     radar_sites: (String, [Option<[f32; 2]>; 2]),
+    /// The scoreboard (TAB).
+    scoreboard: crate::csgo_scoreboard::Scoreboard,
     /// The on-screen ping markers (`PlayerPing` snippets).
     ping_markers: Vec<usize>,
     /// The radar's memory of each player, by client number.
@@ -499,6 +576,11 @@ pub(crate) fn update_csgo_panorama(
         Query<&Window, With<bevy::window::PrimaryWindow>>,
         Query<(&ComputedNode, &bevy::ui::UiGlobalTransform)>,
         Res<frame::GameSettings>,
+    ),
+    (actions, scores, identity): (
+        Option<Res<net::ClientActionInput>>,
+        Option<Res<net::Scoreboard>>,
+        Option<Res<frame::LaunchIdentity>>,
     ),
 ) {
     if !hud.active || !crate::cs_hud::replaces_mw2_hud() || !surface.is_ready() {
@@ -1033,6 +1115,15 @@ pub(crate) fn update_csgo_panorama(
                 }
             }
         }
+    }
+
+    // The scoreboard (TAB, and at the match's end).
+    {
+        let down = actions.as_ref().is_some_and(|a| a.client.kb.scores.active);
+        let show = snap.is_some_and(|snap| crate::scoreboard::displayed(down, snap, local.0));
+        let map = identity.as_ref().map_or(String::new(), |i| map_title(&i.zone));
+        let data = scoreboard_data(snap, local.0, scores.as_deref(), weapons.as_deref(), map);
+        state.scoreboard.update(doc, files, show, &data);
     }
 
     if let Some(money) = doc.find("HudMoney") {

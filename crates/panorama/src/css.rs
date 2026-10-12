@@ -81,7 +81,7 @@ fn compound_matches(compound: &Compound, doc: &impl Element, panel: usize) -> bo
         return false;
     }
     if let Some(id) = &compound.id
-        && !doc.id(panel).is_some_and(|own| own.eq_ignore_ascii_case(id))
+        && !doc.id(panel).is_some_and(|own| own == id)
     {
         return false;
     }
@@ -253,8 +253,14 @@ pub struct Parsed {
 
 /// Parses `text`, numbering its rules from `first_order`.
 pub fn parse(text: &str, first_order: usize) -> Parsed {
+    parse_with(text, first_order, &mut HashMap::new())
+}
+
+/// [`parse`] with the `@define`s of the sheets read before it (Panorama shares a layout's
+/// defines across its sheets: `csgostyles.css` defines the team colours others use); this
+/// sheet's own join them.
+pub fn parse_with(text: &str, first_order: usize, defines: &mut HashMap<String, String>) -> Parsed {
     let text = strip_comments(text);
-    let mut defines: HashMap<String, String> = HashMap::new();
     let mut rules = Vec::new();
     let mut imports = Vec::new();
     let mut i = 0;
