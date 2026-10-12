@@ -39,7 +39,7 @@ use render_gpu::{
 };
 
 use super::cs_world_model::CsHeldWeaponTags;
-use super::remote_body::RemotePlayer;
+use super::remote_body::{RemoteFxBolts, RemotePlayer};
 
 /// Entities whose MW2 body is not drawn this frame: a CS:GO body stands in for it.
 #[derive(Resource, Default)]
@@ -1574,7 +1574,7 @@ pub fn update_csgo_bodies(
     mut held: ResMut<CsHeldWeaponTags>,
     mut mw2_poses: ResMut<Mw2BodyPoses>,
     mut images: ResMut<Assets<Image>>,
-    roots: Query<(&CEntity, &CEntityRuntime, &RemotePlayer)>,
+    mut roots: Query<(&CEntity, &CEntityRuntime, &RemotePlayer, &mut RemoteFxBolts)>,
 ) {
     let bodies = &mut *bodies;
     hidden.0.clear();
@@ -1597,7 +1597,7 @@ pub fn update_csgo_bodies(
     let (allies, axis) = factions(snapshot).unwrap_or_default();
     let dt = time.delta_secs().min(0.1);
     let mut live = HashSet::new();
-    for (identity, runtime, remote) in &roots {
+    for (identity, runtime, remote, mut bolts) in &mut roots {
         let is_corpse = runtime.next_state.e_type == ET_PLAYER_CORPSE
             || runtime.pose_e_type == ET_PLAYER_CORPSE as u8;
         let Some(client) = identity.client() else {
@@ -1617,14 +1617,17 @@ pub fn update_csgo_bodies(
             }
             let corpse = &bodies.corpses[&entity];
             let world = corpse.pose(mw2);
+            // Placed at its first bone (the pelvis), where the map's light is read.
+            let at = world.first().map_or(Vec3::ZERO, |m| m.w_axis.truncate());
+            let model_from_world = Mat4::from_translation(-at);
             let skin: Vec<mdl_goldsrc::Mat3x4> = world
                 .iter()
                 .zip(&corpse.character.studio.bones)
-                .map(|(w, bone)| mdl_goldsrc::concat(&mat3x4(w), &bone.pose_to_bone))
+                .map(|(w, bone)| mdl_goldsrc::concat(&mat3x4(&(model_from_world * *w)), &bone.pose_to_bone))
                 .collect();
             draws.0.push(CsWorldModelInstance {
                 model: corpse.character.gpu.clone(),
-                world_from_model: Mat4::IDENTITY.to_cols_array_2d(),
+                world_from_model: Mat4::from_translation(at).to_cols_array_2d(),
                 ambient: AMBIENT,
                 sun_dir: [0.0; 3],
                 sun: [0.0; 3],
@@ -1788,6 +1791,30 @@ pub fn update_csgo_bodies(
         if let Some(model) = held_model {
             let merge = bodies.merge(&character, &model);
             let palette = merged_palette(&model.studio, &merge, &world);
+            // Muzzle flashes and brass come out of the CS:GO gun, not the hidden MW2 one.
+            let attachment = |name: &str| {
+                let a = model
+                    .studio
+                    .attachments
+                    .iter()
+                    .find(|a| a.name.eq_ignore_ascii_case(name))?;
+                let at = mdl_goldsrc::concat(palette.get(a.bone)?, &a.in_bind);
+                Some(world_from_model * mat4(&at))
+            };
+            let orientation = |m: Mat4| fx::FxBoltOrientation {
+                origin: m.w_axis.truncate().to_array(),
+                axis: [
+                    m.x_axis.truncate().to_array(),
+                    m.y_axis.truncate().to_array(),
+                    m.z_axis.truncate().to_array(),
+                ],
+            };
+            if let (Some(flash), Some(m)) = (bolts.flash.as_mut(), attachment("muzzle_flash")) {
+                flash.orientation = orientation(m);
+            }
+            if let (Some(brass), Some(m)) = (bolts.brass.as_mut(), attachment("shell_eject")) {
+                brass.orientation = orientation(m);
+            }
             draws.0.push(CsWorldModelInstance {
                 model: model.gpu.clone(),
                 world_from_model: world_from_model.to_cols_array_2d(),
@@ -1800,6 +1827,9 @@ pub fn update_csgo_bodies(
     }
     bodies.states.retain(|entity, _| live.contains(entity));
     bodies.corpses.retain(|entity, _| live.contains(entity));
-    let present: HashSet<u32> = roots.iter().map(|(identity, _, _)| u32::from(identity.number())).collect();
+    let present: HashSet<u32> = roots
+        .iter()
+        .map(|(identity, ..)| u32::from(identity.number()))
+        .collect();
     mw2_poses.0.retain(|entity, _| present.contains(entity));
 }

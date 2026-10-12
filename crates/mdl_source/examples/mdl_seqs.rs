@@ -135,6 +135,14 @@ fn main() {
         }
         return;
     }
+    if filter == "attachments" {
+        // attachments: each attachment's name and bone.
+        for a in &model.attachments {
+            let bone = model.bones.get(a.bone).map_or("-", |b| b.name.as_str());
+            println!("{:24} on {bone}", a.name);
+        }
+        return;
+    }
     if let Some(label) = filter.strip_prefix("pose:") {
         // pose:<sequence>: the sequence played over the rest pose at rest pose parameters, and
         // where it puts a few bones (model space: origin and axes).
