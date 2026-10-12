@@ -220,6 +220,8 @@ struct RadarIcon {
     cone: bool,
     turn: f32,
     fade: f32,
+    /// A teammate's colour (`cl_teammate_colors_show`), over the side's.
+    color: Option<&'static str>,
 }
 
 /// How long the round-end panel stays up: the round restarts 7 s after it is decided.
@@ -297,6 +299,134 @@ fn map_picture(map: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
         bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
         bevy::asset::RenderAssetUsages::default(),
     )))
+}
+
+/// How many avatars a side shows (CS:GO's large avatars, a five-a-side match).
+const AVATARS_PER_SIDE: usize = 5;
+/// CS:GO's teammate colours (`cl_teammate_color_1..5`) and their letters.
+const TEAMMATE_COLORS: [(&str, &str); 5] = [
+    ("rgb(248, 246, 45)", "Y"),
+    ("rgb(161, 25, 240)", "P"),
+    ("rgb(0, 181, 98)", "G"),
+    ("rgb(92, 168, 255)", "B"),
+    ("rgb(255, 155, 37)", "O"),
+];
+
+/// A team counter avatar (`AvatarLargeSnippet`), and the parts the game sets. The skull, colour
+/// and letter CS:GO moves out of the snippet's hidden part are copies under its shown part here.
+pub(crate) struct Avatar {
+    panel: usize,
+    background: usize,
+    health: Option<usize>,
+    skull: usize,
+    color: usize,
+    letter: usize,
+}
+
+/// Each side's players in its avatars (`UpdateAvatarSlot`), by client number: the team's
+/// portrait frame (the local player outlined white), the health of a teammate under it, a skull
+/// once dead (red for a teammate, the team's colour for an enemy), and a living teammate's
+/// colour and letter.
+fn update_avatars(
+    doc: &mut panorama::Doc,
+    files: &panorama::Files,
+    avatars: &mut [Vec<Avatar>; 2],
+    counter: usize,
+    snap: Option<&sim::Snapshot>,
+    local: sim::ClientId,
+) {
+    let local_team = snap.and_then(|s| s.meta.for_client(local)).map_or(0, |m| m.client_state_team);
+    let mut sides: [Vec<(sim::ClientId, &playerstate_iw4::PlayerState, bool)>; 2] = [Vec::new(), Vec::new()];
+    if let Some(snap) = snap {
+        for (id, ps) in &snap.players {
+            let team = snap.meta.for_client(*id).map_or(0, |m| m.client_state_team);
+            if let Some(terrorist) = crate::cs_hud::is_terrorist(Some(snap), team) {
+                sides[usize::from(terrorist)].push((*id, ps, team == local_team));
+            }
+        }
+    }
+    for (k, side) in ["CT", "T"].into_iter().enumerate() {
+        let Some(parent) = doc.find_in(counter, &format!("TeamLarge{side}")) else {
+            continue;
+        };
+        if avatars[k].is_empty() {
+            for idx in 0..AVATARS_PER_SIDE {
+                let panel = doc.add_element(
+                    files,
+                    parent,
+                    "Panel",
+                    &[("id", &format!("Avatar{}", k * AVATARS_PER_SIDE + idx))],
+                );
+                doc.load_snippet(files, panel, "AvatarLargeSnippet");
+                doc.set_class(panel, "AvatarLargeSnippet--ScaleSmaller", true);
+                let Some(background) = doc.find_in(panel, "AvatarL__ImageBG") else {
+                    continue;
+                };
+                for class in [
+                    format!("AvatarImage{side}__Color"),
+                    format!("AvatarL__Default--{side}"),
+                ] {
+                    doc.set_class(background, &class, true);
+                }
+                let shown = doc.find_in(panel, "Visible").unwrap_or(panel);
+                let skull = doc.add_element(
+                    files,
+                    shown,
+                    "Image",
+                    &[("class", "AvatarL__Skull"), ("src", "file://{images}/icons/ui/elimination.svg")],
+                );
+                let color = doc.add_element(
+                    files,
+                    shown,
+                    "Image",
+                    &[
+                        ("class", "AvatarL__PlayerColor"),
+                        ("src", "file://{images}/hud/teamcounter/teamcounter_playercolor.png"),
+                    ],
+                );
+                let letter = doc.add_element(files, shown, "Label", &[("class", "AvatarL__PlayerLetter")]);
+                for id in ["ArsenalProgress", "AvatarImage"] {
+                    if let Some(part) = doc.find_in(panel, id) {
+                        doc.set_visible(part, false);
+                    }
+                }
+                let health = doc.find_in(panel, "HealthBar");
+                avatars[k].push(Avatar { panel, background, health, skull, color, letter });
+            }
+        }
+        let players = &mut sides[k];
+        players.sort_by_key(|(id, _, _)| id.0);
+        for (slot, avatar) in avatars[k].iter().enumerate() {
+            let Some(&(id, ps, teammate)) = players.get(slot) else {
+                doc.set_visible(avatar.panel, false);
+                continue;
+            };
+            doc.set_visible(avatar.panel, true);
+            let dead = ps.pm_type >= PM_TYPE_DEAD;
+            let me = id == local;
+            doc.set_visible(avatar.background, !dead);
+            doc.set_class(avatar.background, "Avatar__PlayerOutline--White", me && !dead);
+            doc.set_class(avatar.background, &format!("Avatar__PlayerBorder--{side}"), !(me && !dead));
+            if let Some(bar) = avatar.health {
+                let health = ps.health.clamp(0, 100);
+                doc.set_visible(bar, teammate && !dead);
+                doc.set_style(bar, "width", Some(&format!("{health}%")));
+                doc.set_class(bar, "Avatar__HealthBar--Red", health <= 20);
+                doc.set_class(bar, "Avatar__HealthBar--Normal", health > 20);
+            }
+            doc.set_visible(avatar.skull, dead);
+            doc.set_class(avatar.skull, "Avatar__Skull--Red", dead && teammate);
+            doc.set_class(avatar.skull, &format!("Avatar__Skull--{side}"), dead && !teammate);
+            // A teammate's colour, by their place on the team.
+            let color = TEAMMATE_COLORS.get(slot).filter(|_| teammate && !dead);
+            doc.set_visible(avatar.color, color.is_some());
+            doc.set_visible(avatar.letter, color.is_some());
+            if let Some((rgb, letter)) = color {
+                doc.set_style(avatar.color, "wash-color", Some(rgb));
+                doc.set_text(avatar.letter, letter);
+            }
+        }
+    }
 }
 
 /// A map's name as a title: `mp_rust` is Rust.
@@ -502,6 +632,8 @@ pub(crate) struct CsgoPanorama {
     /// to be read.
     vote_tiles: Vec<(usize, String)>,
     vote_pictures: Vec<(usize, String)>,
+    /// The team counter's avatars: the Counter-Terrorists' and the Terrorists'.
+    avatars: [Vec<Avatar>; 2],
     /// The on-screen ping markers (`PlayerPing` snippets).
     ping_markers: Vec<usize>,
     /// The radar's memory of each player, by client number.
@@ -520,7 +652,8 @@ pub(crate) fn load(fonts: &mut Assets<Font>) -> Option<CsgoPanorama> {
         doc.set_class(fill, "cl-hud-background-color", true);
     }
     // The team counter as `CCSGO_HudTeamCounter` sets it up for a classic match: no bomb
-    // status, join banner or player strips (yet); the clock and score shown, at the top.
+    // status, join banner or small player strips; the clock, the scores and each side's players'
+    // avatars (`cl_hud_playercount_showcount 0`), not the alive counts, at the top.
     if let Some(counter) = doc.find("HudTeamCounter") {
         for id in [
             "BombStatus",
@@ -528,11 +661,11 @@ pub(crate) fn load(fonts: &mut Assets<Font>) -> Option<CsgoPanorama> {
             "BombPlantedLines",
             "BombDefused",
             "TeamAll",
-            "TeamLargeCT",
-            "TeamLargeT",
             "TeamSmallContainerCT",
             "TeamSmallContainerT",
             "JoinPanelParent",
+            "AliveBackgroundCT",
+            "AliveBackgroundT",
         ] {
             if let Some(panel) = doc.find_in(counter, id) {
                 doc.set_visible(panel, false);
@@ -775,6 +908,8 @@ pub(crate) fn update_csgo_panorama(
                 }
             }
         }
+        // The avatars (`UpdateAvatarSlot`).
+        update_avatars(doc, files, &mut state.avatars, panel, snap, local.0);
         // `UpdateNumberCount`: each side's alive count, or a skull when none is left.
         for (side, alive) in [("CT", alive_counts[0]), ("T", alive_counts[1])] {
             if let Some(label) = doc.find_in(panel, &format!("AliveCount{side}")) {
@@ -1001,10 +1136,22 @@ pub(crate) fn update_csgo_panorama(
                     cone: false,
                     turn: if on_map { 0.0 } else { y.atan2(x) + std::f32::consts::FRAC_PI_2 },
                     fade: ping.fade,
+                    color: None,
                 });
             }
             if let Some(snap) = snap {
                 let mut present = Vec::new();
+                // Teammates in their CS:GO colours, by their place on the team (as their avatars).
+                let mut mates: Vec<u32> = snap
+                    .players
+                    .iter()
+                    .filter(|(id, _)| {
+                        local_team != 0
+                            && snap.meta.for_client(*id).is_some_and(|m| m.client_state_team == local_team)
+                    })
+                    .map(|(id, _)| id.0)
+                    .collect();
+                mates.sort_unstable();
                 for (id, other) in &snap.players {
                     let meta = snap.meta.for_client(*id);
                     let team = meta.map_or(0, |m| m.client_state_team);
@@ -1069,6 +1216,12 @@ pub(crate) fn update_csgo_panorama(
                         cone: me && state_name == "OnMap",
                         turn,
                         fade,
+                        color: mates
+                            .iter()
+                            .position(|mate| *mate == id.0)
+                            .filter(|_| friend)
+                            .and_then(|slot| TEAMMATE_COLORS.get(slot))
+                            .map(|(rgb, _)| *rgb),
                     });
                 }
                 state.radar_tracks.retain(|id, _| present.contains(id));
@@ -1092,6 +1245,9 @@ pub(crate) fn update_csgo_panorama(
                 for id in RADAR_ICON_IDS {
                     if let Some(image) = doc.find_in(icons, id) {
                         doc.set_visible(image, id == shown.icon || (shown.cone && id == "ViewFrustrum"));
+                        if id == shown.icon {
+                            doc.set_style(image, "wash-color-fast", shown.color);
+                        }
                     }
                 }
             }
