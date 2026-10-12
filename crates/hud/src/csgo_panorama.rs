@@ -179,6 +179,9 @@ fn show_item_details(doc: &mut panorama::Doc, info: usize, item: &str) {
 /// CS:GO's round radar (`#Radar__Round--Inner`): 250 Panorama pixels across, showing as much of
 /// the map as MW2's minimap does.
 const RADAR_SIZE: f32 = 250.0;
+/// CS:GO's `#Radar` panel the radar sits centred in (`Radar_PanelSize`), where the bomb site
+/// icons are placed.
+const RADAR_PANEL_SIZE: f32 = 300.0;
 /// How many players the radar has icons for.
 const RADAR_ICONS: usize = 24;
 /// The icons a player package can show (one at a time, plus the local player's view cone).
@@ -292,6 +295,9 @@ pub(crate) struct CsgoPanorama {
     /// The radar's map texture and its size in pixels, and its players' icon packages.
     radar_image: Option<(Handle<Image>, u32)>,
     radar_icons: Vec<usize>,
+    /// The bomb sites A and B (where their radar objectives are), for the map whose minimap
+    /// this names.
+    radar_sites: (String, [Option<[f32; 2]>; 2]),
 }
 
 /// Reads CS:GO's HUD; `None` without CS:GO (or its packed UI and fonts).
@@ -637,13 +643,11 @@ pub(crate) fn update_csgo_panorama(
     if let Some(radar) = doc.find("HudRadar") {
         doc.set_visible(radar, csgo_radar && ps.is_some());
         doc.set_class(radar, "hud-radar__active", csgo_radar && ps.is_some());
-        // Only the round radar: no square one, and no bomb, bomb zone or hostage markers (the
-        // game shows those as they happen, which this radar does not yet).
+        // Only the round radar: no square one, and no bomb or hostage markers (the game shows
+        // those as they happen, which this radar does not yet).
         for id in [
             "Radar__Square",
             "RI_BombDefuserPackage",
-            "BombZoneA",
-            "BombZoneB",
             "HZone0",
             "HZone1",
             "HZone2",
@@ -719,6 +723,57 @@ pub(crate) fn update_csgo_panorama(
             let (sin, cos) = ps.viewangles[1].to_radians().sin_cos();
             let units = drawable.max_range / RADAR_SIZE;
             let half = RADAR_SIZE * 0.5;
+            // Where a world point lands from the radar's middle, pulled in to `rim` when off it
+            // (and whether it was on it).
+            let project = |to: [f32; 2], rim: f32| {
+                let d = [to[0] - ps.origin[0], to[1] - ps.origin[1]];
+                let x = (d[0] * sin - d[1] * cos) / units;
+                let y = -(d[0] * cos + d[1] * sin) / units;
+                let len = (x * x + y * y).sqrt();
+                if len > rim {
+                    (x * rim / len, y * rim / len, false)
+                } else {
+                    (x, y, true)
+                }
+            };
+            // The bomb sites (`PlaceGoalIcons`): CS:GO's A and B over the sites' radar
+            // objectives, remembered for the map once seen; smaller and dimmer on the radar,
+            // full size at its rim when off it.
+            if state.radar_sites.0 != drawable.image_name {
+                state.radar_sites = (drawable.image_name.clone(), [None; 2]);
+            }
+            for objective in snap.iter().flat_map(|s| &s.meta.objectives.compass) {
+                let icon = objective.icon.as_str();
+                let site = if !icon.contains("waypoint_") {
+                    None
+                } else if icon.ends_with("_a") {
+                    Some(0)
+                } else if icon.ends_with("_b") {
+                    Some(1)
+                } else {
+                    None
+                };
+                if let Some(site) = site {
+                    state.radar_sites.1[site] = Some([objective.origin[0], objective.origin[1]]);
+                }
+            }
+            for (site, id) in ["BombZoneA", "BombZoneB"].into_iter().enumerate() {
+                let Some(zone) = doc.find_in(radar, id) else {
+                    continue;
+                };
+                let Some(at) = state.radar_sites.1[site] else {
+                    doc.set_visible(zone, false);
+                    continue;
+                };
+                let (x, y, on_map) = project(at, half - 8.0);
+                doc.set_visible(zone, true);
+                doc.set_class(zone, "BombZone_OnMap", on_map);
+                doc.set_live_transform(
+                    zone,
+                    (RADAR_PANEL_SIZE * 0.5 + x, RADAR_PANEL_SIZE * 0.5 + y),
+                    0.0,
+                );
+            }
             let mut shown = Vec::new();
             if let Some(snap) = snap {
                 for (id, other) in &snap.players {
@@ -728,15 +783,7 @@ pub(crate) fn update_csgo_panorama(
                     }
                     let terrorist = crate::cs_hud::is_terrorist(Some(snap), team).unwrap_or(false);
                     let dead = other.pm_type >= PM_TYPE_DEAD;
-                    let d = [other.origin[0] - ps.origin[0], other.origin[1] - ps.origin[1]];
-                    let mut x = (d[0] * sin - d[1] * cos) / units;
-                    let mut y = -(d[0] * cos + d[1] * sin) / units;
-                    let rim = half - 6.0;
-                    let len = (x * x + y * y).sqrt();
-                    if len > rim {
-                        x *= rim / len;
-                        y *= rim / len;
-                    }
+                    let (x, y, _) = project([other.origin[0], other.origin[1]], half - 6.0);
                     let icon = match (terrorist, dead) {
                         (false, false) => "CTOnMap",
                         (true, false) => "TOnMap",
@@ -768,6 +815,11 @@ pub(crate) fn update_csgo_panorama(
         } else {
             for &icons in &state.radar_icons {
                 doc.set_visible(icons, false);
+            }
+            for id in ["BombZoneA", "BombZoneB"] {
+                if let Some(zone) = doc.find_in(radar, id) {
+                    doc.set_visible(zone, false);
+                }
             }
         }
     }
