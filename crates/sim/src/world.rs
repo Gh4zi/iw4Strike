@@ -2274,7 +2274,7 @@ impl SimState {
         &self,
         player: impl Fn(ClientId) -> Option<PlayerState>,
     ) -> Vec<crate::bullet_collision::PlayerCollisionPose> {
-        self.alive_collision_poses_inner(player, &[], |_| {})
+        self.alive_collision_poses_inner(player, &[], None, |_| {})
     }
 
     pub(crate) fn player_poses_since_record(
@@ -2304,17 +2304,19 @@ impl SimState {
                     && pose.shield == meta.shield
             });
             if !held {
-                return Some(self.alive_collision_poses_inner(player, recorded, |_| {}));
+                return Some(self.alive_collision_poses_inner(player, recorded, None, |_| {}));
             }
         }
         (alive + self.prediction_remote_bodies.len() != recorded.len())
-            .then(|| self.alive_collision_poses_inner(player, recorded, |_| {}))
+            .then(|| self.alive_collision_poses_inner(player, recorded, None, |_| {}))
     }
 
+    /// `unposed`: a player left out, for a history nothing reads their hit volumes from.
     fn alive_collision_poses_inner(
         &self,
         player: impl Fn(ClientId) -> Option<PlayerState>,
         reuse: &[crate::bullet_collision::PlayerCollisionPose],
+        unposed: Option<ClientId>,
         mut on_err: impl FnMut(&str),
     ) -> Vec<crate::bullet_collision::PlayerCollisionPose> {
         use crate::bullet_collision::{
@@ -2324,7 +2326,7 @@ impl SimState {
 
         let mut poses = Vec::new();
         for (id, meta) in &self.clients {
-            if meta.lifecycle != ClientLifecycle::Alive {
+            if meta.lifecycle != ClientLifecycle::Alive || unposed == Some(*id) {
                 continue;
             }
             let Some(ps) = player(*id) else {
@@ -3010,8 +3012,16 @@ impl SimState {
         use crate::bullet_collision::{HistoryFrame, HistoryPhase};
         self.tick_player_dobjs(hitbox_cmds);
         self.tick_player_anim_trees(msec, player, hitbox_cmds);
+        // A world simulating one player's commands (a client's prediction) can only shoot from
+        // that player, and a shot never traces its shooter: nothing reads their hit volumes from
+        // this history, so they are not posed each step. A shot poses whom it needs
+        // (`player_poses_since_record`, `lagcomp_players`).
+        let unposed = match hitbox_cmds {
+            Some([only]) => Some(*only),
+            _ => None,
+        };
         let mut error = None;
-        let poses = self.alive_collision_poses_inner(player, &[], |e| {
+        let poses = self.alive_collision_poses_inner(player, &[], unposed, |e| {
             if error.is_none() {
                 error = Some(e.to_owned());
             }
