@@ -545,7 +545,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             .into_iter()
             .find(|folder| folder.use_key() == Some(key))
         {
-            settings.game_used.get_or_insert([true; 5])[folder.index()] = value.trim() != "0";
+            settings.game_used.get_or_insert([true; 6])[folder.index()] = value.trim() != "0";
             continue;
         }
         match key {
@@ -768,7 +768,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
 }
 
 // `frame::GameSettings::game_paths` / `game_used` hold one entry per game folder.
-const _: () = assert!(asset_transport::GameFolder::COUNT == 5);
+const _: () = assert!(asset_transport::GameFolder::COUNT == 6);
 
 /// The options menu's crosshair rows and the `cl_crosshair*` variable each sets.
 const MENU_CROSSHAIR: [(&str, &str); 8] = [

@@ -131,6 +131,8 @@ struct Folders {
     auto_mw2: Option<PathBuf>,
     steam_cs2: Option<PathBuf>,
     cs2_env: Option<String>,
+    steam_csgo: Option<PathBuf>,
+    csgo_env: Option<String>,
     steam_css: Option<PathBuf>,
     css_env: Option<String>,
     cs16_env: Option<String>,
@@ -188,6 +190,9 @@ impl Folders {
             steam_cs2: asset_transport::steam_cs2_pak()
                 .and_then(|pak| pak.parent().map(Path::to_path_buf)),
             cs2_env: asset_transport::cs2_env_override(),
+            steam_csgo: asset_transport::steam_csgo_pak()
+                .and_then(|pak| pak.parent().map(Path::to_path_buf)),
+            csgo_env: asset_transport::csgo_env_override(),
             steam_css: asset_transport::steam_css_pak()
                 .and_then(|pak| pak.parent().map(Path::to_path_buf)),
             css_env: asset_transport::css_env_override(),
@@ -269,6 +274,52 @@ impl Folders {
                         Tone::Dim,
                         format!(
                             "{rejected}Not found. Optional: CS2's guns in your hands. The games                              below fill in the rest."
+                        ),
+                    )
+                }
+            }
+            GameFolder::Csgo => {
+                if !self.used[index] {
+                    return (
+                        self.csgo_found(),
+                        Tone::Dim,
+                        "Turned off: not used. Tick Use to play with CS:GO's guns.".into(),
+                    );
+                }
+                if let Some(env) = &self.csgo_env {
+                    let dir = PathBuf::from(env);
+                    return if game_paths::is_csgo_game_folder(&dir) {
+                        (
+                            Some(dir),
+                            Tone::Good,
+                            "Set by IW4L_CSGO in .env (it overrides this window).".into(),
+                        )
+                    } else {
+                        (
+                            None,
+                            Tone::Bad,
+                            format!(
+                                "IW4L_CSGO in .env names {env}, which is not CS:GO's csgo folder. \
+                                 Fix or remove that line."
+                            ),
+                        )
+                    };
+                }
+                if let Some(path) = &self.chosen[index] {
+                    (Some(path.clone()), Tone::Good, format!("{rejected}Selected."))
+                } else if let Some(path) = &self.steam_csgo {
+                    (
+                        Some(path.clone()),
+                        Tone::Good,
+                        format!("{rejected}Found in your Steam library."),
+                    )
+                } else {
+                    (
+                        None,
+                        Tone::Dim,
+                        format!(
+                            "{rejected}Not found. Optional: CS:GO's guns in your hands (Steam's \
+                             CS:GO Legacy). The games below fill in the rest."
                         ),
                     )
                 }
@@ -449,6 +500,16 @@ impl Folders {
             .filter(|dir| game_paths::is_cs2_game_folder(dir))
             .or_else(|| self.chosen[GameFolder::Cs2.index()].clone())
             .or_else(|| self.steam_cs2.clone())
+    }
+
+    /// The CS:GO folder that would be used if it were on.
+    fn csgo_found(&self) -> Option<PathBuf> {
+        self.csgo_env
+            .as_ref()
+            .map(PathBuf::from)
+            .filter(|dir| game_paths::is_csgo_game_folder(dir))
+            .or_else(|| self.chosen[GameFolder::Csgo.index()].clone())
+            .or_else(|| self.steam_csgo.clone())
     }
 
     /// Whether Counter-Strike: Source is on and found, so it wins over the GoldSrc games.
@@ -680,7 +741,10 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
                     let tag = match folder {
                         GameFolder::Mw2 => "required",
                         GameFolder::Css => "recommended",
-                        GameFolder::Cs2 | GameFolder::Cz | GameFolder::Cs16 => "optional",
+                        GameFolder::Cs2
+                        | GameFolder::Csgo
+                        | GameFolder::Cz
+                        | GameFolder::Cs16 => "optional",
                     };
                     panel
                         .spawn(Node {
@@ -808,6 +872,7 @@ fn press_buttons(
                 let title = match folder {
                     GameFolder::Mw2 => "Select the Call of Duty Modern Warfare 2 folder",
                     GameFolder::Cs2 => "Select the Counter-Strike Global Offensive folder (CS2)",
+                    GameFolder::Csgo => "Select the CS:GO Legacy folder (the one with csgo)",
                     GameFolder::Css => "Select the Counter-Strike Source folder",
                     GameFolder::Cs16 => "Select the Half-Life folder (Counter-Strike 1.6)",
                     GameFolder::Cz => "Select the Half-Life folder (Condition Zero)",

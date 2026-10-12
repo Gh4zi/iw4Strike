@@ -130,10 +130,10 @@ pub struct GameSettings {
     /// Game folders from the game folders window (`game_path_mw2/css/cz/cs16`, in
     /// `asset_transport::GameFolder::index` order), kept as read so a
     /// save writes them back; `None` until that window first saved them.
-    pub game_paths: Option<[String; 5]>,
+    pub game_paths: Option<[String; 6]>,
     /// Whether each game is used (`use_css` / `use_cz` / `use_cs16`, the window's "Use" boxes),
     /// same order, kept as read for the same reason; `None` when the file has no such line.
-    pub game_used: Option<[bool; 5]>,
+    pub game_used: Option<[bool; 6]>,
 
     pub revision: u64,
 }

@@ -199,6 +199,55 @@ pub fn steam_cs2_pak() -> Option<PathBuf> {
     })
 }
 
+/// Environment override naming Counter-Strike: Global Offensive's `csgo` folder.
+pub const CSGO_ENV: &str = "IW4L_CSGO";
+
+/// `IW4L_CSGO` from the environment or `.env`, when set.
+#[must_use]
+pub fn csgo_env_override() -> Option<String> {
+    env_or_dotenv(CSGO_ENV).filter(|dir| !dir.trim().is_empty())
+}
+
+/// Counter-Strike: Global Offensive's main pack (`csgo/pak01_dir.vpk`): `IW4L_CSGO` (its `csgo`
+/// folder) when set, else the folder saved in the game folders window, else a CS:GO Legacy
+/// install in any Steam library — unless the player turned it off in the window.
+#[must_use]
+pub fn find_csgo_pak() -> Option<PathBuf> {
+    if crate::game_paths::turned_off(GameFolder::Csgo) {
+        return None;
+    }
+    let pak_in = |dir: &Path| {
+        crate::game_paths::is_csgo_game_folder(dir).then(|| dir.join(crate::game_paths::CSGO_PAK))
+    };
+    if let Some(dir) = csgo_env_override() {
+        return pak_in(Path::new(&dir));
+    }
+    saved(GameFolder::Csgo)
+        .and_then(|dir| pak_in(&dir))
+        .or_else(steam_csgo_pak)
+}
+
+/// CS:GO Legacy's pack in a Steam library: where CS:GO installed (when the Legacy version is the
+/// one installed there), or any folder of `steamapps/common` holding a CS:GO `csgo` folder (a
+/// copy kept next to CS2).
+#[must_use]
+pub fn steam_csgo_pak() -> Option<PathBuf> {
+    steam_libraries().into_iter().find_map(|library| {
+        let common = library.join("steamapps").join("common");
+        let pak_in = |game: &Path| {
+            let dir = game.join("csgo");
+            crate::game_paths::is_csgo_game_folder(&dir)
+                .then(|| dir.join(crate::game_paths::CSGO_PAK))
+        };
+        pak_in(&common.join("Counter-Strike Global Offensive")).or_else(|| {
+            std::fs::read_dir(&common)
+                .ok()?
+                .flatten()
+                .find_map(|entry| pak_in(&entry.path()))
+        })
+    })
+}
+
 /// Environment override naming a Counter-Strike 1.6 `cstrike` folder.
 pub const CSTRIKE_ENV: &str = "IW4L_CSTRIKE";
 

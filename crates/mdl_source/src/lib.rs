@@ -29,6 +29,16 @@ pub struct LoadedModel {
     pub materials: Vec<Material>,
 }
 
+impl LoadedModel {
+    /// Draws `other` (its materials already resolved) with this model, following its bones
+    /// ([`StudioModel::bone_merge`]).
+    pub fn bone_merge(&mut self, other: &LoadedModel, max_slots: usize) -> Result<(), String> {
+        self.model.bone_merge(&other.model, max_slots)?;
+        self.materials.extend(other.materials.iter().cloned());
+        Ok(())
+    }
+}
+
 fn flag(shader: &kv::Value, key: &str) -> bool {
     shader.text(key).is_some_and(|v| v.trim() != "0")
 }
@@ -77,7 +87,24 @@ pub fn load_model(vpk: &Vpk, path: &str) -> Result<LoadedModel, String> {
     let mdl = read(format!("{stem}.mdl"))?;
     let vvd = read(format!("{stem}.vvd"))?;
     let vtx = read(format!("{stem}.dx90.vtx")).or_else(|_| read(format!("{stem}.dx80.vtx")))?;
-    let model = StudioModel::parse(&mdl, &vvd, &vtx)?;
+    let ani = vpk.read(&format!("{stem}.ani"));
+    let mut model = StudioModel::parse_with_ani(&mdl, &vvd, &vtx, ani.as_deref())?;
+    // Sequences kept in other models (`$includemodel`: CS:GO's knives keep theirs apart).
+    for include in model.includes.clone() {
+        let include = include.replace('\\', "/").to_ascii_lowercase();
+        let path = if include.starts_with("models/") {
+            include
+        } else {
+            format!("models/{include}")
+        };
+        let Some(bytes) = vpk.read(&path) else {
+            continue;
+        };
+        let ani = vpk.read(&format!("{}.ani", path.trim_end_matches(".mdl")));
+        if let Ok(included) = StudioModel::parse_with_ani(&bytes, &[], &[], ani.as_deref()) {
+            model.include_sequences(&included);
+        }
+    }
     let materials = model
         .materials
         .iter()

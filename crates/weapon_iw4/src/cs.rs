@@ -1768,6 +1768,50 @@ const CS2_VIEWS: [Cs2View; 29] = [
     },
 ];
 
+/// The CS:GO viewmodel each CS weapon wears (`models/weapons/<stem>.mdl` in CS:GO's pack), the
+/// same CS:GO gun as its CS2 model: the Terrorists' and the Counter-Terrorists' (only the knife
+/// differs).
+const CSGO_VIEW_MODELS: [(&str, [&str; 2]); 29] = [
+    ("ak47", ["v_rif_ak47"; 2]),
+    ("m4a1", ["v_rif_m4a1_s"; 2]),
+    ("awp", ["v_snip_awp"; 2]),
+    ("deagle", ["v_pist_deagle"; 2]),
+    ("usp", ["v_pist_223"; 2]),
+    ("glock", ["v_pist_glock18"; 2]),
+    ("p228", ["v_pist_p250"; 2]),
+    ("fiveseven", ["v_pist_fiveseven"; 2]),
+    ("elite", ["v_pist_elite"; 2]),
+    ("m3", ["v_shot_nova"; 2]),
+    ("xm1014", ["v_shot_xm1014"; 2]),
+    ("mac10", ["v_smg_mac10"; 2]),
+    ("tmp", ["v_smg_mp9"; 2]),
+    ("mp5", ["v_smg_mp5sd"; 2]),
+    ("ump45", ["v_smg_ump45"; 2]),
+    ("p90", ["v_smg_p90"; 2]),
+    ("galil", ["v_rif_galilar"; 2]),
+    ("famas", ["v_rif_famas"; 2]),
+    ("sg552", ["v_rif_sg556"; 2]),
+    ("aug", ["v_rif_aug"; 2]),
+    ("scout", ["v_snip_ssg08"; 2]),
+    ("g3sg1", ["v_snip_g3sg1"; 2]),
+    ("sg550", ["v_snip_scar20"; 2]),
+    ("m249", ["v_mach_m249para"; 2]),
+    ("knife", ["v_knife_default_t", "v_knife_default_ct"]),
+    ("hegrenade", ["v_eq_fraggrenade"; 2]),
+    ("flashbang", ["v_eq_flashbang"; 2]),
+    ("smokegrenade", ["v_eq_smokegrenade"; 2]),
+    ("c4", ["v_ied"; 2]),
+];
+
+/// The CS:GO viewmodels of the CS weapon named `name`: `[terrorist, counter-terrorist]`.
+#[must_use]
+pub fn csgo_view_model(name: &str) -> Option<[&'static str; 2]> {
+    CSGO_VIEW_MODELS
+        .iter()
+        .find(|(weapon, _)| *weapon == name)
+        .map(|(_, models)| *models)
+}
+
 /// [`Cs2View`] of the CS weapon named `name`.
 #[must_use]
 pub fn cs2_view(name: &str) -> Option<Cs2View> {

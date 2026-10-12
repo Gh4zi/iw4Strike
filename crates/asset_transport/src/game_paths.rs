@@ -1,11 +1,12 @@
 //! The game folders the player selects in the game folders window, saved in `settings.cfg`
-//! (`game_path_mw2`, `game_path_cs2`, `game_path_css`, `game_path_cz`, `game_path_cs16`), and
-//! whether each Counter-Strike game is used at all (`use_cs2`, `use_css`, `use_cz`, `use_cs16`,
-//! the window's "Use" boxes). An environment / `.env` override (`IW4L_CS2`, `IW4L_CSS`,
-//! `IW4L_CZERO`, `IW4L_CSTRIKE`) wins over a saved folder; Steam is searched for CS2 and CS:S. A
-//! game turned off is not used whatever names it. CS2 comes first where it has the asset (its
-//! guns); CS:S wins over both GoldSrc games; without it Condition Zero is read first and
-//! Counter-Strike 1.6 fills in what CZ lacks, as CZ itself does.
+//! (`game_path_mw2`, `game_path_cs2`, `game_path_csgo`, `game_path_css`, `game_path_cz`,
+//! `game_path_cs16`), and whether each Counter-Strike game is used at all (`use_cs2`, `use_csgo`,
+//! `use_css`, `use_cz`, `use_cs16`, the window's "Use" boxes). An environment / `.env` override
+//! (`IW4L_CS2`, `IW4L_CSGO`, `IW4L_CSS`, `IW4L_CZERO`, `IW4L_CSTRIKE`) wins over a saved folder;
+//! Steam is searched for CS2, CS:GO and CS:S. A game turned off is not used whatever names it. CS2
+//! comes first where it has the asset (its guns), then CS:GO; CS:S wins over both GoldSrc games;
+//! without it Condition Zero is read first and Counter-Strike 1.6 fills in what CZ lacks, as CZ
+//! itself does.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -14,6 +15,8 @@ use std::sync::OnceLock;
 pub enum GameFolder {
     Mw2,
     Cs2,
+    /// Counter-Strike: Global Offensive (the Legacy version Steam still offers).
+    Csgo,
     Css,
     Cs16,
     Cz,
@@ -21,10 +24,17 @@ pub enum GameFolder {
 
 impl GameFolder {
     /// How many there are: the length of the arrays indexed by [`index`](Self::index).
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 6;
     /// In the order the game folders window lists them, which is the order they are used in, and
     /// [`index`](Self::index) order (arrays built by mapping over this are indexed by it).
-    pub const ALL: [Self; Self::COUNT] = [Self::Mw2, Self::Cs2, Self::Css, Self::Cz, Self::Cs16];
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Mw2,
+        Self::Cs2,
+        Self::Css,
+        Self::Cz,
+        Self::Cs16,
+        Self::Csgo,
+    ];
 
     #[must_use]
     pub const fn index(self) -> usize {
@@ -34,6 +44,8 @@ impl GameFolder {
             Self::Css => 2,
             Self::Cz => 3,
             Self::Cs16 => 4,
+            // Added after the others, so settings saved before it read the same.
+            Self::Csgo => 5,
         }
     }
 
@@ -43,6 +55,7 @@ impl GameFolder {
         match self {
             Self::Mw2 => "game_path_mw2",
             Self::Cs2 => "game_path_cs2",
+            Self::Csgo => "game_path_csgo",
             Self::Css => "game_path_css",
             Self::Cs16 => "game_path_cs16",
             Self::Cz => "game_path_cz",
@@ -55,6 +68,7 @@ impl GameFolder {
         match self {
             Self::Mw2 => None,
             Self::Cs2 => Some("use_cs2"),
+            Self::Csgo => Some("use_csgo"),
             Self::Css => Some("use_css"),
             Self::Cs16 => Some("use_cs16"),
             Self::Cz => Some("use_cz"),
@@ -66,6 +80,7 @@ impl GameFolder {
         match self {
             Self::Mw2 => "Call of Duty: Modern Warfare 2",
             Self::Cs2 => "Counter-Strike 2",
+            Self::Csgo => "Counter-Strike: Global Offensive",
             Self::Css => "Counter-Strike: Source",
             Self::Cs16 => "Counter-Strike 1.6",
             Self::Cz => "Counter-Strike: Condition Zero",
@@ -88,6 +103,7 @@ impl GameFolder {
                 Some(picked.to_path_buf()),
                 parent,
             ],
+            Self::Csgo => vec![Some(picked.join("csgo")), Some(picked.to_path_buf()), parent],
             Self::Css | Self::Cs16 => vec![
                 Some(picked.join("cstrike")),
                 Some(picked.to_path_buf()),
@@ -110,6 +126,7 @@ impl GameFolder {
         match self {
             Self::Mw2 => crate::discover::holds_mw2(dir),
             Self::Cs2 => is_cs2_game_folder(dir),
+            Self::Csgo => is_csgo_game_folder(dir),
             Self::Css => dir.join(CSS_PAK).is_file(),
             Self::Cs16 => goldsrc() && !is_condition_zero(dir),
             Self::Cz => goldsrc() && is_condition_zero(dir),
@@ -121,6 +138,7 @@ impl GameFolder {
     pub const fn expected(self) -> &'static str {
         match self {
             Self::Cs2 => "game/csgo/pak01_dir.vpk",
+            Self::Csgo => "csgo\\pak01_dir.vpk",
             Self::Mw2 => "zone\\english\\common_mp.ff",
             Self::Css => "cstrike\\cstrike_pak_dir.vpk",
             Self::Cs16 => "cstrike\\models\\v_ak47.mdl",
@@ -154,6 +172,18 @@ pub const CS2_PAK: &str = "pak01_dir.vpk";
 #[must_use]
 pub fn is_cs2_game_folder(dir: &Path) -> bool {
     dir.join(CS2_PAK).is_file() && dir.join("gameinfo.gi").is_file()
+}
+
+/// Counter-Strike: Global Offensive's main pack inside its `csgo` folder.
+pub const CSGO_PAK: &str = "pak01_dir.vpk";
+
+/// Whether `dir` is CS:GO's `csgo` folder: its pack and Source's `gameinfo.txt`, without CS2's
+/// `gameinfo.gi`.
+#[must_use]
+pub fn is_csgo_game_folder(dir: &Path) -> bool {
+    dir.join(CSGO_PAK).is_file()
+        && dir.join("gameinfo.txt").is_file()
+        && !dir.join("gameinfo.gi").is_file()
 }
 
 /// `settings.cfg`: `IW4L_SETTINGS_PATH`, else in the artifacts folder (Windows) or
@@ -432,7 +462,14 @@ mod tests {
         std::fs::write(&file, "fov=80\ngame_path_css=old\nbind G drop\n").unwrap();
         assert_eq!(
             read_saved(&file),
-            Some([String::new(), String::new(), "old".into(), String::new(), String::new()])
+            Some([
+                String::new(),
+                String::new(),
+                "old".into(),
+                String::new(),
+                String::new(),
+                String::new()
+            ])
         );
         let paths = [
             "C:/MW2".into(),
@@ -440,18 +477,19 @@ mod tests {
             String::new(),
             "D:/Half-Life/czero".into(),
             "D:/Half-Life/cstrike".into(),
+            "X:/csgo legacy/csgo".into(),
         ];
-        write_saved(&file, &paths, [true, true, false, false, true]).unwrap();
+        write_saved(&file, &paths, [true, true, false, false, true, true]).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
             text,
-            "fov=80\ngame_path_mw2=C:/MW2\ngame_path_cs2=E:/CS2/game/csgo\nuse_cs2=1\ngame_path_css=\nuse_css=0\ngame_path_cz=D:/Half-Life/czero\nuse_cz=0\ngame_path_cs16=D:/Half-Life/cstrike\nuse_cs16=1\nbind G drop\n"
+            "fov=80\ngame_path_mw2=C:/MW2\ngame_path_cs2=E:/CS2/game/csgo\nuse_cs2=1\ngame_path_css=\nuse_css=0\ngame_path_cz=D:/Half-Life/czero\nuse_cz=0\ngame_path_cs16=D:/Half-Life/cstrike\nuse_cs16=1\ngame_path_csgo=X:/csgo legacy/csgo\nuse_csgo=1\nbind G drop\n"
         );
         assert_eq!(read_saved(&file), Some(paths));
-        assert_eq!(read_used(&file), [true, true, false, false, true]);
+        assert_eq!(read_used(&file), [true, true, false, false, true, true]);
         // Older builds saved a turned-off game as `none`.
         std::fs::write(&file, "game_path_css=none\n").unwrap();
-        assert_eq!(read_used(&file), [true, true, false, true, true]);
+        assert_eq!(read_used(&file), [true, true, false, true, true, true]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -704,6 +704,7 @@ read to get the behaviour and numbers right. None of their source code is includ
 | **[css-community](https://github.com/DeadZoneLuna/css-community)** (Valve's Counter-Strike: Source SDK release) | How CS:S layers a player's animations (`cs_playeranimstate.cpp`), used for the third-person stances. |
 | **[ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat)** (MIT) | Counter-Strike 2's file formats: the resource container, KV3, models, textures, materials, skeletons and animation clips, and how CS2's materials pack their maps. |
 | **[meshoptimizer](https://github.com/zeux/meshoptimizer)** (MIT) | The vertex and index buffer encodings CS2's models are compressed with. |
+| **[CS-Craft](https://github.com/FrosttysBots/CS-Craft)** (Apache-2.0) | CS:GO's model format on top of the Source one: the longer strip groups, animations kept in `.ani` files and split into sections, and CS:GO's frame animations. CS:GO's gun placement and arms. |
 
 ### Games
 

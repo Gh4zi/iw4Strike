@@ -1,7 +1,11 @@
-//! Source studio models (`.mdl` v44-48 with its `.vvd` vertices and `.vtx` strips), as
-//! Counter-Strike: Source ships its viewmodels. Layouts follow the public SDK headers; the code
-//! is our own. Animations are decoded once into per-frame bone poses; geometry is expanded into
-//! one triangle list per mesh with up to three weighted bones per vertex (LOD 0).
+//! Source studio models (`.mdl` v44-49 with its `.vvd` vertices and `.vtx` strips), as
+//! Counter-Strike: Source and CS:GO ship their viewmodels. Layouts follow the public SDK headers.
+//! Animations are decoded once into per-frame bone poses; geometry is expanded into one triangle
+//! list per mesh with up to three weighted bones per vertex (LOD 0).
+//!
+//! CS:GO's (v49) additions follow CS-Craft (github.com/FrosttysBots/CS-Craft, Apache-2.0): the
+//! longer strip group records, animations kept in the model's `.ani` file and split into
+//! sections, and the per-frame "frame animation" encoding.
 
 use mdl_goldsrc::{Mat3x4, angle_quaternion, concat, slerp};
 
@@ -25,6 +29,20 @@ const ANIM_DELTA: u8 = 0x10;
 const ANIM_RAWROT2: u8 = 0x20;
 
 const STRIP_IS_TRILIST: u8 = 0x01;
+
+/// `mstudioanimdesc_t` flags.
+const STUDIO_DELTA: i32 = 0x0004;
+const STUDIO_ALLZEROS: i32 = 0x0020;
+const STUDIO_FRAMEANIM: i32 = 0x0040;
+
+/// Per-bone flags of a frame animation (CS:GO).
+const FRAME_CONST_POS: u8 = 0x01;
+const FRAME_CONST_ROT: u8 = 0x02;
+const FRAME_ANIM_POS: u8 = 0x04;
+const FRAME_ANIM_ROT: u8 = 0x08;
+const FRAME_FULL_ANIM_POS: u8 = 0x10;
+const FRAME_CONST_ROT2: u8 = 0x40;
+const FRAME_ANIM_ROT2: u8 = 0x80;
 
 /// Event id GoldSrc/Source clients play a sound script entry for.
 pub const EVENT_CLIENT_SOUND: i32 = 5004;
@@ -158,6 +176,13 @@ pub struct StudioModel {
     pub body_parts: Vec<BodyPart>,
     /// Every animation the sequences use.
     pub animations: Vec<Animation>,
+    /// Skinning slots after the bones' own, for a bone-merged model's bones whose bind pose is
+    /// not their namesake's: (the bone it follows, its own bind-to-bone matrix).
+    pub merged: Vec<(usize, Mat3x4)>,
+    /// Models whose sequences this one takes as well (`$includemodel`, CS:GO's knives).
+    pub includes: Vec<String>,
+    /// Each bone's local rest transform.
+    pub rest: Vec<BoneFrame>,
 }
 
 struct R<'a>(&'a [u8]);
@@ -217,23 +242,38 @@ struct BoneDefaults {
 impl StudioModel {
     /// Parse a model from its three files (`.mdl`, `.vvd`, `.dx90.vtx`).
     pub fn parse(mdl: &[u8], vvd: &[u8], vtx: &[u8]) -> Result<Self, String> {
+        Self::parse_with_ani(mdl, vvd, vtx, None)
+    }
+
+    /// [`parse`](Self::parse) with the model's `.ani` file, which holds the animations a model
+    /// keeps outside the `.mdl` (CS:GO's); without it those animations hold the rest pose.
+    pub fn parse_with_ani(
+        mdl: &[u8],
+        vvd: &[u8],
+        vtx: &[u8],
+        ani: Option<&[u8]>,
+    ) -> Result<Self, String> {
         let r = R(mdl);
         if r.bytes(0, 4)? != b"IDST" {
             return Err("not a studio model".into());
         }
         let version = r.i32(4)?;
-        if !(44..=48).contains(&version) {
+        if !(44..=49).contains(&version) {
             return Err(format!("studio version {version} unsupported"));
         }
         let name = r.cstr(12)?;
         let (bones, defaults) = parse_bones(&r)?;
-        let (sequences, animations) = parse_sequences(&r, &defaults)?;
+        let data = AnimData {
+            ani: ani.map(R),
+            blocks: anim_blocks(&r).unwrap_or_default(),
+        };
+        let (sequences, animations) = parse_sequences(&r, &defaults, &data)?;
         let (materials, material_dirs, skin) = parse_materials(&r)?;
         // An animation-only model (`cs_player_shared.mdl`) comes without its geometry files.
         let (meshes, vertices) = if vvd.is_empty() && vtx.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            parse_geometry(&r, &R(vvd), &R(vtx), &skin)?
+            parse_geometry(&r, &R(vvd), &R(vtx), &skin, version)?
         };
         let attachments = parse_attachments(&r, &bones).unwrap_or_default();
         let body_parts = parse_body_parts(&r).unwrap_or_default();
@@ -248,7 +288,130 @@ impl StudioModel {
             attachments,
             body_parts,
             animations,
+            merged: Vec::new(),
+            includes: parse_includes(&r).unwrap_or_default(),
+            rest: defaults
+                .iter()
+                .map(|d| BoneFrame {
+                    position: d.pos,
+                    rotation: d.quat,
+                })
+                .collect(),
         })
+    }
+
+    /// Adds the sequences of `other`, an animation-only model this one includes, its bones
+    /// matched to these by name; a bone it does not have holds its rest pose and none of the
+    /// sequence's weight.
+    pub fn include_sequences(&mut self, other: &StudioModel) {
+        let map: Vec<Option<usize>> = self
+            .bones
+            .iter()
+            .map(|bone| {
+                other
+                    .bones
+                    .iter()
+                    .position(|o| o.name.eq_ignore_ascii_case(&bone.name))
+            })
+            .collect();
+        let base = self.sequences.len();
+        let other_bones = other.bones.len().max(1);
+        for seq in &other.sequences {
+            let mut frames = Vec::with_capacity(seq.num_frames * map.len());
+            for frame in seq.frames.chunks_exact(other_bones) {
+                frames.extend(
+                    map.iter()
+                        .zip(&self.rest)
+                        .map(|(m, rest)| m.and_then(|o| frame.get(o).copied()).unwrap_or(*rest)),
+                );
+            }
+            let weights = map
+                .iter()
+                .map(|m| m.and_then(|o| seq.weights.get(o).copied()).unwrap_or(0.0))
+                .collect();
+            self.sequences.push(Sequence {
+                frames,
+                weights,
+                blends: Vec::new(),
+                autolayers: seq.autolayers.iter().map(|a| a + base).collect(),
+                ..seq.clone()
+            });
+        }
+    }
+
+    /// Draws `other` with this model, as Source's bone merge does (CS:GO's arms on its guns):
+    /// each of its bones follows this model's bone of the same name (`Bip01` matches
+    /// `v_weapon.Bip01`), one without a namesake its nearest ancestor that has one. A bone whose
+    /// bind pose matches its namesake's skins through that bone; the others through extra slots
+    /// after this model's bones (which [`pose`](Self::pose) fills). Fails when the slots would not
+    /// fit `max_slots`.
+    pub fn bone_merge(&mut self, other: &StudioModel, max_slots: usize) -> Result<(), String> {
+        let short = |name: &str| name.rsplit('.').next().unwrap_or(name).to_ascii_lowercase();
+        let find = |name: &str| {
+            self.bones
+                .iter()
+                .position(|b| b.name.eq_ignore_ascii_case(name))
+                .or_else(|| {
+                    let wanted = short(name);
+                    self.bones.iter().position(|b| short(&b.name) == wanted)
+                })
+        };
+        // Per bone of `other`: the bone here it follows and the bone of `other` whose bind pose
+        // places its vertices.
+        let mut follows: Vec<(usize, usize)> = Vec::with_capacity(other.bones.len());
+        for (index, bone) in other.bones.iter().enumerate() {
+            let entry = match find(&bone.name) {
+                Some(target) => (target, index),
+                None => bone
+                    .parent
+                    .and_then(|p| follows.get(p).copied())
+                    .unwrap_or((0, index)),
+            };
+            follows.push(entry);
+        }
+        let same = |a: &Mat3x4, b: &Mat3x4| {
+            a.iter()
+                .flatten()
+                .zip(b.iter().flatten())
+                .all(|(x, y)| (x - y).abs() < 1e-3)
+        };
+        let mut merged = self.merged.clone();
+        let slots: Vec<usize> = follows
+            .iter()
+            .map(|&(target, source)| {
+                let bind = other.bones[source].pose_to_bone;
+                if same(&bind, &self.bones[target].pose_to_bone) {
+                    target
+                } else {
+                    merged.push((target, bind));
+                    self.bones.len() + merged.len() - 1
+                }
+            })
+            .collect();
+        if self.bones.len() + merged.len() > max_slots.min(256) {
+            return Err(format!(
+                "{} bones and {} merged slots are more than {max_slots}",
+                self.bones.len(),
+                merged.len()
+            ));
+        }
+        self.merged = merged;
+        let vertex_base = self.vertices.len();
+        let material_base = self.materials.len();
+        let part_base = self.body_parts.len();
+        self.vertices.extend(other.vertices.iter().map(|v| Vertex {
+            bones: v.bones.map(|b| slots.get(usize::from(b)).copied().unwrap_or(0) as u8),
+            ..*v
+        }));
+        self.meshes.extend(other.meshes.iter().map(|m| Mesh {
+            material: material_base + m.material,
+            first_vertex: vertex_base + m.first_vertex,
+            body_part: part_base + m.body_part,
+            ..*m
+        }));
+        self.materials.extend(other.materials.iter().cloned());
+        self.body_parts.extend(other.body_parts.iter().cloned());
+        Ok(())
     }
 
     /// Model-space bone matrices for local transforms `locals` (one per bone).
@@ -354,6 +517,11 @@ impl StudioModel {
                 .zip(&self.bones)
                 .map(|(w, bone)| concat(w, &bone.pose_to_bone)),
         );
+        out.extend(
+            self.merged
+                .iter()
+                .map(|(bone, pose_to_bone)| concat(&world[*bone], pose_to_bone)),
+        );
     }
 }
 
@@ -367,6 +535,13 @@ fn rigid_inverse(m: &Mat3x4) -> Mat3x4 {
         row[3] = -(row[0] * m[0][3] + row[1] * m[1][3] + row[2] * m[2][3]);
     }
     out
+}
+
+/// `mstudiomodelgroup_t`s (`includemodelindex`): label offset, model name offset.
+fn parse_includes(r: &R<'_>) -> Result<Vec<String>, String> {
+    let count = r.usize(336)?;
+    let base = r.usize(340)?;
+    (0..count).map(|i| r.cstr(r.rel(base + i * 8, 4)?)).collect()
 }
 
 /// `mstudioattachment_t`: name offset, flags, bone, a 3x4 local matrix, 8 unused ints.
@@ -510,6 +685,41 @@ fn quat48(r: &R<'_>, at: usize) -> Result<[f32; 4], String> {
     Ok([x, y, z, w])
 }
 
+/// CS:GO's `Quaternion48S`: the three smallest components, the dropped one's position in the top
+/// bits of the first two words and its sign in the third's.
+fn quat48s(r: &R<'_>, at: usize) -> Result<[f32; 4], String> {
+    let words = [r.u16(at)?, r.u16(at + 2)?, r.u16(at + 4)?];
+    let small = |v: u16| {
+        (f32::from(v & 0x7fff) - 16384.0) / 16384.0 * core::f32::consts::FRAC_1_SQRT_2
+    };
+    let (a, b, c) = (small(words[0]), small(words[1]), small(words[2]));
+    let mut largest = (1.0 - a * a - b * b - c * c).max(0.0).sqrt();
+    if words[2] & 0x8000 != 0 {
+        largest = -largest;
+    }
+    let dropped = usize::from(((words[0] >> 15) << 1) | (words[1] >> 15));
+    let mut wxyz = [0.0f32; 4];
+    wxyz[dropped] = largest;
+    wxyz[(dropped + 1) % 4] = a;
+    wxyz[(dropped + 2) % 4] = b;
+    wxyz[(dropped + 3) % 4] = c;
+    Ok([wxyz[1], wxyz[2], wxyz[3], wxyz[0]])
+}
+
+/// Three half floats.
+fn vector48(r: &R<'_>, at: usize) -> Result<[f32; 3], String> {
+    Ok([half(r.u16(at)?), half(r.u16(at + 2)?), half(r.u16(at + 4)?)])
+}
+
+fn normalized(q: [f32; 4]) -> [f32; 4] {
+    let length = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    if length > 0.0 {
+        q.map(|c| c / length)
+    } else {
+        [0.0, 0.0, 0.0, 1.0]
+    }
+}
+
 fn quat64(r: &R<'_>, at: usize) -> Result<[f32; 4], String> {
     let b = r.bytes(at, 8)?;
     let v = u64::from_le_bytes(b.try_into().map_err(|_| "quat64")?);
@@ -524,14 +734,37 @@ fn quat64(r: &R<'_>, at: usize) -> Result<[f32; 4], String> {
     Ok([x, y, z, w])
 }
 
+/// Where animation data outside the `.mdl` lives: the `.ani` file and its blocks' (start, end).
+struct AnimData<'a> {
+    ani: Option<R<'a>>,
+    blocks: Vec<(usize, usize)>,
+}
+
+/// The header's anim blocks (`numanimblocks`, `animblockindex`).
+fn anim_blocks(r: &R<'_>) -> Result<Vec<(usize, usize)>, String> {
+    let count = r.usize(352)?;
+    let base = r.usize(356)?;
+    (0..count)
+        .map(|b| Ok((r.usize(base + b * 8)?, r.usize(base + b * 8 + 4)?)))
+        .collect()
+}
+
 /// Decode one animation into `[frame][bone]` local transforms.
-fn decode_animation(r: &R<'_>, desc: usize, defaults: &[BoneDefaults]) -> Result<Animation, String> {
+fn decode_animation(
+    r: &R<'_>,
+    desc: usize,
+    defaults: &[BoneDefaults],
+    data: &AnimData<'_>,
+) -> Result<Animation, String> {
     let fps = r.f32(desc + 8)?;
+    let flags = r.i32(desc + 12)?;
     // `STUDIO_DELTA`: offsets to another pose; bones it leaves alone stay put.
-    let delta_anim = r.i32(desc + 12)? & 0x4 != 0;
+    let delta_anim = flags & STUDIO_DELTA != 0;
     let num_frames = r.usize(desc + 16)?.max(1);
     let anim_block = r.i32(desc + 52)?;
     let anim_index = r.i32(desc + 56)?;
+    let section_index = r.i32(desc + 80)?;
+    let section_frames = r.usize(desc + 84).unwrap_or(0);
     let bones = defaults.len();
     let rest: Vec<BoneFrame> = defaults
         .iter()
@@ -549,22 +782,113 @@ fn decode_animation(r: &R<'_>, desc: usize, defaults: &[BoneDefaults]) -> Result
             }
         })
         .collect();
-    let mut frames = Vec::with_capacity(num_frames * bones);
-    if anim_block != 0 || anim_index == 0 {
-        // Data in a separate .ani file: hold the rest pose.
-        for _ in 0..num_frames {
-            frames.extend_from_slice(&rest);
+    // A block's data: block 0 is the `.mdl` (the index counts from the descriptor), the others
+    // the `.ani` (counting from the block's start). Missing data holds the rest pose.
+    let locate = |block: i32, index: i32| -> Option<(&R<'_>, usize)> {
+        if block == 0 {
+            (index != 0).then(|| (r, (desc as i64 + i64::from(index)) as usize))
+        } else {
+            let ani = data.ani.as_ref()?;
+            let (start, _) = *data.blocks.get(usize::try_from(block).ok()?)?;
+            Some((ani, start + usize::try_from(index).ok()?))
         }
-        return Ok(Animation {
-            fps,
-            num_frames,
-            delta: delta_anim,
-            frames,
-        });
-    }
-    let first = r.rel(desc, 56)?;
+    };
+    // A long animation comes in sections of `section_frames`, each with its own block and index.
+    let sections: Vec<(i32, i32)> = if section_frames > 0 && section_index != 0 {
+        let base = (desc as i64 + i64::from(section_index)) as usize;
+        (0..num_frames / section_frames + 2)
+            .map(|s| Ok((r.i32(base + s * 8)?, r.i32(base + s * 8 + 4)?)))
+            .collect::<Result<_, String>>()?
+    } else {
+        Vec::new()
+    };
+    let mut frames = Vec::with_capacity(num_frames * bones);
     for frame in 0..num_frames {
         let mut pose = rest.clone();
+        let (block, index, local) = match sections.len() {
+            0 => (anim_block, anim_index, frame),
+            n => {
+                let s = (frame / section_frames).min(n - 1);
+                (sections[s].0, sections[s].1, frame - s * section_frames)
+            }
+        };
+        if flags & STUDIO_ALLZEROS == 0
+            && let Some((buf, start)) = locate(block, index)
+        {
+            if flags & STUDIO_FRAMEANIM != 0 {
+                decode_frame_anim(buf, start, local, defaults, &mut pose)?;
+            } else {
+                decode_bone_records(buf, start, local, defaults, &mut pose)?;
+            }
+        }
+        frames.extend_from_slice(&pose);
+    }
+    Ok(Animation {
+        fps,
+        num_frames,
+        delta: delta_anim,
+        frames,
+    })
+}
+
+/// One frame of a frame animation (CS:GO): a header, then per bone its flags, constant values
+/// shared by every frame and values stored per frame.
+fn decode_frame_anim(
+    r: &R<'_>,
+    start: usize,
+    frame: usize,
+    defaults: &[BoneDefaults],
+    pose: &mut [BoneFrame],
+) -> Result<(), String> {
+    let mut constant = r.rel(start, 0)?;
+    let frame_len = r.usize(start + 8)?;
+    let mut per_frame = r.rel(start, 4)? + frame * frame_len;
+    for (bone, slot) in pose.iter_mut().enumerate().take(defaults.len()) {
+        let flags = r.u8(start + 24 + bone)?;
+        let mut rotation = slot.rotation;
+        let mut position = slot.position;
+        if flags & FRAME_CONST_ROT2 != 0 {
+            rotation = quat48s(r, constant)?;
+            constant += 6;
+        } else if flags & FRAME_CONST_ROT != 0 {
+            rotation = quat48(r, constant)?;
+            constant += 6;
+        }
+        if flags & FRAME_CONST_POS != 0 {
+            position = vector48(r, constant)?;
+            constant += 6;
+        }
+        if flags & FRAME_ANIM_ROT2 != 0 {
+            rotation = quat48s(r, per_frame)?;
+            per_frame += 6;
+        } else if flags & FRAME_ANIM_ROT != 0 {
+            rotation = quat48(r, per_frame)?;
+            per_frame += 6;
+        }
+        if flags & FRAME_ANIM_POS != 0 {
+            position = vector48(r, per_frame)?;
+            per_frame += 6;
+        } else if flags & FRAME_FULL_ANIM_POS != 0 {
+            position = r.vec3(per_frame)?;
+            per_frame += 12;
+        }
+        *slot = BoneFrame {
+            position,
+            rotation: normalized(rotation),
+        };
+    }
+    Ok(())
+}
+
+/// One frame of the per-bone records (bone, flags, offset to the next) of `mstudioanim_t`.
+fn decode_bone_records(
+    r: &R<'_>,
+    first: usize,
+    frame: usize,
+    defaults: &[BoneDefaults],
+    pose: &mut [BoneFrame],
+) -> Result<(), String> {
+    {
         let mut at = first;
         loop {
             let bone = usize::from(r.u8(at)?);
@@ -625,14 +949,8 @@ fn decode_animation(r: &R<'_>, desc: usize, defaults: &[BoneDefaults]) -> Result
             }
             at += next as usize;
         }
-        frames.extend_from_slice(&pose);
     }
-    Ok(Animation {
-        fps,
-        num_frames,
-        delta: delta_anim,
-        frames,
-    })
+    Ok(())
 }
 
 /// `mstudioautolayer_t`'s size.
@@ -641,12 +959,18 @@ const AUTOLAYER_LEN: usize = 24;
 fn parse_sequences(
     r: &R<'_>,
     defaults: &[BoneDefaults],
+    data: &AnimData<'_>,
 ) -> Result<(Vec<Sequence>, Vec<Animation>), String> {
     let anim_count = r.usize(180)?;
     let anim_base = r.usize(184)?;
     let mut animations = Vec::with_capacity(anim_count);
     for a in 0..anim_count {
-        animations.push(decode_animation(r, anim_base + a * ANIMDESC_LEN, defaults)?);
+        animations.push(decode_animation(
+            r,
+            anim_base + a * ANIMDESC_LEN,
+            defaults,
+            data,
+        )?);
     }
     let count = r.usize(188)?;
     let base = r.usize(192)?;
@@ -810,7 +1134,11 @@ fn parse_geometry(
     vvd: &R<'_>,
     vtx: &R<'_>,
     skin: &[usize],
+    version: i32,
 ) -> Result<(Vec<Mesh>, Vec<Vertex>), String> {
+    // v49's strip groups and strips carry topology counts too; its strip groups are one
+    // triangle list each.
+    let group_len = if version >= 49 { 33 } else { 25 };
     let source = vvd_vertices(vvd)?;
     let parts = r.usize(232)?;
     let parts_base = r.usize(236)?;
@@ -844,7 +1172,7 @@ fn parse_geometry(
                 let group_base = vtx.rel(vtx_mesh, 4)?;
                 let first_vertex = vertices.len();
                 for g in 0..groups {
-                    let sg = group_base + g * 25;
+                    let sg = group_base + g * group_len;
                     let sg_verts = vtx.rel(sg, 4)?;
                     let sg_indices = vtx.rel(sg, 12)?;
                     let strips = vtx.usize(sg + 16)?;
@@ -857,6 +1185,13 @@ fn parse_geometry(
                             .copied()
                             .ok_or_else(|| "vtx vertex past vvd".to_owned())
                     };
+                    if version >= 49 {
+                        let count = vtx.usize(sg + 8)?;
+                        for t in 0..count / 3 * 3 {
+                            vertices.push(corner(t)?);
+                        }
+                        continue;
+                    }
                     for s in 0..strips {
                         let strip = strip_base + s * 27;
                         let count = vtx.usize(strip)?;
@@ -892,4 +1227,23 @@ fn parse_geometry(
         }
     }
     Ok((meshes, vertices))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quaternion48s_keeps_the_dropped_component_and_its_sign() {
+        // Raw words from CS:GO's AK-47 idle: every component is ±0.5.
+        let words: Vec<u8> = [0xed40u16, 0xed3f, 0x6d3f]
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        let q = quat48s(&R(&words), 0).unwrap();
+        for c in q {
+            assert!((c.abs() - 0.5).abs() < 1e-3, "{q:?}");
+        }
+        assert!((q.iter().map(|c| c * c).sum::<f32>() - 1.0).abs() < 1e-3);
+    }
 }
