@@ -162,6 +162,15 @@ fn bomb_model(planted: bool) -> &'static str {
     }
 }
 
+/// A dropped defuse kit's model: CS:S's `w_defuser`, GoldSrc's thigh pack.
+fn defuser_model() -> &'static str {
+    if css_pack().is_some() {
+        "w_defuser"
+    } else {
+        "w_thighpack"
+    }
+}
+
 /// Whether a script model of `model` is the bomb, drawn as the CS game's own instead.
 pub(crate) fn replaces_bomb_model(model: &str) -> bool {
     movement_iw4::rules::CS_RULES
@@ -904,11 +913,15 @@ pub fn update_cs_world_models(
         if es.e_type != entity_iw4::ET_ITEM || es.e_flags & super::item::EF_NODRAW != 0 {
             continue;
         }
-        let Some(name) = u32::try_from(es.index)
-            .ok()
-            .filter(|weapon| shows_cs_dropped_model(&weapons.0, *weapon))
-            .and_then(|weapon| model_name(&weapons.0, weapon, Placement::Flat))
-        else {
+        let name = if es.index == weapon_iw4::cs::CS_DEFUSE_KIT_ITEM {
+            Some(defuser_model().to_owned()).filter(|name| has_model(name))
+        } else {
+            u32::try_from(es.index)
+                .ok()
+                .filter(|weapon| shows_cs_dropped_model(&weapons.0, *weapon))
+                .and_then(|weapon| model_name(&weapons.0, weapon, Placement::Flat))
+        };
+        let Some(name) = name else {
             continue;
         };
         let Some(model) = models.get(&name, Placement::Flat, &mut images) else {

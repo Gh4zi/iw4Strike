@@ -2317,6 +2317,8 @@ pub const CS_DEFUSE_SECONDS: f32 = 10.0;
 pub const CS_DEFUSE_KIT_SECONDS: f32 = 5.0;
 /// `DEFUSEKIT_PRICE`; Counter-Terrorists only.
 pub const CS_DEFUSE_KIT_PRICE: i32 = 200;
+/// The item index of a defuse kit lying on the floor (a dead Counter-Terrorist's): not a weapon.
+pub const CS_DEFUSE_KIT_ITEM: i32 = -2;
 /// The planted bomb's blast (`m_flBombRadius` 500 by default): 500 damage falling off linearly
 /// to nothing at 3.5 times that.
 pub const CS_C4_DAMAGE: f32 = 500.0;

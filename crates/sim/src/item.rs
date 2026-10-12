@@ -493,6 +493,84 @@ pub(crate) fn throw_cs_weapon(
     Some(number)
 }
 
+/// CS:GO's defuse kit off a dead Counter-Terrorist: thrown from the body's centre at 200 u/s along
+/// its facing, up to 50 u/s to either side.
+const CS_DEFUSER_TOSS: f32 = 200.0;
+const CS_DEFUSER_TOSS_SIDE: f32 = 50.0;
+/// The kit can be picked up half a second after it drops (`CItemDefuser::ActivateThink`).
+const CS_DEFUSER_ARM_MS: i32 = 500;
+/// The kit is touched by its model's size (about a foot across) around where it lies, not by the
+/// unit box guns use, so a player standing on a slope over it still reaches it.
+const CS_DEFUSER_MINS: [f32; 3] = [-8.0, -8.0, -8.0];
+const CS_DEFUSER_MAXS: [f32; 3] = [8.0, 8.0, 8.0];
+
+/// CS: a Counter-Terrorist's defuse kit falls off them when they die (CS:GO drops an
+/// `item_defuser`), for another Counter-Terrorist to pick up by walking over it.
+pub(crate) fn drop_cs_defuser(world: &mut FrameWorld, tick: Tick, player: ClientId) {
+    let Some(ps) = world.player(player).copied().filter(|ps| ps.cs_defuser != 0) else {
+        return;
+    };
+    if let Some(ps) = world.player_mut(player) {
+        ps.cs_defuser = 0;
+    }
+    let mut seed = world.anim_event_seed();
+    let side = random_signed(&mut seed) * CS_DEFUSER_TOSS_SIDE;
+    world.set_anim_event_seed(seed);
+    let (forward, right, _) = angle_vectors([0.0, ps.viewangles[1], 0.0]);
+    let velocity = [
+        forward[0] * CS_DEFUSER_TOSS + right[0] * side,
+        forward[1] * CS_DEFUSER_TOSS + right[1] * side,
+        0.0,
+    ];
+    let origin = [ps.origin[0], ps.origin[1], ps.origin[2] + PLAYER_DROP_Z];
+    let time_ms = crate::corpse::level_time_ms(tick);
+    let pos = Trajectory {
+        tr_type: TR_GRAVITY,
+        tr_time: time_ms,
+        tr_duration: 0,
+        tr_delta: velocity,
+        tr_base: origin,
+    };
+    let apos = Trajectory {
+        tr_type: TR_STATIONARY,
+        tr_time: 0,
+        tr_duration: 0,
+        tr_delta: [0.0; 3],
+        tr_base: [0.0, ps.viewangles[1], 0.0],
+    };
+    let number = push_dropped_item(
+        world,
+        0,
+        origin,
+        pos,
+        apos,
+        player.0 as i32,
+        0,
+        0,
+        0,
+        true,
+        false,
+    );
+    if let Some(item) = world.dropped_item_mut_by_number(number) {
+        item.state.index = weapon_iw4::cs::CS_DEFUSE_KIT_ITEM;
+        item.state.time2 = time_ms;
+    }
+    diag::debug!(Sim, "cs defuse kit: client {} dropped it (item {number})", player.0);
+}
+
+/// Only a Counter-Terrorist without a kit picks a dropped one up, by touching it.
+fn takes_cs_defuser(
+    world: &mut FrameWorld,
+    walker: ClientId,
+    ps: &PlayerState,
+    item: &DroppedItem,
+) -> bool {
+    let now_ms = world.entity_kernel().level_time_ms();
+    ps.cs_defuser == 0
+        && now_ms.wrapping_sub(item.state.time2) >= CS_DEFUSER_ARM_MS
+        && crate::script_player::cs_bomb_side(world, walker) == Some(false)
+}
+
 /// CS:GO's touch pickup of a thrown gun: anyone after 0.1 s (even in the air), the player who
 /// threw it only after 1.5 s (`m_nextOwnerTouchTime`, `mp_weapon_prev_owner_touch_time`). Guns
 /// not thrown by a CS drop (`time2` 0) wait until they land.
@@ -658,6 +736,21 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
         let Some(item) = world.dropped_item_by_number(number) else {
             continue;
         };
+        if item.state.index == weapon_iw4::cs::CS_DEFUSE_KIT_ITEM {
+            let touching = aabb_overlap(
+                ps.origin,
+                PLAYER_MINS,
+                PLAYER_MAXS,
+                item.origin,
+                CS_DEFUSER_MINS,
+                CS_DEFUSER_MAXS,
+            );
+            if touching && takes_cs_defuser(world, walker, &ps, &item) {
+                hit = Some(number);
+                break;
+            }
+            continue;
+        }
         if !aabb_overlap(
             ps.origin,
             PLAYER_MINS,
@@ -706,6 +799,15 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
     };
     if item.scavenger {
         grab_scavenger(world, walker, number);
+        return;
+    }
+    if item.state.index == weapon_iw4::cs::CS_DEFUSE_KIT_ITEM {
+        world.remove_dropped_item_by_number(number);
+        world.free_dynamic_entity_number(item.state.number);
+        if let Some(ps) = world.player_mut(walker) {
+            ps.cs_defuser = 1;
+        }
+        diag::debug!(Sim, "cs defuse kit: client {} picked up item {number}", walker.0);
         return;
     }
     let weapon = u32::try_from(item.state.index).unwrap_or(0);

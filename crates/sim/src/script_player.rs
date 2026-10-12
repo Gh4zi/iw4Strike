@@ -171,7 +171,7 @@ fn give_cs_owned(world: &mut FrameWorld, id: ClientId, weapon: u32, clip: i32, s
 /// The CS side a player plays in the bomb mode: `Some(true)` for the Terrorists (the attackers
 /// the S&D script names in `cs_attackers`), `Some(false)` for the Counter-Terrorists, `None`
 /// outside that mode or without a team.
-fn cs_bomb_side(world: &mut FrameWorld, id: ClientId) -> Option<bool> {
+pub(crate) fn cs_bomb_side(world: &mut FrameWorld, id: ClientId) -> Option<bool> {
     let attackers = world
         .ecs()
         .get_resource::<crate::script::Runtime>()?
@@ -617,6 +617,7 @@ pub(crate) fn kill(
     crate::script::host::triggers::release_client_claims(world.ecs(), victim.0);
     if SCRIPT_GIVES_NO_WEAPONS {
         crate::cs_economy::reward_kill(world, victim, attacker);
+        crate::item::drop_cs_defuser(world, tick, victim);
     }
     crate::damage::play_death(world, victim, attacker, commit.as_ref());
     if let Some(ps) = world.player_mut(victim) {
