@@ -1848,8 +1848,8 @@ pub const CS_SMOKE_REFIRE_PARM: i32 = 1;
 /// particle smoke, and the pop is not fired again.
 pub const CS_SMOKE_VOLUME_PARM: i32 = 2;
 
-/// How a server's smoke grenades look (`smoke_mode`): CS2's volumetric cloud that fills the
-/// space it pops in (the default), or the CS:GO-timed particle smoke.
+/// How a server's smoke grenades look (`smoke_mode`): the CS:GO-timed particle smoke (the
+/// default), or CS2's volumetric cloud that fills the space it pops in (a work in progress).
 pub const SMOKE_CS2: u32 = 0;
 pub const SMOKE_CSGO: u32 = 1;
 

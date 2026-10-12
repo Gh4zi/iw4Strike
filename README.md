@@ -338,7 +338,7 @@ Your movement mode is saved, so you only set it once.
 | `viewmodel_fov <54-90>` | Gun position: bigger moves the gun further away (default `68`) |
 | `cl_righthand 1` / `0` | Gun in the right hand (default) or the left |
 | `cl_camera_anim 0` / `1` | Let the MW2 weapon animations move your view with a CS gun in hand (default `0`: no head shake on swaps and reloads) |
-| `smoke_mode cs2` / `csgo` | The server's smoke: CS2's volumetric smoke or CS:GO's particle smoke (experimental, set by the host) |
+| `smoke_mode csgo` / `cs2` | The server's smoke: CS:GO's particle smoke (the default) or CS2's volumetric smoke (work in progress, set by the host) |
 | `smoke_quality high` / `medium` / `low` | How finely you draw CS2 smoke, against what it costs |
 | `cl_wpn_sway 0` / `1` | Turn gun bob and sway off or on |
 | `cl_dynamiccrosshair 0` / `1` | Static crosshair, or one that opens when you move and shoot |
@@ -574,11 +574,11 @@ Known issues with CS2 on:
 5. **Molotov and incendiary**: fire that spreads, burns and is put out by a smoke
 6. **Decoy and Zeus x27**
 7. **Volumetric smoke** (**WIP**, in the current build): an option the host or server owner
-   turns on (`smoke_mode cs2`, or `smoke_mode csgo` for CS:GO's particle smoke). Smoke that
-   fills the space it pops in, flows around walls and down stairs, takes the light and colour
-   of where it is, and opens up when bullets and HE grenades go through it; each player picks
-   how finely it is drawn (`smoke_quality high|medium|low`). Still being tuned: its size, and
-   smoke getting out of small rooms
+   turns on with `smoke_mode cs2` (CS:GO's particle smoke, `smoke_mode csgo`, is the default).
+   Smoke that fills the space it pops in, flows around walls and down stairs, takes the light
+   and colour of where it is, and opens up when bullets and HE grenades go through it; each
+   player picks how finely it is drawn (`smoke_quality high|medium|low`). Still being tuned:
+   its size, and smoke getting out of small rooms
 8. **CS2 movement and shooting** presets (`mv_mode cs2`, `shooting_mode cs2`)
 9. **CS2 player models** (agents)
 10. **CS2 as its own game mode**, playable with CS2 alone (no CS:S needed), shared with CS:GO

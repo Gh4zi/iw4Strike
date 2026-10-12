@@ -17,10 +17,10 @@ pub fn set_shooting_mode(mode: u32) {
     SHOOTING_MODE.store(mode, Ordering::Relaxed);
 }
 
-/// How smoke grenades look (`smoke_mode`): `weapon_iw4::cs::SMOKE_CS2` (the default) or
-/// `SMOKE_CSGO`. The server marks each pop with its own (`CS_SMOKE_VOLUME_PARM`), so its clients
-/// draw the same smoke whatever theirs says.
-static SMOKE_MODE: AtomicU32 = AtomicU32::new(weapon_iw4::cs::SMOKE_CS2);
+/// How smoke grenades look (`smoke_mode`): `weapon_iw4::cs::SMOKE_CSGO` (the default) or
+/// `SMOKE_CS2`, CS2's volumetric smoke, still a work in progress. The server marks each pop with
+/// its own (`CS_SMOKE_VOLUME_PARM`), so its clients draw the same smoke whatever theirs says.
+static SMOKE_MODE: AtomicU32 = AtomicU32::new(weapon_iw4::cs::SMOKE_CSGO);
 
 #[must_use]
 pub fn smoke_mode() -> u32 {

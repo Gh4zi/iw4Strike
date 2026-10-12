@@ -33,7 +33,7 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
     }
     if registry.resolve("smoke_mode").is_none() {
         registry.register(crate::CommandSpec::new("smoke_mode").usage(
-            "smoke_mode [cs2|csgo] — how smoke grenades look on the server you host: CS2's volumetric smoke that fills the room (default) or the particle smoke",
+            "smoke_mode [csgo|cs2] — how smoke grenades look on the server you host: CS:GO's particle smoke (default) or CS2's volumetric smoke that fills the room (work in progress)",
         ));
     }
     if registry.resolve("snd_device").is_none() {
@@ -300,7 +300,7 @@ pub(crate) fn route_movement_commands(
             },
             "smoke_mode" => match cmd.args.as_slice() {
                 [] => format!(
-                    "smoke_mode = {} (cs2: CS2's volumetric smoke; csgo: the particle smoke)",
+                    "smoke_mode = {} (csgo: CS:GO's particle smoke; cs2: CS2's volumetric smoke, work in progress)",
                     game.smoke_mode
                 ),
                 [arg] if weapon_iw4::cs::smoke_mode_from_name(arg).is_some() => {
@@ -312,7 +312,7 @@ pub(crate) fn route_movement_commands(
                         game.smoke_mode
                     )
                 }
-                _ => "usage: smoke_mode [cs2|csgo]".to_owned(),
+                _ => "usage: smoke_mode [csgo|cs2]".to_owned(),
             },
             "mv_mode" => {
                 use movement_iw4::rules::{MovementMode, mode, set_mode};
