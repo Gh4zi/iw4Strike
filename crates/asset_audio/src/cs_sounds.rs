@@ -11,6 +11,52 @@ use crate::{LooseClip, SoundCatalog};
 /// Alias prefix of Counter-Strike: Source sound script entries (`css/weapon_ak47.single`).
 pub const CSS_SOUND_PREFIX: &str = "css/";
 
+/// Alias prefix of CS:GO sound script entries (`csgo/weapon_ak47.single`).
+pub const CSGO_SOUND_PREFIX: &str = "csgo/";
+
+/// The CS:GO sound script groups our guns, knife, grenades and bomb play from (`weapon_ak47.`
+/// …): their shots and the sounds their animations call. CS:GO's other weapon sounds stay unread.
+const CSGO_SOUND_GROUPS: [&str; 38] = [
+    "weapon_ak47.",
+    "weapon_m4a1.",
+    "weapon_awp.",
+    "weapon_deagle.",
+    "weapon_usp.",
+    "weapon_glock.",
+    "weapon_p250.",
+    "weapon_fiveseven.",
+    "weapon_elite.",
+    "weapon_nova.",
+    "weapon_xm1014.",
+    "weapon_mac10.",
+    "weapon_mp9.",
+    "weapon_mp5.",
+    "weapon_ump45.",
+    "weapon_p90.",
+    "weapon_galilar.",
+    "weapon_famas.",
+    "weapon_sg556.",
+    "weapon_aug.",
+    "weapon_ssg08.",
+    "weapon_g3sg1.",
+    "weapon_scar20.",
+    "weapon_m249.",
+    "weapon_mp7.",
+    "weapon_bizon.",
+    "weapon_mag7.",
+    "weapon_sawedoff.",
+    "weapon_negev.",
+    "weapon_hkp2000.",
+    "weapon_tec9.",
+    "weapon_cz75a.",
+    "weapon_revolver.",
+    "weapon_knife.",
+    "weapon_hegrenade.",
+    "weapon_flashbang.",
+    "weapon_smokegrenade.",
+    "weapon_c4.",
+];
+
 /// Alias prefix every CS sound is registered under.
 pub const CS_SOUND_PREFIX: &str = "cs/weapons/";
 /// Alias prefix of the CS 1.6 player sounds (`sound/player/pl_fallpain1.wav` → `cs/player/...`).
@@ -540,6 +586,93 @@ const CSS_SOUND_GROUPS: [&str; 13] = [
     "player.damage",
     "player.death",
 ];
+
+/// Add CS:GO's sound script entries for its guns, knife, grenades and bomb ([`CSGO_SOUND_GROUPS`])
+/// to `catalog` as `csgo/<entry>` (positional) and `csgo/<entry>/plr` (your own), mixed like
+/// CS:S's; a gun's far-away shot is left out. Returns how many entries were added; 0 without
+/// CS:GO.
+pub fn append_csgo_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
+    let Some(pak) = asset_transport::find_csgo_pak() else {
+        return 0;
+    };
+    let vpk = match mdl_source::Vpk::open(&pak) {
+        Ok(vpk) => vpk,
+        Err(error) => {
+            diag::warn!(Audio, "csgo sounds: {error}");
+            return 0;
+        }
+    };
+    let (Some(player), Some(world)) = (
+        template(catalog, PLAYER_TEMPLATES, "fire_plr"),
+        template(catalog, WORLD_TEMPLATES, "fire_npc"),
+    ) else {
+        return 0;
+    };
+    let scripts = mdl_source::SoundScripts::load(&vpk);
+    let mut names: Vec<String> = scripts
+        .names()
+        .filter(|n| CSGO_SOUND_GROUPS.iter().any(|group| n.starts_with(group)))
+        .filter(|n| !n.ends_with(".singledistant") && !n.ends_with(".singlefocused"))
+        .map(str::to_owned)
+        .collect();
+    names.sort();
+    let (mut added, mut bytes, mut skipped) = (0usize, 0usize, 0usize);
+    for name in names {
+        let mut clips = Vec::new();
+        for (i, wave) in scripts.waves(&name).iter().enumerate() {
+            match vpk
+                .read(&format!("sound/{wave}"))
+                .as_deref()
+                .and_then(decode_wav)
+            {
+                Some((rate, channels, pcm16)) => {
+                    bytes += pcm16.len();
+                    clips.push(LooseClip {
+                        name: format!("{CSGO_SOUND_PREFIX}{name}#{i}"),
+                        rate,
+                        channels,
+                        pcm16,
+                    });
+                }
+                None => skipped += 1,
+            }
+        }
+        if clips.is_empty() {
+            continue;
+        }
+        let alias = format!("{CSGO_SOUND_PREFIX}{name}");
+        let player_clips = clips
+            .iter()
+            .map(|c| LooseClip {
+                name: format!("{}{CS_SOUND_PLAYER_SUFFIX}", c.name),
+                ..c.clone()
+            })
+            .collect();
+        // The bomb keeps its pitch; guns vary theirs as MW2's do.
+        let tune = |row: &mut crate::CapturedAlias| {
+            if name.starts_with("weapon_c4.") {
+                steady_pitch(row);
+            }
+        };
+        if catalog.add_loose_alias_tuned(&alias, &world, clips, tune)
+            && catalog.add_loose_alias_tuned(
+                &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
+                &player,
+                player_clips,
+                tune,
+            )
+        {
+            added += 1;
+        }
+    }
+    diag::info!(
+        Audio,
+        "csgo sounds: {added} entries ({:.1} MB PCM, {skipped} waves not PCM) from {}",
+        bytes as f64 / 1_048_576.0,
+        pak.display()
+    );
+    added
+}
 
 pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
     let Some(pak) = asset_transport::find_css_pak() else {

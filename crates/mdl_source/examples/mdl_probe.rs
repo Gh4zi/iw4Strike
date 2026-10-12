@@ -44,6 +44,13 @@ fn main() {
     println!("attachments: {attachments:?}");
     let names: Vec<&str> = model.bones.iter().map(|b| b.name.as_str()).collect();
     println!("{} bones: {}", names.len(), names.join(", "));
+    if std::env::var_os("EVENTS").is_some() {
+        for seq in &model.sequences {
+            for e in &seq.events {
+                println!("  {} event {} at {:.2}: {}", seq.label, e.event, e.cycle, e.options);
+            }
+        }
+    }
     for (index, seq) in model.sequences.iter().enumerate() {
         // Bones whose skinning matrix changes between the start and the middle of the sequence.
         let (mut start, mut middle) = (Vec::new(), Vec::new());

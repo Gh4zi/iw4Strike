@@ -23,8 +23,8 @@ pub use createfx::*;
 pub use cs_sounds::{
     CS_C4_PREFIX, CS_DEATH_CRY, CS_EVENT_PREFIX, CS_FALL_BODY_HIT, CS_FALL_SPLAT,
     CS_SCRIPT_SOUNDS, CS_LADDER_STEP, CS_LADDER_STEP_PLR, CS_PLAYER_SOUND_PREFIX, CS_RADIO_SOUND_PREFIX, CS_SOUND_PLAYER_SUFFIX,
-    CS_SOUND_PREFIX, CSS_SOUND_PREFIX, append_cs_weapon_sounds,
-    append_css_weapon_sounds, decode_wav,
+    CS_SOUND_PREFIX, CSGO_SOUND_PREFIX, CSS_SOUND_PREFIX, append_cs_weapon_sounds,
+    append_csgo_weapon_sounds, append_css_weapon_sounds, decode_wav,
 };
 pub use ent_channel::*;
 pub use map_script_sound::*;

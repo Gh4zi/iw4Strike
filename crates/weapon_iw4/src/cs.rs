@@ -2212,6 +2212,54 @@ const CSGO_VIEW_MODELS: [(&str, [&str; 2]); 39] = [
     ("revolver", ["v_pist_revolver"; 2]),
 ];
 
+/// Each CS gun's CS:GO gunshot (its CS:GO gun's sound script entry): plain, and silenced for the
+/// two with a silencer.
+const CSGO_FIRE_SOUNDS: [(&str, &str, Option<&str>); 34] = [
+    ("ak47", "Weapon_AK47.Single", None),
+    ("m4a1", "Weapon_M4A1.SilencedSingle", Some("Weapon_M4A1.Silenced")),
+    ("awp", "Weapon_AWP.Single", None),
+    ("deagle", "Weapon_DEagle.Single", None),
+    ("usp", "Weapon_USP.Single", Some("Weapon_USP.SilencedShot")),
+    ("glock", "Weapon_Glock.Single", None),
+    ("p228", "Weapon_P250.Single", None),
+    ("fiveseven", "Weapon_FiveSeven.Single", None),
+    ("elite", "Weapon_Elite.Single", None),
+    ("m3", "Weapon_Nova.Single", None),
+    ("xm1014", "Weapon_XM1014.Single", None),
+    ("mac10", "Weapon_MAC10.Single", None),
+    ("tmp", "Weapon_MP9.Single", None),
+    ("mp5", "Weapon_MP5.Single", None),
+    ("ump45", "Weapon_UMP45.Single", None),
+    ("p90", "Weapon_P90.Single", None),
+    ("galil", "Weapon_GalilAR.Single", None),
+    ("famas", "Weapon_FAMAS.Single", None),
+    ("sg552", "Weapon_SG556.Single", None),
+    ("aug", "Weapon_AUG.Single", None),
+    ("scout", "Weapon_SSG08.Single", None),
+    ("g3sg1", "Weapon_G3SG1.Single", None),
+    ("sg550", "Weapon_SCAR20.Single", None),
+    ("m249", "Weapon_M249.Single", None),
+    ("m4a4", "Weapon_M4A1.Single", None),
+    ("mp7", "Weapon_MP7.Single", None),
+    ("bizon", "Weapon_bizon.Single", None),
+    ("mag7", "Weapon_Mag7.Single", None),
+    ("sawedoff", "Weapon_Sawedoff.Single", None),
+    ("negev", "Weapon_Negev.Single", None),
+    ("p2000", "Weapon_HKP2000.Single", None),
+    ("tec9", "Weapon_Tec9.Single", None),
+    ("cz75a", "Weapon_CZ75A.Single", None),
+    ("revolver", "Weapon_Revolver.Single", None),
+];
+
+/// The CS:GO gunshot (sound script entry) of the CS gun named `name`, silenced or not.
+#[must_use]
+pub fn csgo_fire_sound(name: &str, silenced: bool) -> Option<&'static str> {
+    CSGO_FIRE_SOUNDS
+        .iter()
+        .find(|(gun, _, _)| *gun == name)
+        .map(|(_, plain, quiet)| quiet.filter(|_| silenced).unwrap_or(plain))
+}
+
 /// The CS:GO viewmodels of the CS weapon named `name`: `[terrorist, counter-terrorist]`.
 #[must_use]
 pub fn csgo_view_model(name: &str) -> Option<[&'static str; 2]> {

@@ -2245,7 +2245,8 @@ fn drain_weapon_fire_fx(
             let bank = sound_bank.as_deref()?;
             let weapon = fire.event.payload.weapon;
             // Counter-Strike guns fire with CS's own gunshots (added to the bank from the installs):
-            // Counter-Strike: Source's sound script entry when it is installed, else CS 1.6's wave.
+            // CS:GO's sound script entry when it is installed, else Counter-Strike: Source's, else
+            // CS 1.6's wave.
             if let Some(cs) = weapon_iw4::cs::cs_weapon_index_for(&weapons.0.script_name_of(weapon))
                 .and_then(weapon_iw4::cs::cs_weapon)
             {
@@ -2267,7 +2268,16 @@ fn drain_weapon_fire_fx(
                 );
                 let goldsrc = weapon_iw4::cs::fire_sound(cs, fire.event.payload.correlation)
                     .map(|name| format!("{}{name}{suffix}", asset_audio::CS_SOUND_PREFIX));
-                if let Some(alias) = std::iter::once(css)
+                let csgo = weapon_iw4::cs::csgo_fire_sound(cs.name, silenced).map(|entry| {
+                    format!(
+                        "{}{}{suffix}",
+                        asset_audio::CSGO_SOUND_PREFIX,
+                        entry.to_ascii_lowercase()
+                    )
+                });
+                if let Some(alias) = csgo
+                    .into_iter()
+                    .chain(std::iter::once(css))
                     .chain(goldsrc)
                     .find(|alias| bank.0.has_alias(asset_core::AssetNamespace::Iw4, alias))
                 {

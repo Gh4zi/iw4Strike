@@ -691,7 +691,11 @@ fn source_model(
                         e.cycle * s.num_frames.saturating_sub(1) as f32,
                         format!(
                             "{}{}",
-                            asset_audio::CSS_SOUND_PREFIX,
+                            if format == Format::Csgo {
+                                asset_audio::CSGO_SOUND_PREFIX
+                            } else {
+                                asset_audio::CSS_SOUND_PREFIX
+                            },
                             e.options.to_ascii_lowercase()
                         ),
                     )
@@ -1414,16 +1418,14 @@ fn knife_attack_sound(format: Format, knife: u32) -> &'static str {
         stab,
         format,
     ) {
-        (cs_knife::HIT_PLAYER, true, Format::Source | Format::Csgo | Format::Source2) => {
-            "css/weapon_knife.stab"
-        }
-        (cs_knife::HIT_PLAYER, false, Format::Source | Format::Csgo | Format::Source2) => {
-            "css/weapon_knife.hit"
-        }
-        (cs_knife::HIT_WORLD, _, Format::Source | Format::Csgo | Format::Source2) => {
-            "css/weapon_knife.hitwall"
-        }
-        (_, _, Format::Source | Format::Csgo | Format::Source2) => "css/weapon_knife.slash",
+        (cs_knife::HIT_PLAYER, true, Format::Csgo) => "csgo/weapon_knife.stab",
+        (cs_knife::HIT_PLAYER, false, Format::Csgo) => "csgo/weapon_knife.hit",
+        (cs_knife::HIT_WORLD, _, Format::Csgo) => "csgo/weapon_knife.hitwall",
+        (_, _, Format::Csgo) => "csgo/weapon_knife.slash",
+        (cs_knife::HIT_PLAYER, true, Format::Source | Format::Source2) => "css/weapon_knife.stab",
+        (cs_knife::HIT_PLAYER, false, Format::Source | Format::Source2) => "css/weapon_knife.hit",
+        (cs_knife::HIT_WORLD, _, Format::Source | Format::Source2) => "css/weapon_knife.hitwall",
+        (_, _, Format::Source | Format::Source2) => "css/weapon_knife.slash",
         (cs_knife::HIT_PLAYER, true, Format::GoldSrc) => "cs/weapons/knife_stab",
         (cs_knife::HIT_PLAYER, false, Format::GoldSrc) => "cs/weapons/knife_hit1",
         (cs_knife::HIT_WORLD, _, Format::GoldSrc) => "cs/weapons/knife_hitwall1",
@@ -1433,7 +1435,8 @@ fn knife_attack_sound(format: Format, knife: u32) -> &'static str {
 
 fn knife_deploy_sound(format: Format) -> &'static str {
     match format {
-        Format::Source | Format::Csgo | Format::Source2 => "css/weapon_knife.deploy",
+        Format::Csgo => "csgo/weapon_knife.deploy",
+        Format::Source | Format::Source2 => "css/weapon_knife.deploy",
         Format::GoldSrc => "cs/weapons/knife_deploy1",
     }
 }
