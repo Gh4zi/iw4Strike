@@ -1,8 +1,10 @@
-//! Counter-Strike money, by CS:GO's rules (its `cash_` settings): $800 to start, $16000 at most,
-//! each kill its weapon's award ($300 for most guns; a team kill costs $300), and at every round
-//! restart each team's round money — the winners' reward by how the round was won, the losers'
-//! bonus, which grows $500 with every round they had already lost in a row. When the sides
-//! switch everyone starts over with $800, as CS2's halftime does.
+//! Counter-Strike money, by CS:GO's competitive rules (its `cash_` settings in the 2023
+//! `gamemode_competitive.cfg`): $800 to start, $16000 at most, each kill its weapon's award ($300
+//! for most guns, a flat $300 under CS 1.6; a team kill costs $300), and at every round restart
+//! each team's round money — the winners' reward by how the round was won, the losers' bonus,
+//! which grows $500 with every round they had already lost in a row (a match and each half
+//! start a loss in, `mp_starting_losses 1`). When the sides switch everyone starts over with
+//! $800.
 //!
 //! Money exists in the bomb mode alone, where rounds earn it. Every other mode (free-for-all,
 //! team deathmatch) has no round economy: everyone holds $16000 and buys for free, like CS:GO's
@@ -29,8 +31,18 @@ pub const TEAM_KILL_PENALTY: i32 = 300;
 const BOMB_EXPLODED: i32 = 3500;
 /// Terrorists, every Counter-Terrorist dead (`REWARD_BOMB_EXPLODED` on a bomb map).
 const TERRORISTS_ELIMINATED: i32 = 3250;
-/// Counter-Terrorists: bomb defused, every Terrorist dead or time run out.
+/// Counter-Terrorists: every Terrorist dead or time run out (and, under CS 1.6, bomb defused).
 const COUNTER_TERRORISTS_WON: i32 = 3250;
+/// Counter-Terrorists, bomb defused (CS:GO `cash_team_win_by_defusing_bomb`).
+const BOMB_DEFUSED_CSGO: i32 = 3500;
+/// The loss streak both teams start a match and each half with under CS:GO
+/// (`mp_starting_losses`), so a lost pistol round pays $1900.
+const STARTING_LOSSES_CSGO: u32 = 1;
+
+/// Whether the money follows CS:GO's rules (any shooting mode but CS 1.6's).
+fn csgo_rules() -> bool {
+    crate::cs_settings::shooting_mode() != weapon_iw4::csgo::SHOOTING_CS16
+}
 /// Terrorists whose planted bomb was defused (`REWARD_BOMB_PLANTED`), on top of the loss bonus.
 const BOMB_PLANTED: i32 = 800;
 /// CS:GO's loss bonus: $1400, $500 more for each round already lost in a row, counting at most
@@ -100,9 +112,13 @@ pub(crate) fn reward_kill(
     }
     let team = |world: &FrameWorld, id: ClientId| world.client_meta(id).map(|m| m.client_state_team);
     let teammate = world.game_mode_kind().is_team() && team(world, victim) == team(world, attacker);
-    let award = world
-        .combat_facts_for(weapon)
-        .map_or(300, |facts| weapon_iw4::cs::kill_award(facts.cs_weapon));
+    let award = if csgo_rules() {
+        world
+            .combat_facts_for(weapon)
+            .map_or(300, |facts| weapon_iw4::cs::kill_award(facts.cs_weapon))
+    } else {
+        300
+    };
     let amount = if teammate { -TEAM_KILL_PENALTY } else { award };
     add_money(world, attacker, amount);
     diag::info!(
@@ -261,21 +277,31 @@ pub(crate) struct RoundLedger {
     loser_bonus: i32,
 }
 
+impl RoundLedger {
+    /// A match's or half's start: both teams on the starting loss streak.
+    fn fresh() -> Self {
+        let start = if csgo_rules() { STARTING_LOSSES_CSGO } else { 0 };
+        Self {
+            won: [0; 3],
+            losses: [start; 2],
+            loser_bonus: LOSER_BONUS + start as i32 * LOSER_BONUS_ADD,
+        }
+    }
+}
+
 /// Pays the round that just ended (CS 1.6 `RestartRound`), or after a side switch (`reset`)
 /// starts everyone over with $800.
 pub(crate) fn settle_round(world: &mut FrameWorld, end: RoundEnd, reset: bool) {
     let mut ledger = world
         .ecs()
         .remove_resource::<RoundLedger>()
-        .unwrap_or(RoundLedger {
-            loser_bonus: LOSER_BONUS,
-            ..RoundLedger::default()
-        });
+        .unwrap_or_else(RoundLedger::fresh);
     let previous = std::mem::replace(&mut ledger.won, end.won);
     let clients = world.client_ids_sorted();
     if reset {
-        ledger.losses = [0; 2];
-        ledger.loser_bonus = LOSER_BONUS;
+        let fresh = RoundLedger::fresh();
+        ledger.losses = fresh.losses;
+        ledger.loser_bonus = fresh.loser_bonus;
         for id in clients {
             set_money(world, id, START_MONEY);
         }
@@ -309,13 +335,28 @@ pub(crate) fn settle_round(world: &mut FrameWorld, end: RoundEnd, reset: bool) {
         } else {
             0
         };
-        (ledger.loser_bonus + planted, COUNTER_TERRORISTS_WON)
+        let reward = if end.bomb_defused && csgo_rules() {
+            BOMB_DEFUSED_CSGO
+        } else {
+            COUNTER_TERRORISTS_WON
+        };
+        (ledger.loser_bonus + planted, reward)
     };
+    // CS:GO: Terrorists still alive when the time ran out (the Counter-Terrorists won without a
+    // defuse while they lived) get no round money (`MarkLivingPlayersOnTeamAsNotReceivingMoney`).
+    let time_ran_out = csgo_rules() && !terrorists_won && !end.bomb_defused;
     for id in clients {
-        let Some(team) = world.client_meta(id).map(|m| m.client_state_team) else {
+        let Some((team, alive)) = world
+            .client_meta(id)
+            .map(|m| (m.client_state_team, m.lifecycle == crate::match_state::ClientLifecycle::Alive))
+        else {
             continue;
         };
         if team == end.attackers {
+            if time_ran_out && alive {
+                diag::info!(Sim, "cs money: client {} survived the time running out: no round money", id.0);
+                continue;
+            }
             add_money(world, id, terrorist_money);
         } else if team == entity_iw4::TEAM_AXIS || team == entity_iw4::TEAM_ALLIES {
             add_money(world, id, counter_terrorist_money);
