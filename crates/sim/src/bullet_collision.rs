@@ -181,7 +181,9 @@ pub struct AuthorityDObjState {
     pub materialized_model_revision: Option<u32>,
     pub materialized_pose_revision: Option<u32>,
 
-    pub current_collision: Option<AuthorityDObjCollision>,
+    /// Shared: every collision history frame and trace query holds this tick's copy, so they
+    /// take a reference instead of cloning the bones.
+    pub current_collision: Option<std::sync::Arc<AuthorityDObjCollision>>,
     pub materialize_error: Option<xmodel_runtime::MaterializeError>,
 
     pub play_anim: Option<ScriptModelPlayAnim>,
@@ -654,7 +656,8 @@ impl AuthorityDObjState {
                 );
                 match coll {
                     Ok(coll) => {
-                        self.current_collision = Some(AuthorityDObjCollision { bones, coll });
+                        self.current_collision =
+                            Some(std::sync::Arc::new(AuthorityDObjCollision { bones, coll }));
                         self.materialized_model_revision = Some(self.model_revision);
                         self.materialized_pose_revision = Some(self.pose_revision);
                         self.materialize_error = None;
@@ -710,14 +713,14 @@ impl AuthorityDObjState {
                         && have.axes == bone.axes
                 });
                 if !already {
-                    coll.bones.push(bone);
+                    std::sync::Arc::make_mut(coll).bones.push(bone);
                 }
             }
             None => {
-                self.current_collision = Some(AuthorityDObjCollision {
+                self.current_collision = Some(std::sync::Arc::new(AuthorityDObjCollision {
                     bones: vec![bone],
                     coll: None,
-                });
+                }));
             }
         }
     }
@@ -749,7 +752,7 @@ impl EntityCollisionEpoch {
 pub struct EntityCollisionTraceGeom {
     pub owner: AuthorityModelOwner,
     pub epoch: EntityCollisionEpoch,
-    pub collision: Option<AuthorityDObjCollision>,
+    pub collision: Option<std::sync::Arc<AuthorityDObjCollision>>,
 
     pub dobj_contents: Option<u32>,
 
@@ -810,7 +813,7 @@ impl EntityCollisionCapabilities {
         let collision = self
             .dobj
             .as_ref()
-            .and_then(|state| state.current_collision.as_ref());
+            .and_then(|state| state.current_collision.as_deref());
         entity_abs_aabb(&self.linked_brushes, collision, cmodels).is_some_and(|(mins, maxs)| {
             !matches!(ray_aabb_box(start, end, mins, maxs), RayAabb::Miss)
         })
@@ -2541,7 +2544,7 @@ fn geom_abs_aabb(
     geom: &EntityCollisionTraceGeom,
     cmodels: &SimClipCmodels,
 ) -> Option<([f32; 3], [f32; 3])> {
-    entity_abs_aabb(&geom.linked_brushes, geom.collision.as_ref(), cmodels)
+    entity_abs_aabb(&geom.linked_brushes, geom.collision.as_deref(), cmodels)
 }
 
 fn entity_abs_aabb(
