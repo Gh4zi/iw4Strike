@@ -44,6 +44,44 @@ struct PlayerDobjSlot {
     persist: i64,
 }
 
+/// Everything `player_hitvol_bones` reads for one player: the same inputs pose the same bones.
+#[derive(Clone, Debug, PartialEq)]
+struct HitvolPoseKey {
+    kit: usize,
+    origin: [f32; 3],
+    viewangles: [f32; 3],
+    legs_anim: i32,
+    torso_anim: i32,
+    input: xmodel_runtime::PlayerControllerInput,
+    shield: Option<crate::ShieldAttachment>,
+    dobj: Option<xmodel_runtime::DObjReuseKey>,
+    /// The anim tree slot's leaf, torso and kit, its definition, and every node's state.
+    anim: Option<(u16, u16, usize)>,
+    tree: Option<(usize, Vec<xmodel_runtime::XAnimNodeState>)>,
+}
+
+type HitvolPose = (Vec<xmodel_runtime::CollisionBone>, Option<[f32; 3]>);
+
+/// Each player's hit volumes as last posed, with what they were posed from.
+///
+/// A shot re-records every player's hitboxes so it traces against where everyone stands now,
+/// and between two shots in one tick only the players moved in between have changed: the rest
+/// would sample every animation again for the same bones. A copy of the state starts empty.
+#[derive(Default)]
+struct HitvolPoseCache(std::sync::Mutex<HashMap<u32, (HitvolPoseKey, HitvolPose)>>);
+
+impl Clone for HitvolPoseCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for HitvolPoseCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HitvolPoseCache")
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Tick(pub u32);
 
@@ -539,6 +577,8 @@ pub struct SimState {
 
     player_dobjs: HashMap<u32, PlayerDobjSlot>,
 
+    hitvol_poses: HitvolPoseCache,
+
     player_body_materialize_error: Option<String>,
 
     g_hudelems: Vec<crate::hudelem::GameHudElemSlot>,
@@ -668,6 +708,7 @@ impl Default for SimState {
             player_anim_trees: HashMap::new(),
             corpse_anim_trees: HashMap::new(),
             player_dobjs: HashMap::new(),
+            hitvol_poses: HitvolPoseCache::default(),
             player_body_materialize_error: None,
             g_hudelems: Vec::new(),
             hud_elem_sound_ids: crate::hudelem::PulseFxSoundIds::default(),
@@ -2299,7 +2340,7 @@ impl SimState {
                 poses.push(pose.clone());
                 continue;
             }
-            let (bones, shield_normal) = match self.player_hitvol_bones(*id, &ps) {
+            let (bones, shield_normal) = match self.player_hitvol_bones_cached(*id, &ps) {
                 Ok(bones) => bones,
                 Err(error) => {
                     on_err(&error);
@@ -2423,6 +2464,76 @@ impl SimState {
             }
         }
         Ok((bones, shield_normal))
+    }
+
+    /// `player_hitvol_bones`, reusing the last bones posed for this player when nothing they
+    /// were posed from has changed.
+    fn player_hitvol_bones_cached(
+        &self,
+        id: ClientId,
+        ps: &PlayerState,
+    ) -> Result<HitvolPose, String> {
+        // The authority only: a client's prediction re-poses after advancing every anim tree,
+        // so it would miss every time and pay for the copy.
+        if !self.publish_snapshot {
+            return self.player_hitvol_bones(id, ps);
+        }
+        let mut cache = self
+            .hitvol_poses
+            .0
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some((key, pose)) = cache.get(&id.0)
+            && self.hitvol_key_is_current(key, id, ps)
+        {
+            return Ok(pose.clone());
+        }
+        let pose = self.player_hitvol_bones(id, ps)?;
+        cache.insert(id.0, (self.hitvol_pose_key(id, ps), pose.clone()));
+        Ok(pose)
+    }
+
+    fn hitvol_pose_key(&self, id: ClientId, ps: &PlayerState) -> HitvolPoseKey {
+        let slot = self.player_anim_trees.get(&id.0);
+        HitvolPoseKey {
+            kit: self.collision_kit_index(id),
+            origin: ps.origin,
+            viewangles: ps.viewangles,
+            legs_anim: ps.legs_anim,
+            torso_anim: ps.torso_anim,
+            input: player_controller_input(ps, self.cs_hold_pose(id, ps)),
+            shield: self.client_meta(id).and_then(|meta| meta.shield),
+            dobj: self.player_dobjs.get(&id.0).map(|slot| slot.reuse_key),
+            anim: slot.map(|slot| (slot.leaf, slot.torso, slot.kit)),
+            tree: slot.map(|slot| {
+                (
+                    std::sync::Arc::as_ptr(slot.runtime.definition()) as usize,
+                    slot.runtime.states().to_vec(),
+                )
+            }),
+        }
+    }
+
+    /// `key == hitvol_pose_key(id, ps)`, without copying the anim tree's states to find out.
+    fn hitvol_key_is_current(&self, key: &HitvolPoseKey, id: ClientId, ps: &PlayerState) -> bool {
+        let slot = self.player_anim_trees.get(&id.0);
+        key.kit == self.collision_kit_index(id)
+            && key.origin == ps.origin
+            && key.viewangles == ps.viewangles
+            && key.legs_anim == ps.legs_anim
+            && key.torso_anim == ps.torso_anim
+            && key.shield == self.client_meta(id).and_then(|meta| meta.shield)
+            && key.dobj == self.player_dobjs.get(&id.0).map(|slot| slot.reuse_key)
+            && key.anim == slot.map(|slot| (slot.leaf, slot.torso, slot.kit))
+            && match (&key.tree, slot) {
+                (None, None) => true,
+                (Some((definition, states)), Some(slot)) => {
+                    *definition == std::sync::Arc::as_ptr(slot.runtime.definition()) as usize
+                        && states.as_slice() == slot.runtime.states()
+                }
+                _ => false,
+            }
+            && key.input == player_controller_input(ps, self.cs_hold_pose(id, ps))
     }
 
     fn player_hitvol_bones_raw(
