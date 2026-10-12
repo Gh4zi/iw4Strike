@@ -251,7 +251,7 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
         }
     }
     let frame = FrameWorld::from_world(world);
-    let tag = hit
+    let part = hit
         .bone
         .and_then(|bone| {
             frame
@@ -268,7 +268,7 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
         super::players::player_object(world, a.0)
     });
     if world.resource::<Runtime>().entities[&object].kind == super::entities::EntityKind::Vehicle {
-        super::vehicles::damage(world, object, hit, attacker, &weapon, &tag);
+        super::vehicles::damage(world, object, hit, attacker, &weapon, &part);
         return true;
     }
     let mut runtime = world.resource_mut::<Runtime>();
@@ -297,8 +297,8 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
             Value::Vector(hit.point),
             Value::string(hit.means),
             Value::String(model),
-            Value::String(tag.as_str().into()),
             Value::string(""),
+            Value::String(part.as_str().into()),
             Value::Int(hit.flags),
             Value::String(weapon.into()),
         ],
