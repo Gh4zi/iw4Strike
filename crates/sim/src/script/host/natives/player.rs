@@ -1309,14 +1309,19 @@ fn shield_weapon(frame: &FrameWorld, id: ClientId, model: &str) -> Option<u32> {
     frame.shield_weapon_for_model(model, attached.into_iter().chain(owned))
 }
 
+// A shield is attached for a weapon the player holds; with none that uses the model there is
+// nothing to attach, and attach and move do nothing, as detach already did. `_class.gsc` gets
+// there at spawn: a class whose primary is the riot shield notifies `weapon_change` with it
+// during the grace period, after the CS loadout has already replaced the class weapons.
 fn register_shield(registry: &mut NativeRegistry) {
     registry.register(Method, "attachshieldmodel", |world, receiver, args| {
         let id = client_of(world, receiver)?;
         let model = string(args, 0)?;
         let on_back = shield_tag(args, 1)?;
         let mut frame = FrameWorld::from_world(world);
-        let weapon = shield_weapon(&frame, id, &model)
-            .ok_or_else(|| format!("shield model '{model}' unavailable"))?;
+        let Some(weapon) = shield_weapon(&frame, id, &model) else {
+            return Ok(Value::Undefined);
+        };
         frame.client_meta_mut(id).shield = Some(crate::ShieldAttachment { weapon, on_back });
         Ok(Value::Undefined)
     });
@@ -1326,8 +1331,9 @@ fn register_shield(registry: &mut NativeRegistry) {
         let from = shield_tag(args, 1)?;
         let on_back = shield_tag(args, 2)?;
         let mut frame = FrameWorld::from_world(world);
-        let weapon = shield_weapon(&frame, id, &model)
-            .ok_or_else(|| format!("shield model '{model}' unavailable"))?;
+        let Some(weapon) = shield_weapon(&frame, id, &model) else {
+            return Ok(Value::Undefined);
+        };
         let attachment = &mut frame.client_meta_mut(id).shield;
         if *attachment
             == Some(crate::ShieldAttachment {
