@@ -10,6 +10,7 @@ use crate::prepare::scene::cull::smodel_cull_dist_skips_slot;
 use crate::prepare::scene::model_lighting_atlas::{
     WorldModelLightingAtlas, model_lighting_atlas_write_tile,
 };
+use crate::prepare::scene::model_lighting_cache::ModelLightingAtlasTileWrites;
 use crate::prepare::scene::smodel_geom_cache::LodRampDvar;
 use crate::prepare::scene::view_parms::PreparedSceneView;
 use crate::prepare::scene::world::{WorldScene, WorldSmodelLightingSample};
@@ -184,6 +185,7 @@ pub(crate) fn update_smodel_lighting(
     atlas: Option<Res<WorldModelLightingAtlas>>,
     scene: Res<WorldScene>,
     mut images: ResMut<Assets<Image>>,
+    mut tile_writes: ResMut<ModelLightingAtlasTileWrites>,
     prepared: Res<PreparedSceneView>,
     lock_pvs: Res<crate::prepare::scene::view_parms::RLockPvs>,
     lod_ramp: Res<LodRampDvar>,
@@ -340,7 +342,8 @@ pub(crate) fn update_smodel_lighting(
     if !dirty_slots.is_empty() {
         let dims = atlas.dims;
         let atlas_handle = atlas.image.clone();
-        if let Some(mut atlas) = images.get_mut(&atlas_handle) {
+        // Untracked: only `tile_writes` carries the tiles to the GPU.
+        if let Some(atlas) = images.get_mut_untracked(&atlas_handle) {
             for &(slot, handle) in &dirty_slots {
                 let Some(Some(tile)) = lighting.tiles.get(slot) else {
                     continue;
@@ -348,7 +351,9 @@ pub(crate) fn update_smodel_lighting(
                 let Some(entry) = ModelLightingTileIndex::from_handle(handle) else {
                     continue;
                 };
-                if !model_lighting_atlas_write_tile(&mut atlas, dims, entry, tile) {
+                if model_lighting_atlas_write_tile(atlas, dims, entry, tile) {
+                    tile_writes.push(atlas_handle.id(), entry, tile);
+                } else {
                     diag::error!(
                         World,
                         "smodel lighting: tile for slot {slot} handle {handle} refused by atlas write"
