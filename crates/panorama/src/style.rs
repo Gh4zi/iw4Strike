@@ -262,7 +262,9 @@ fn parse_paint(value: &str) -> Option<Paint> {
 }
 
 fn parse_align(value: &str) -> Option<Align> {
-    Some(match value.trim().to_ascii_lowercase().as_str() {
+    // `center_nopixelsnap` and the like: the same place, not snapped to whole pixels.
+    let value = value.trim().to_ascii_lowercase();
+    Some(match value.trim_end_matches("_nopixelsnap") {
         "left" | "top" => Align::Start,
         "center" | "middle" => Align::Center,
         "right" | "bottom" => Align::End,

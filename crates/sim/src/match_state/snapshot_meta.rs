@@ -10,6 +10,15 @@ use super::client_view::{
 use super::events::{EntityEventRecord, EventRecord, PelletFxRecord, SimEvent};
 use super::loadout::LoadoutSpec;
 
+/// A spot a player pinged for their team (CS:GO's `player_ping`): where, when (level ms), and
+/// whether a double tap made it a danger ping.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CsPing {
+    pub origin: [f32; 3],
+    pub placed_ms: i32,
+    pub danger: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClientSnapshotMeta {
     pub shield: Option<crate::ShieldAttachment>,
@@ -73,6 +82,9 @@ pub struct ClientSnapshotMeta {
 
     /// Whether an enemy sees the player, so the enemy team's CS:GO radar shows them.
     pub cs_spotted: bool,
+
+    /// The spot the player last pinged for their team (`player_ping`).
+    pub cs_ping: Option<CsPing>,
 
     pub client_dvars: Vec<(String, String)>,
 

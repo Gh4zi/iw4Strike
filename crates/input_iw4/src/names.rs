@@ -1,4 +1,4 @@
-pub const INPUT_COMMAND_NAMES: [&str; 94] = [
+pub const INPUT_COMMAND_NAMES: [&str; 95] = [
     "",
     "+attack",
     "-attack",
@@ -98,6 +98,8 @@ pub const INPUT_COMMAND_NAMES: [&str; 94] = [
     "rebuy",
     // Counter-Strike: look at (inspect) the weapon in hand.
     "+lookatweapon",
+    // Counter-Strike: ping the spot under the crosshair for the team.
+    "player_ping",
     "-lookatweapon",
 ];
 

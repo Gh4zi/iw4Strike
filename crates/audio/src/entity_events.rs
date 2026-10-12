@@ -129,8 +129,10 @@ fn entity_event_sound(
     adopted: Option<Res<net::LastAdoptedSnapshot>>,
     mut output: MessageWriter<WeaponSound>,
     mut play: MessageWriter<crate::AliasCommand>,
+    settings: Option<Res<frame::GameSettings>>,
 ) {
     let event = sound.event.event;
+    let ping_muted = settings.is_some_and(|settings| settings.ping_mute != 0);
     if event == EntityEventKind::STOPSOUNDS {
         if let Some(snd_ent) = ent_from_number(sound.event.payload.number) {
             play.write(crate::AliasCommand::StopEntity { snd_ent });
@@ -147,6 +149,7 @@ fn entity_event_sound(
                 0,
             )),
             adopted.as_deref(),
+            ping_muted,
             &mut play,
         );
         return;
@@ -262,6 +265,7 @@ fn play_cs_sound_alias(
     payload: &net::DispatchedEntityEvent,
     event: Option<crate::AudioEvent>,
     adopted: Option<&net::LastAdoptedSnapshot>,
+    ping_muted: bool,
     play: &mut MessageWriter<crate::AliasCommand>,
 ) {
     let index = u8::try_from(payload.payload.event_parm).unwrap_or(0);
@@ -273,6 +277,10 @@ fn play_cs_sound_alias(
         );
         return;
     };
+    // A teammate's ping is silent with `cl_player_ping_mute` 1 or 2.
+    if ping_muted && alias == "csgo/ui.playerping" {
+        return;
+    }
     let local = payload.payload.number == LOCAL_SOUND_ENTITY;
     diag::event!(
         Audio,

@@ -68,6 +68,11 @@ pub enum ClientAction {
         flags: u32,
     },
 
+    /// Ping the spot under the crosshair for the team (CS:GO's `player_ping`).
+    PlayerPing {
+        request_id: ActionRequestId,
+    },
+
     SpawnClient {
         request_id: ActionRequestId,
     },
@@ -211,6 +216,7 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::BuyDefuser { request_id }
         | ClientAction::BuyWeapon { request_id, .. }
         | ClientAction::CsLoadout { request_id, .. }
+        | ClientAction::PlayerPing { request_id }
         | ClientAction::SpawnClient { request_id }
         | ClientAction::ForceSpawn { request_id, .. }
         | ClientAction::SpawnIntermission { request_id }

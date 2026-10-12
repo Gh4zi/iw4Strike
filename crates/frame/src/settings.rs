@@ -43,6 +43,9 @@ pub struct GameSettings {
     /// `cl_radar`: the radar, `csgo` (CS:GO's round radar, with CS:GO installed) or `mw2` (MW2's
     /// minimap).
     pub radar: String,
+    /// `cl_player_ping_mute` (CS:GO's): teammates' pings shown with their sound (0), without it
+    /// (1), or not at all (2).
+    pub ping_mute: u8,
     /// `cl_loadout_pistol`: the Counter-Terrorists' starting pistol, `usp` (USP-S) or `p2000`.
     pub loadout_pistol: String,
     /// `cl_loadout_m4`: the Counter-Terrorists' M4 in the buy wheel, `m4a4` or `m4a1` (M4A1-S).
@@ -160,6 +163,7 @@ impl Default for GameSettings {
             right_hand: true,
             knife: "default".to_owned(),
             radar: "csgo".to_owned(),
+            ping_mute: 0,
             loadout_pistol: "usp".to_owned(),
             loadout_m4: "m4a4".to_owned(),
             camera_anim: false,

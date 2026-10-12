@@ -451,6 +451,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("cl_righthand={}", u8::from(settings.right_hand)),
         format!("cl_knife={}", settings.knife),
         format!("cl_radar={}", settings.radar),
+        format!("cl_player_ping_mute={}", settings.ping_mute),
         format!("cl_loadout_pistol={}", settings.loadout_pistol),
         format!("cl_loadout_m4={}", settings.loadout_m4),
         format!("cl_camera_anim={}", u8::from(settings.camera_anim)),
@@ -582,6 +583,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "cl_knife" => {
                 if weapon_iw4::cs::csgo_knife_view_model(value).is_some() || value.trim() == "default" {
                     settings.knife = value.trim().to_ascii_lowercase();
+                }
+            }
+            "cl_player_ping_mute" | "ui_player_ping_mute" => {
+                if let Ok(mute @ 0..=2) = value.trim().parse::<u8>() {
+                    settings.ping_mute = mute;
                 }
             }
             "cl_radar" | "ui_radar" => {
@@ -790,6 +796,13 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             binds.set(BindButton::Key(key), id);
         }
     }
+    // CS:GO pings on the middle mouse button.
+    if let Some(id) = input_iw4::command_id_from_name("player_ping")
+        && binds.get(BindButton::Mouse(MouseButton::Middle)).is_none()
+        && !binds.iter().any(|(_, bound)| bound == id)
+    {
+        binds.set(BindButton::Mouse(MouseButton::Middle), id);
+    }
 }
 
 // `frame::GameSettings::game_paths` / `game_used` hold one entry per game folder.
@@ -874,6 +887,11 @@ pub(crate) fn native_menu_settings(
             "ui_knife" => {
                 if weapon_iw4::cs::csgo_knife_view_model(value).is_some() || value.trim() == "default" {
                     settings.knife = value.trim().to_ascii_lowercase();
+                }
+            }
+            "ui_player_ping_mute" => {
+                if let Ok(mute @ 0..=2) = value.trim().parse::<u8>() {
+                    settings.ping_mute = mute;
                 }
             }
             "ui_radar" => {
@@ -1068,6 +1086,7 @@ pub(crate) fn native_menu_settings(
     dvars.set("ui_round_banner", settings.round_banner.clone());
     dvars.set("ui_knife", settings.knife.clone());
     dvars.set("ui_radar", settings.radar.clone());
+    dvars.set("ui_player_ping_mute", settings.ping_mute.to_string());
     dvars.set("ui_loadout_pistol", settings.loadout_pistol.clone());
     dvars.set("ui_loadout_m4", settings.loadout_m4.clone());
     dvars.set("ui_shadows", settings.shadows.to_string());

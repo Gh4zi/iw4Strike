@@ -88,6 +88,11 @@ pub(crate) fn register_weapon_commands(
             "menuselect <0-9> — pick an item of the open CS menu (the buy menu), as its number key",
         ));
     }
+    if registry.resolve("player_ping").is_none() {
+        registry.register(crate::CommandSpec::new("player_ping").usage(
+            "player_ping — ping the spot under the crosshair for your team (middle mouse); twice quickly for a danger ping",
+        ));
+    }
     if registry.resolve("autobuy").is_none() {
         registry.register(crate::CommandSpec::new("autobuy").usage(
             "autobuy — buy the best rifle and armor you can afford (in a buy zone, during the buy time)",
@@ -304,6 +309,11 @@ pub(crate) fn route_buy_menu(
             && let Some(key) = cmd.args.first().and_then(|n| n.parse::<u8>().ok())
         {
             menu.select(if key == 0 { 10 } else { key.min(10) });
+        } else if cmd.name == "player_ping" {
+            let action = ClientAction::PlayerPing {
+                request_id: seq.allocate(),
+            };
+            let _ = inbox.push(local.0, action);
         } else if cmd.name == "autobuy" {
             menu.autobuy();
         } else if cmd.name == "rebuy" {

@@ -897,6 +897,9 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
             ClientAction::CsLoadout { flags, .. } => {
                 world.client_meta_mut(*id).cs_loadout = flags;
             }
+            ClientAction::PlayerPing { .. } => {
+                crate::cs_radio::player_ping(world, tick, *id);
+            }
             ClientAction::ActionSlot {
                 request_id: _,
                 slot,

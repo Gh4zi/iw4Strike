@@ -16,7 +16,7 @@ pub const CSGO_SOUND_PREFIX: &str = "csgo/";
 
 /// The CS:GO sound script groups our guns, knife, grenades and bomb play from (`weapon_ak47.`
 /// …): their shots and the sounds their animations call. CS:GO's other weapon sounds stay unread.
-const CSGO_SOUND_GROUPS: [&str; 46] = [
+const CSGO_SOUND_GROUPS: [&str; 47] = [
     // A head hit: on a helmet, on a bare head (each with the shooter's feedback version).
     "player.damagehelmet",
     "player.damageheadshot",
@@ -62,6 +62,8 @@ const CSGO_SOUND_GROUPS: [&str; 46] = [
     "flashbang.pullpin",
     "smokegrenade.draw",
     "smokegrenade.pullpin",
+    // A teammate's ping, where it was placed.
+    "ui.playerping",
     "weapon_flashbang.",
     "weapon_smokegrenade.",
     "weapon_c4.",
@@ -658,10 +660,15 @@ pub fn append_csgo_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 ..c.clone()
             })
             .collect();
-        // The bomb keeps its pitch; guns vary theirs as MW2's do.
+        // The bomb and the ping keep their pitch; guns vary theirs as MW2's do. The ping plays
+        // at a fifth of a shot's volume (`UI.PlayerPing`'s 0.2).
         let tune = |row: &mut crate::CapturedAlias| {
-            if name.starts_with("weapon_c4.") {
+            if name.starts_with("weapon_c4.") || name == "ui.playerping" {
                 steady_pitch(row);
+            }
+            if name == "ui.playerping" {
+                row.vol_min *= 0.2;
+                row.vol_max *= 0.2;
             }
         };
         if catalog.add_loose_alias_tuned(&alias, &world, clips, tune)

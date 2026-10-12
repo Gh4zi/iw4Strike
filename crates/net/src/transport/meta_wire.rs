@@ -544,6 +544,10 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u32(request_id);
             out.put_u32(flags);
         }
+        ClientAction::PlayerPing { request_id } => {
+            out.put_u8(28);
+            out.put_u32(request_id);
+        }
         ClientAction::ActionSlot { request_id, slot } => {
             out.put_u8(19);
             out.put_u32(request_id);
@@ -668,6 +672,9 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
         27 => Ok(ClientAction::CsLoadout {
             request_id: input.get_u32()?,
             flags: input.get_u32()?,
+        }),
+        28 => Ok(ClientAction::PlayerPing {
+            request_id: input.get_u32()?,
         }),
         19 => Ok(ClientAction::ActionSlot {
             request_id: input.get_u32()?,
@@ -1640,6 +1647,16 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
     out.put_u32(meta.player_card_title);
     out.put_u32(meta.player_card_nameplate);
     out.put_u8(u8::from(meta.cs_spotted));
+    match meta.cs_ping {
+        None => out.put_u8(0),
+        Some(ping) => {
+            out.put_u8(1 + u8::from(ping.danger));
+            for v in ping.origin {
+                out.put_f32(v);
+            }
+            out.put_i32(ping.placed_ms);
+        }
+    }
     debug_assert!(meta.client_dvars.len() <= u16::MAX as usize);
     out.put_u16(meta.client_dvars.len() as u16);
     for (name, value) in &meta.client_dvars {
@@ -1870,6 +1887,15 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
     let player_card_title = input.get_u32()?;
     let player_card_nameplate = input.get_u32()?;
     let cs_spotted = input.get_u8()? != 0;
+    let cs_ping = match input.get_u8()? {
+        0 => None,
+        tag @ (1 | 2) => Some(sim::CsPing {
+            origin: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
+            placed_ms: input.get_i32()?,
+            danger: tag == 2,
+        }),
+        _ => return Err(WireError::Malformed("bad cs_ping tag")),
+    };
     let mut client_dvars = Vec::new();
     for _ in 0..input.get_u16()? {
         client_dvars.push((get_text(input)?, get_text(input)?));
@@ -1969,6 +1995,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         player_card_title,
         player_card_nameplate,
         cs_spotted,
+        cs_ping,
         client_dvars,
         shellshock,
         view_effects,

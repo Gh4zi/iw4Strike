@@ -113,7 +113,7 @@ pub const FRIENDLY_BOTS_DVAR: &str = "scr_game_friendlybots";
 /// IW4's team menu; answering it "allies" or "axis" joins that team.
 pub const TEAM_MENU: &str = "team_marinesopfor";
 pub use match_state::{
-    ClassDef, ClassRejectReason, ClientLifecycle, ClientSnapshotMeta,
+    ClassDef, ClassRejectReason, ClientLifecycle, ClientSnapshotMeta, CsPing,
     ConfigurationChangeRejectReason, DroppedItemAmmo, EntityEventPayload, EntityEventRecord,
     EventAudience, EventRecord, GiveRejectReason, HealthRegenCensus, InputReceipt,
     ItemPickupRecord, KillcamHud, LinkedWeaponView, LoadoutSpec, LocationSelection,

@@ -42,7 +42,7 @@ pub fn class_catalog_perk_name(id: u32) -> Option<&'static str> {
 }
 
 pub use snapshot_meta::{
-    ClientSnapshotMeta, DroppedItemAmmo, ItemPickupRecord, RngDebugMeta, ScriptDvars, SnapshotMeta,
+    ClientSnapshotMeta, CsPing, DroppedItemAmmo, ItemPickupRecord, RngDebugMeta, ScriptDvars, SnapshotMeta,
     TargetBoxDvar,
 };
 
@@ -153,6 +153,8 @@ pub struct ClientMatchState {
     pub(crate) cs_loadout: u32,
     /// Whether an enemy sees the player (CS:GO radar spotting, `cs_spotting`).
     pub(crate) cs_spotted: bool,
+    /// The spot the player last pinged (`cs_radio::player_ping`).
+    pub(crate) cs_ping: Option<CsPing>,
 }
 
 /// What a surviving CS player keeps from one round to the next: guns and grenades with their
@@ -271,6 +273,7 @@ impl ClientMatchState {
             player_card_title: self.player_card_title,
             player_card_nameplate: self.player_card_nameplate,
             cs_spotted: self.cs_spotted,
+            cs_ping: self.cs_ping,
             client_dvars: self.client_dvars.clone(),
             shellshock: self.shellshock.clone(),
             view_effects: self.view_effects.clone(),
@@ -326,6 +329,7 @@ impl ClientMatchState {
         self.player_card_title = meta.player_card_title;
         self.player_card_nameplate = meta.player_card_nameplate;
         self.cs_spotted = meta.cs_spotted;
+        self.cs_ping = meta.cs_ping;
         self.client_dvars = meta.client_dvars.clone();
         self.shellshock = meta.shellshock.clone();
         self.view_effects = meta.view_effects.clone();

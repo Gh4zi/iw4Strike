@@ -32,6 +32,7 @@ fn sublayout(tag: &str) -> Option<&'static str> {
         "csgohuddeathnotice" => "file://{resources}/layout/hud/huddeathnotice.xml",
         "csgobuymenu" => "file://{resources}/layout/buymenu.xml",
         "csgohudradar" => "file://{resources}/layout/hud/hudradar.xml",
+        "csgohudreticle" => "file://{resources}/layout/hud/hudreticle.xml",
         _ => return None,
     })
 }
@@ -183,10 +184,12 @@ const RADAR_SIZE: f32 = 250.0;
 /// icons are placed.
 const RADAR_PANEL_SIZE: f32 = 300.0;
 /// How many players the radar has icons for.
-const RADAR_ICONS: usize = 24;
+const RADAR_ICONS: usize = 32;
 /// The icons a player package can show (one at a time, plus the local player's view cone).
-const RADAR_ICON_IDS: [&str; 13] = [
+const RADAR_ICON_IDS: [&str; 15] = [
     "ViewFrustrum",
+    "PlayerPing",
+    "PlayerPingOffMap",
     "CTOnMap",
     "CTOffMap",
     "CTDeath",
@@ -213,6 +216,44 @@ struct RadarIcon {
     cone: bool,
     turn: f32,
     fade: f32,
+}
+
+/// How many teammates' pings show on screen at once.
+const PING_MARKERS: usize = 10;
+/// CS:GO's ping marker (`PlayerPing`, laid out 1024 pixels across) at the size it shows on screen.
+const PING_MARKER_SCALE: f32 = 0.4;
+
+/// A teammate's ping still showing: where, whether it warns of danger, and how faded.
+struct ShownPing {
+    origin: [f32; 3],
+    danger: bool,
+    fade: f32,
+}
+
+/// The pings of the local player's team (theirs too) still showing
+/// ([`weapon_iw4::cs::CS_PING_SECONDS`], fading over the last second); none with pings off
+/// (`cl_player_ping_mute 2`).
+fn team_pings(snap: Option<&sim::Snapshot>, local: sim::ClientId, mute: u8) -> Vec<ShownPing> {
+    let Some(snap) = snap.filter(|_| mute < 2) else {
+        return Vec::new();
+    };
+    let team = snap.meta.for_client(local).map_or(0, |m| m.client_state_team);
+    let now = i64::from(snap.tick.0) * i64::from(sim::MATCH_TICK_MS);
+    let life = weapon_iw4::cs::CS_PING_SECONDS * 1000.0;
+    snap.meta
+        .clients
+        .iter()
+        .filter(|(id, meta)| *id == local || (team != 0 && meta.client_state_team == team))
+        .filter_map(|(_, meta)| {
+            let ping = meta.cs_ping?;
+            let age = (now - i64::from(ping.placed_ms)) as f32;
+            (0.0..life).contains(&age).then(|| ShownPing {
+                origin: ping.origin,
+                danger: ping.danger,
+                fade: ((life - age) / 1000.0).clamp(0.0, 1.0),
+            })
+        })
+        .collect()
 }
 
 /// What the radar remembers of a player: where they were last seen, when, and when they died.
@@ -333,6 +374,8 @@ pub(crate) struct CsgoPanorama {
     /// The bomb sites A and B (where their radar objectives are), for the map whose minimap
     /// this names.
     radar_sites: (String, [Option<[f32; 2]>; 2]),
+    /// The on-screen ping markers (`PlayerPing` snippets).
+    ping_markers: Vec<usize>,
     /// The radar's memory of each player, by client number.
     radar_tracks: std::collections::HashMap<u32, RadarTrack>,
 }
@@ -444,10 +487,11 @@ pub(crate) fn update_csgo_panorama(
     view: Res<ViewSubject>,
     feed: Res<crate::cs_hud::CsKillFeed>,
     (time, mut images): (Res<Time>, ResMut<Assets<Image>>),
-    (compass, mut hud_images, mut gaps): (
+    (compass, mut hud_images, mut gaps, cameras): (
         Option<Res<assets::SessionCompass>>,
         ResMut<crate::images::HudImages>,
         ResMut<crate::gaps::HudPresentationGaps>,
+        Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     ),
     (menu, mut wheel_input, windows, nodes, settings): (
         Res<crate::cs_buymenu::CsBuyMenu>,
@@ -814,6 +858,18 @@ pub(crate) fn update_csgo_panorama(
             // the dead (if seen dying) as a cross fading over 4 s; anyone off the radar as an
             // arrow at its rim pointing their way.
             let mut shown: Vec<RadarIcon> = Vec::new();
+            // Teammates' pings: CS:GO's ring where each is, an arrow at the rim pointing its way
+            // when off the radar; under the players.
+            for ping in team_pings(snap, local.0, settings.ping_mute) {
+                let (x, y, on_map) = project([ping.origin[0], ping.origin[1]], half - 6.0);
+                shown.push(RadarIcon {
+                    at: (half + x, half + y),
+                    icon: if on_map { "PlayerPing" } else { "PlayerPingOffMap" }.to_owned(),
+                    cone: false,
+                    turn: if on_map { 0.0 } else { y.atan2(x) + std::f32::consts::FRAC_PI_2 },
+                    fade: ping.fade,
+                });
+            }
             if let Some(snap) = snap {
                 let mut present = Vec::new();
                 for (id, other) in &snap.players {
@@ -917,6 +973,68 @@ pub(crate) fn update_csgo_panorama(
             }
         }
     }
+    // Pings on screen (`#VisiblePlayerPings`): CS:GO's marker over each teammate's pinged spot,
+    // seen through walls; a danger ping (a double tap) shows the alert icon in red. The rest of
+    // CS:GO's reticle layer (its crosshair, target IDs) stays off: this HUD draws those.
+    if let Some(reticle) = doc.find("HudReticle") {
+        for id in [
+            "FriendCrosshair",
+            "Crosshair",
+            "CrosshairObserver",
+            "TargetID",
+            "VisiblePlayerIDs",
+            "UnusedPlayerIDs",
+            "UnusedPlayerPings",
+        ] {
+            if let Some(panel) = doc.find_in(reticle, id) {
+                doc.set_visible(panel, false);
+            }
+        }
+        if state.ping_markers.is_empty()
+            && let Some(parent) = doc.find_in(reticle, "VisiblePlayerPings")
+        {
+            for _ in 0..PING_MARKERS {
+                if let Some(marker) = doc.add_snippet(files, parent, "PlayerPing") {
+                    for id in ["WeaponIcon", "CrateIcon", "ItemIcon", "LocationLabel"] {
+                        if let Some(panel) = doc.find_in(marker, id) {
+                            doc.set_visible(panel, false);
+                        }
+                    }
+                    if let Some(icon) = doc.find_in(marker, "DangerIcon") {
+                        doc.set_style(icon, "wash-color-fast", Some("#ff2b2b"));
+                    }
+                    doc.set_visible(marker, false);
+                    state.ping_markers.push(marker);
+                }
+            }
+        }
+        let pings = team_pings(snap.filter(|_| ps.is_some()), local.0, settings.ping_mute);
+        let camera = cameras.iter().find(|(camera, _)| camera.is_active);
+        for (k, &marker) in state.ping_markers.iter().enumerate() {
+            let shown = pings.get(k).zip(camera).and_then(|(ping, (camera, transform))| {
+                let pixel = camera
+                    .world_to_viewport(transform, Vec3::from_array(ping.origin))
+                    .ok()
+                    .filter(|pixel| pixel.is_finite())?;
+                Some((pixel / doc.scale, ping))
+            });
+            let Some((pixel, ping)) = shown else {
+                doc.set_visible(marker, false);
+                continue;
+            };
+            doc.set_visible(marker, true);
+            doc.set_live_transform_scaled(marker, (pixel.x, pixel.y), 0.0, PING_MARKER_SCALE);
+            let fade = (ping.fade * 10.0).ceil() / 10.0;
+            let opacity = (fade < 1.0).then(|| format!("{fade:.1}"));
+            doc.set_style(marker, "opacity", opacity.as_deref());
+            for (id, on) in [("DefaultIcon", !ping.danger), ("DangerIcon", ping.danger)] {
+                if let Some(icon) = doc.find_in(marker, id) {
+                    doc.set_visible(icon, on);
+                }
+            }
+        }
+    }
+
     if let Some(money) = doc.find("HudMoney") {
         // Under MW2's minimap (its square, 240 pixels from the top) when that is the radar.
         doc.set_style(money, "margin-top", (!csgo_radar).then_some("250px"));

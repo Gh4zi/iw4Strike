@@ -2406,6 +2406,10 @@ pub fn csgo_grenade_radio(grenade: &str) -> &'static str {
     }
 }
 
+/// How long a ping shows for the team (CS:GO's `player_ping`; its own lifetime is not in its
+/// files, so a few seconds as it plays).
+pub const CS_PING_SECONDS: f32 = 6.0;
+
 /// Where radio call sound aliases live: `<prefix><voice>/<call>`.
 pub const CSGO_RADIO_ALIAS_PREFIX: &str = "csgo/radio/";
 

@@ -137,6 +137,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "cl_knife [default|bayonet|m9_bayonet|karambit|butterfly|flip|gut|huntsman|falchion|bowie|shadow_daggers|navaja|stiletto|ursus|talon|classic|paracord|survival|nomad|skeleton|golden] — the CS:GO knife you carry (with CS:GO installed)",
         ));
     }
+    if registry.resolve("cl_player_ping_mute").is_none() {
+        registry.register(crate::CommandSpec::new("cl_player_ping_mute").usage(
+            "cl_player_ping_mute [0|1|2] — teammates' pings with their sound, without it, or not at all",
+        ));
+    }
     if registry.resolve("cl_radar").is_none() {
         registry.register(
             crate::CommandSpec::new("cl_radar")
@@ -549,6 +554,15 @@ pub(crate) fn route_movement_commands(
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
+            },
+            "cl_player_ping_mute" => match cmd.args.as_slice() {
+                [] => format!("cl_player_ping_mute = {}", game.ping_mute),
+                [arg] if matches!(arg.trim(), "0" | "1" | "2") => {
+                    game.ping_mute = arg.trim().parse().unwrap_or(0);
+                    game.touch();
+                    format!("cl_player_ping_mute = {}", game.ping_mute)
+                }
+                _ => "usage: cl_player_ping_mute [0|1|2]".to_owned(),
             },
             "cl_radar" => match cmd.args.as_slice() {
                 [] => format!("cl_radar = {}", game.radar),

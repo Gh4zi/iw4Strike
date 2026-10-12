@@ -46,7 +46,7 @@ struct Panel {
     image_handle: Option<Handle<Image>>,
     /// A shift (Panorama pixels) and turn (radians) the game moves the panel by every frame,
     /// applied without restyling (`set_live_transform`).
-    live: Option<((f32, f32), f32)>,
+    live: Option<((f32, f32), f32, f32)>,
 }
 
 /// A loaded layout, its panels and the rules that style them.
@@ -403,7 +403,12 @@ impl Doc {
     /// Moves `panel` by `shift` (Panorama pixels) and turns it by `turn` radians about its
     /// middle, over its styles' transform, cheaply enough to do every frame.
     pub fn set_live_transform(&mut self, panel: usize, shift: (f32, f32), turn: f32) {
-        let live = Some((shift, turn));
+        self.set_live_transform_scaled(panel, shift, turn, 1.0);
+    }
+
+    /// [`Self::set_live_transform`], also scaled by `scale` about its middle.
+    pub fn set_live_transform_scaled(&mut self, panel: usize, shift: (f32, f32), turn: f32, scale: f32) {
+        let live = Some((shift, turn, scale));
         if self.panels[panel].live != live {
             self.panels[panel].live = live;
             self.live_dirty.push(panel);
@@ -610,10 +615,10 @@ impl Doc {
         if !self.changed {
             // Only live transforms moved: set them, no restyle.
             for p in std::mem::take(&mut self.live_dirty) {
-                if let (Some(entity), Some(((x, y), turn))) = (self.panels[p].entity, self.panels[p].live) {
+                if let (Some(entity), Some(((x, y), turn, scale))) = (self.panels[p].entity, self.panels[p].live) {
                     commands.entity(entity).insert(UiTransform {
                         translation: Val2::px(x * self.scale, y * self.scale),
-                        scale: Vec2::ONE,
+                        scale: Vec2::splat(scale),
                         rotation: Rot2::radians(turn),
                     });
                 }
@@ -937,10 +942,10 @@ impl Doc {
                 Val::Px(px)
             }
         };
-        if let Some(((x, y), turn)) = p.live {
+        if let Some(((x, y), turn, scale)) = p.live {
             e.insert(UiTransform {
                 translation: Val2::px(x * self.scale, y * self.scale),
-                scale: Vec2::ONE,
+                scale: Vec2::splat(scale),
                 rotation: Rot2::radians(turn),
             });
         } else {
