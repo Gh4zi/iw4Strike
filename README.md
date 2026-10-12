@@ -635,6 +635,8 @@ Known issues with CS2 on:
 **Known issues**
 - `mv_mode` isn't synced to other players yet, so everyone should use the same mode.
 - Mice set to 4000 Hz or higher can cause short freezes. Use 1000 Hz for now.
+- Switching AMD FSR 3 modes quickly in the menu while taking screenshots (Win+Shift+S) can close
+  the game: the graphics driver resets it. Pick the FSR mode first, then take screenshots.
 - Favela runs at a lower FPS than the other maps.
 - The map ambient sound plays about 9 dB quieter than MW2's by default (MW2's looping emitters
   stack up to only a few dB under a rifle); tune it with `snd_ambient_volume`. Very loud
