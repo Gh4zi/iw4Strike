@@ -1137,6 +1137,16 @@ fn register_body(registry: &mut NativeRegistry) {
             frame.player(id).is_some_and(|ps| ps.cs_defuser != 0).into(),
         ))
     });
+    // Counter-Strike fork: the bomb mode pays the planter and the defuser (`csAddMoney( 300 )`).
+    registry.register(Method, "csaddmoney", |world, receiver, args| {
+        let id = client_of(world, receiver)?;
+        let amount = int(args, 0)?;
+        let mut frame = FrameWorld::from_world(world);
+        if crate::cs_economy::economy(&mut frame) {
+            crate::cs_economy::add_money(&mut frame, id, amount);
+        }
+        Ok(Value::Undefined)
+    });
     registry.register(Method, "isonladder", |world, receiver, _| {
         let id = client_of(world, receiver)?;
         let frame = FrameWorld::from_world(world);

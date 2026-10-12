@@ -526,8 +526,8 @@ const PATCHES: &[Patch] = &[
     once(
         SD,
         "player playSound( \"mp_bomb_plant\" );",
-        "player playSound( \"cs_c4_plant\" );",
-        "CS C4: plant sound",
+        "player playSound( \"cs_c4_plant\" ); if ( !level.gameEnded ) player csAddMoney( 300 );",
+        "CS C4: plant sound, and CS:GO's $300 to the planter (`cash_player_bomb_planted`)",
     ),
     once(
         SD,
@@ -538,8 +538,9 @@ const PATCHES: &[Patch] = &[
     once(
         SD,
         "leaderDialog( \"bomb_defused\" );",
-        "playSoundOnPlayers( \"cs_event_bombdefused\" ); player playSound( \"cs_c4_disarmed\" );",
-        "CS C4: \"The bomb has been defused\" on the radio",
+        "playSoundOnPlayers( \"cs_event_bombdefused\" ); player playSound( \"cs_c4_disarmed\" ); \
+         if ( !level.gameEnded ) player csAddMoney( 300 );",
+        "CS C4: \"The bomb has been defused\" on the radio, and CS:GO's $300 to the defuser",
     ),
     once(
         SD,

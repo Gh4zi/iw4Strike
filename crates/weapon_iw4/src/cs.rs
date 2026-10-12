@@ -327,6 +327,13 @@ pub fn silencer_bit(index: u8) -> u32 {
     1u32.checked_shl(u32::from(index)).unwrap_or(0)
 }
 
+/// Whether the silencer of the gun with `PlayerState::cs_silencers` bit `bit` is on, under the
+/// server's shooting mode: CS 1.6 hands the M4A1 and USP over bare (the bit screws it on);
+/// CS:GO's M4A1-S and USP-S come with it on (the bit takes it off). `bit` 0 (no silencer): off.
+pub fn silencer_on(silencers: u32, bit: u32, shooting_mode: u32) -> bool {
+    bit != 0 && (silencers & bit != 0) == (shooting_mode == crate::csgo::SHOOTING_CS16)
+}
+
 /// Bit of a weapon-fire event's `simulation_flags` marking a shot from a silenced gun, so every
 /// client picks the silenced gunshot (bit 0 is the impact events' "penetrated").
 pub const SILENCED_SHOT_FLAG: u8 = 2;
@@ -378,15 +385,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["ak47-1", "ak47-2"],
         css_view_model: "v_rif_ak47",
         css_fire_sound: "Weapon_AK47.Single",
-        price: 2500,
+        price: 2700,
         damage: 36.0,
         range_modifier: 0.98,
-        cycle: 0.0955,
+        cycle: 0.1,
         clip: 30,
         reserve: 90,
-        reload: 2.45,
-        max_speed: 221.0,
-        max_speed_zoomed: 221.0,
+        reload: 2.433,
+        max_speed: 215.0,
+        max_speed_zoomed: 215.0,
         zoom: &[],
         semi_auto: false,
         distance: 8192.0,
@@ -424,15 +431,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["m4a1_unsil-1", "m4a1_unsil-2"],
         css_view_model: "v_rif_m4a1",
         css_fire_sound: "Weapon_M4A1.Single",
-        price: 3100,
-        damage: 32.0,
-        range_modifier: 0.97,
-        cycle: 0.0875,
-        clip: 30,
-        reserve: 90,
-        reload: 3.05,
-        max_speed: 230.0,
-        max_speed_zoomed: 230.0,
+        price: 2900,
+        damage: 38.0,
+        range_modifier: 0.94,
+        cycle: 0.1,
+        clip: 20,
+        reserve: 80,
+        reload: 3.067,
+        max_speed: 225.0,
+        max_speed_zoomed: 225.0,
         zoom: &[],
         semi_auto: false,
         distance: 8192.0,
@@ -462,8 +469,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         },
         // `M4A1_DAMAGE_SIL`, `M4A1_RANGE_MODIFER_SIL`; standing spread 0.025 (not 0.02).
         silencer: Some(CsSilencer {
-            damage: 33.0,
-            range_modifier: 0.95,
+            damage: 38.0,
+            range_modifier: 0.94,
             spread: CsSpread::Rifle {
                 air: (0.035, 0.4),
                 run: (0.035, 0.07),
@@ -485,12 +492,12 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         price: 4750,
         damage: 115.0,
         range_modifier: 0.99,
-        cycle: 1.45,
-        clip: 10,
+        cycle: 1.455,
+        clip: 5,
         reserve: 30,
-        reload: 2.5,
-        max_speed: 210.0,
-        max_speed_zoomed: 150.0,
+        reload: 3.667,
+        max_speed: 200.0,
+        max_speed_zoomed: 100.0,
         zoom: &[40, 10],
         semi_auto: true,
         distance: 8192.0,
@@ -520,15 +527,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["deagle-1", "deagle-2"],
         css_view_model: "v_pist_deagle",
         css_fire_sound: "Weapon_DEagle.Single",
-        price: 650,
-        damage: 54.0,
-        range_modifier: 0.81,
+        price: 700,
+        damage: 53.0,
+        range_modifier: 0.85,
         cycle: 0.225,
         clip: 7,
         reserve: 35,
         reload: 2.2,
-        max_speed: 250.0,
-        max_speed_zoomed: 250.0,
+        max_speed: 230.0,
+        max_speed_zoomed: 230.0,
         zoom: &[],
         semi_auto: true,
         distance: 4096.0,
@@ -561,15 +568,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["usp_unsil-1"],
         css_view_model: "v_pist_usp",
         css_fire_sound: "Weapon_USP.Single",
-        price: 500,
-        damage: 34.0,
-        range_modifier: 0.79,
-        cycle: 0.15,
+        price: 200,
+        damage: 35.0,
+        range_modifier: 0.91,
+        cycle: 0.17,
         clip: 12,
-        reserve: 100,
-        reload: 2.7,
-        max_speed: 250.0,
-        max_speed_zoomed: 250.0,
+        reserve: 24,
+        reload: 2.167,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
         zoom: &[],
         semi_auto: true,
         distance: 4096.0,
@@ -594,8 +601,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         },
         // `USP_DAMAGE_SIL`, `USP_ADJUST_SIL_TIME` (retail 3.0).
         silencer: Some(CsSilencer {
-            damage: 30.0,
-            range_modifier: 0.79,
+            damage: 35.0,
+            range_modifier: 0.91,
             spread: CsSpread::Pistol {
                 air: 1.3,
                 moving: 0.25,
@@ -616,18 +623,18 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["glock18-2"],
         css_view_model: "v_pist_glock18",
         css_fire_sound: "Weapon_Glock.Single",
-        price: 400,
-        damage: 25.0,
-        range_modifier: 0.75,
+        price: 200,
+        damage: 30.0,
+        range_modifier: 0.85,
         cycle: 0.15,
         clip: 20,
         reserve: 120,
-        reload: 2.2,
-        max_speed: 250.0,
-        max_speed_zoomed: 250.0,
+        reload: 2.267,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
         zoom: &[],
         semi_auto: true,
-        distance: 8192.0,
+        distance: 4096.0,
         spread: CsSpread::Pistol {
             air: 1.0,
             moving: 0.165,
@@ -651,11 +658,11 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         // first fire at spread 0.05 with range modifier 0.9 (`FireRemaining`).
         burst: Some(CsBurst {
             shots: 3,
-            first_gap: 0.1,
-            gap: 0.1,
+            first_gap: 0.05,
+            gap: 0.05,
             cycle: 0.5,
-            damage: 25.0,
-            range_modifier: 0.75,
+            damage: 30.0,
+            range_modifier: 0.85,
             spread: CsSpread::Pistol {
                 air: 1.2,
                 moving: 0.185,
@@ -663,7 +670,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
                 standing: 0.3,
             },
             follow_spread: Some(0.05),
-            follow_range_modifier: Some(0.9),
+            follow_range_modifier: None,
             fire_sounds: &["glock18-1"],
             css_fire_sound: "Weapon_Glock.Single",
         }),
@@ -677,13 +684,13 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["p228-1"],
         css_view_model: "v_pist_p228",
         css_fire_sound: "Weapon_P228.Single",
-        price: 600,
-        damage: 32.0,
-        range_modifier: 0.8,
+        price: 300,
+        damage: 38.0,
+        range_modifier: 0.9,
         cycle: 0.15,
         clip: 13,
-        reserve: 52,
-        reload: 2.7,
+        reserve: 26,
+        reload: 2.267,
         semi_auto: true,
         distance: 4096.0,
         spread: CsSpread::Pistol {
@@ -705,6 +712,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 8.0,
             delta: 3.0,
         },
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
         ..BASE
     },
     CsWeapon {
@@ -714,13 +723,13 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["fiveseven-1"],
         css_view_model: "v_pist_fiveseven",
         css_fire_sound: "Weapon_FiveSeven.Single",
-        price: 750,
-        damage: 20.0,
-        range_modifier: 0.885,
+        price: 500,
+        damage: 32.0,
+        range_modifier: 0.81,
         cycle: 0.15,
         clip: 20,
         reserve: 100,
-        reload: 2.7,
+        reload: 2.267,
         semi_auto: true,
         distance: 4096.0,
         spread: CsSpread::Pistol {
@@ -742,6 +751,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 8.0,
             delta: 3.0,
         },
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
         ..BASE
     },
     CsWeapon {
@@ -751,14 +762,14 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["elite_fire"],
         css_view_model: "v_pist_elite",
         css_fire_sound: "Weapon_Elite.Single",
-        price: 800,
-        damage: 36.0,
-        range_modifier: 0.75,
+        price: 300,
+        damage: 38.0,
+        range_modifier: 0.79,
         // `ELITEFire`: 0.2 s less the retail 0.125 s.
-        cycle: 0.075,
+        cycle: 0.12,
         clip: 30,
         reserve: 120,
-        reload: 4.5,
+        reload: 3.767,
         semi_auto: true,
         distance: 4096.0,
         spread: CsSpread::Pistol {
@@ -781,6 +792,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             delta: 3.0,
         },
         dual: true,
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
         ..BASE
     },
     // ---- Shotguns ----
@@ -791,13 +804,13 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["m3-1"],
         css_view_model: "v_shot_m3super90",
         css_fire_sound: "Weapon_M3.Single",
-        price: 1700,
-        damage: 20.0,
-        cycle: 0.875,
+        price: 1050,
+        damage: 26.0,
+        cycle: 0.88,
         clip: 8,
         reserve: 32,
-        max_speed: 230.0,
-        max_speed_zoomed: 230.0,
+        max_speed: 220.0,
+        max_speed_zoomed: 220.0,
         semi_auto: true,
         distance: 3000.0,
         spread: CsSpread::Cone(0.0675),
@@ -810,7 +823,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             delta: 6.0,
         },
         pellets: 9,
-        shell_reload: Some((0.55, 0.45, 0.45)),
+        shell_reload: Some((0.5, 0.5, 0.45)),
+        range_modifier: 0.7,
         ..BASE
     },
     CsWeapon {
@@ -820,15 +834,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["xm1014-1"],
         css_view_model: "v_shot_xm1014",
         css_fire_sound: "Weapon_XM1014.Single",
-        price: 3000,
+        price: 2000,
         damage: 20.0,
-        cycle: 0.25,
+        cycle: 0.35,
         clip: 7,
         reserve: 32,
-        max_speed: 240.0,
-        max_speed_zoomed: 240.0,
-        semi_auto: true,
-        distance: 3048.0,
+        max_speed: 215.0,
+        max_speed_zoomed: 215.0,
+        semi_auto: false,
+        distance: 3000.0,
         spread: CsSpread::Cone(0.0725),
         recoil: CsRecoil::Shotgun {
             ground: (3, 5),
@@ -839,7 +853,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             delta: 4.0,
         },
         pellets: 6,
-        shell_reload: Some((0.55, 0.3, 0.4)),
+        shell_reload: Some((0.5, 0.5, 0.4)),
+        range_modifier: 0.7,
         ..BASE
     },
     // ---- Submachine guns ----
@@ -850,13 +865,13 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["mac10-1"],
         css_view_model: "v_smg_mac10",
         css_fire_sound: "Weapon_MAC10.Single",
-        price: 1400,
+        price: 1050,
         damage: 29.0,
-        range_modifier: 0.82,
-        cycle: 0.07,
+        range_modifier: 0.8,
+        cycle: 0.075,
         clip: 30,
         reserve: 100,
-        reload: 3.15,
+        reload: 2.567,
         spread: CsSpread::Rifle {
             air: (0.0, 0.375),
             run: (0.0, 0.03),
@@ -880,6 +895,10 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 9.0,
             delta: 3.0,
         },
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        semi_auto: false,
+        distance: 3600.0,
         ..BASE
     },
     CsWeapon {
@@ -890,12 +909,12 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         css_view_model: "v_smg_tmp",
         css_fire_sound: "Weapon_TMP.Single",
         price: 1250,
-        damage: 20.0,
-        range_modifier: 0.85,
+        damage: 26.0,
+        range_modifier: 0.87,
         cycle: 0.07,
         clip: 30,
         reserve: 120,
-        reload: 2.12,
+        reload: 2.133,
         spread: CsSpread::Rifle {
             air: (0.0, 0.25),
             run: (0.0, 0.03),
@@ -919,6 +938,10 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 7.0,
             delta: 3.0,
         },
+        max_speed: 240.0,
+        max_speed_zoomed: 240.0,
+        semi_auto: false,
+        distance: 3600.0,
         ..BASE
     },
     CsWeapon {
@@ -929,12 +952,12 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         css_view_model: "v_smg_mp5",
         css_fire_sound: "Weapon_MP5Navy.Single",
         price: 1500,
-        damage: 26.0,
-        range_modifier: 0.84,
-        cycle: 0.075,
+        damage: 27.0,
+        range_modifier: 0.85,
+        cycle: 0.08,
         clip: 30,
         reserve: 120,
-        reload: 2.63,
+        reload: 2.943,
         spread: CsSpread::Rifle {
             air: (0.0, 0.2),
             run: (0.0, 0.04),
@@ -959,6 +982,10 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 6.0,
             delta: 3.0,
         },
+        max_speed: 235.0,
+        max_speed_zoomed: 220.0,
+        semi_auto: false,
+        distance: 3600.0,
         ..BASE
     },
     CsWeapon {
@@ -968,13 +995,13 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["ump45-1"],
         css_view_model: "v_smg_ump45",
         css_fire_sound: "Weapon_UMP45.Single",
-        price: 1700,
-        damage: 30.0,
-        range_modifier: 0.82,
-        cycle: 0.1,
+        price: 1200,
+        damage: 35.0,
+        range_modifier: 0.75,
+        cycle: 0.09,
         clip: 25,
         reserve: 100,
-        reload: 3.5,
+        reload: 3.433,
         spread: CsSpread::Rifle {
             air: (0.0, 0.24),
             run: (0.0, 0.04),
@@ -998,6 +1025,10 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 6.0,
             delta: 3.0,
         },
+        max_speed: 230.0,
+        max_speed_zoomed: 230.0,
+        semi_auto: false,
+        distance: 3700.0,
         ..BASE
     },
     CsWeapon {
@@ -1008,14 +1039,14 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         css_view_model: "v_smg_p90",
         css_fire_sound: "Weapon_P90.Single",
         price: 2350,
-        damage: 21.0,
-        range_modifier: 0.885,
-        cycle: 0.066,
+        damage: 26.0,
+        range_modifier: 0.86,
+        cycle: 0.07,
         clip: 50,
         reserve: 100,
-        reload: 3.4,
-        max_speed: 245.0,
-        max_speed_zoomed: 245.0,
+        reload: 3.367,
+        max_speed: 230.0,
+        max_speed_zoomed: 230.0,
         spread: CsSpread::Rifle {
             air: (0.0, 0.3),
             run: (0.0, 0.115),
@@ -1040,6 +1071,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             delta: 4.0,
         },
         run_speed: 170.0,
+        semi_auto: false,
+        distance: 3700.0,
         ..BASE
     },
     // ---- Rifles ----
@@ -1050,15 +1083,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["galil-1", "galil-2"],
         css_view_model: "v_rif_galil",
         css_fire_sound: "Weapon_Galil.Single",
-        price: 2000,
+        price: 1800,
         damage: 30.0,
         range_modifier: 0.98,
-        cycle: 0.0875,
+        cycle: 0.09,
         clip: 35,
         reserve: 90,
-        reload: 2.45,
-        max_speed: 240.0,
-        max_speed_zoomed: 240.0,
+        reload: 3.033,
+        max_speed: 215.0,
+        max_speed_zoomed: 215.0,
         spread: CsSpread::Rifle {
             air: (0.04, 0.3),
             run: (0.04, 0.07),
@@ -1082,6 +1115,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 4.0,
             delta: 4.0,
         },
+        semi_auto: false,
+        distance: 8192.0,
         ..BASE
     },
     CsWeapon {
@@ -1091,15 +1126,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["famas-1", "famas-2"],
         css_view_model: "v_rif_famas",
         css_fire_sound: "Weapon_FAMAS.Single",
-        price: 2250,
+        price: 2050,
         damage: 30.0,
         range_modifier: 0.96,
-        cycle: 0.0825,
+        cycle: 0.09,
         clip: 25,
         reserve: 90,
-        reload: 3.3,
-        max_speed: 240.0,
-        max_speed_zoomed: 240.0,
+        reload: 3.296,
+        max_speed: 220.0,
+        max_speed_zoomed: 220.0,
         // Full auto adds 0.01 to the spread (`FamasFire`); burst does not.
         spread: CsSpread::Rifle {
             air: (0.04, 0.3),
@@ -1128,10 +1163,10 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         // before the next burst; the later bullets keep the first one's spread.
         burst: Some(CsBurst {
             shots: 3,
-            first_gap: 0.05,
-            gap: 0.1,
+            first_gap: 0.075,
+            gap: 0.075,
             cycle: 0.55,
-            damage: 34.0,
+            damage: 30.0,
             range_modifier: 0.96,
             spread: CsSpread::Rifle {
                 air: (0.03, 0.3),
@@ -1143,6 +1178,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             fire_sounds: &["famas-burst"],
             css_fire_sound: "Weapon_FAMAS.Single",
         }),
+        semi_auto: false,
+        distance: 8192.0,
         ..BASE
     },
     CsWeapon {
@@ -1152,15 +1189,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["sg552-1", "sg552-2"],
         css_view_model: "v_rif_sg552",
         css_fire_sound: "Weapon_SG552.Single",
-        price: 3500,
-        damage: 33.0,
-        range_modifier: 0.955,
-        cycle: 0.0825,
+        price: 3000,
+        damage: 30.0,
+        range_modifier: 0.98,
+        cycle: 0.11,
         clip: 30,
         reserve: 90,
-        reload: 3.0,
-        max_speed: 235.0,
-        max_speed_zoomed: 200.0,
+        reload: 2.767,
+        max_speed: 210.0,
+        max_speed_zoomed: 150.0,
         zoom: &[55],
         spread: CsSpread::Rifle {
             air: (0.035, 0.45),
@@ -1187,6 +1224,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         },
         cycle_zoomed: 0.135,
         unzoom_on_fire: false,
+        semi_auto: false,
+        distance: 8192.0,
         ..BASE
     },
     CsWeapon {
@@ -1196,15 +1235,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["aug-1"],
         css_view_model: "v_rif_aug",
         css_fire_sound: "Weapon_AUG.Single",
-        price: 3500,
-        damage: 32.0,
-        range_modifier: 0.96,
-        cycle: 0.0825,
+        price: 3300,
+        damage: 28.0,
+        range_modifier: 0.98,
+        cycle: 0.1,
         clip: 30,
         reserve: 90,
-        reload: 3.3,
-        max_speed: 240.0,
-        max_speed_zoomed: 240.0,
+        reload: 3.767,
+        max_speed: 220.0,
+        max_speed_zoomed: 150.0,
         zoom: &[55],
         spread: CsSpread::Rifle {
             air: (0.035, 0.4),
@@ -1231,6 +1270,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         },
         cycle_zoomed: 0.135,
         unzoom_on_fire: false,
+        semi_auto: false,
+        distance: 8192.0,
         ..BASE
     },
     // ---- Snipers ----
@@ -1241,15 +1282,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["scout_fire-1"],
         css_view_model: "v_snip_scout",
         css_fire_sound: "Weapon_Scout.Single",
-        price: 2750,
-        damage: 75.0,
+        price: 1700,
+        damage: 88.0,
         range_modifier: 0.98,
         cycle: 1.25,
         clip: 10,
         reserve: 90,
-        reload: 2.0,
-        max_speed: 260.0,
-        max_speed_zoomed: 220.0,
+        reload: 3.7,
+        max_speed: 230.0,
+        max_speed_zoomed: 230.0,
         zoom: &[40, 15],
         semi_auto: true,
         spread: CsSpread::Sniper {
@@ -1267,6 +1308,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         },
         run_speed: 170.0,
         scope_overlay: true,
+        distance: 8192.0,
         ..BASE
     },
     CsWeapon {
@@ -1282,11 +1324,11 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.25,
         clip: 20,
         reserve: 90,
-        reload: 3.5,
-        max_speed: 210.0,
-        max_speed_zoomed: 150.0,
+        reload: 4.667,
+        max_speed: 215.0,
+        max_speed_zoomed: 120.0,
         zoom: &[40, 15],
-        semi_auto: true,
+        semi_auto: false,
         spread: CsSpread::AutoSniper {
             air: 0.45,
             moving: 0.15,
@@ -1312,6 +1354,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         },
         unzoom_on_fire: false,
         scope_overlay: true,
+        distance: 8192.0,
         ..BASE
     },
     CsWeapon {
@@ -1321,17 +1364,17 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["sg550-1"],
         css_view_model: "v_snip_sg550",
         css_fire_sound: "Weapon_SG550.Single",
-        price: 4200,
-        damage: 70.0,
+        price: 5000,
+        damage: 80.0,
         range_modifier: 0.98,
         cycle: 0.25,
-        clip: 30,
+        clip: 20,
         reserve: 90,
-        reload: 3.35,
-        max_speed: 210.0,
-        max_speed_zoomed: 150.0,
+        reload: 3.067,
+        max_speed: 215.0,
+        max_speed_zoomed: 120.0,
         zoom: &[40, 15],
-        semi_auto: true,
+        semi_auto: false,
         spread: CsSpread::AutoSniper {
             air: 0.45,
             moving: 0.15,
@@ -1357,6 +1400,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         },
         unzoom_on_fire: false,
         scope_overlay: true,
+        distance: 8192.0,
         ..BASE
     },
     // ---- Machine gun ----
@@ -1367,15 +1411,15 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["m249-1", "m249-2"],
         css_view_model: "v_mach_m249para",
         css_fire_sound: "Weapon_M249.Single",
-        price: 5750,
+        price: 5200,
         damage: 32.0,
         range_modifier: 0.97,
-        cycle: 0.1,
+        cycle: 0.08,
         clip: 100,
         reserve: 200,
-        reload: 4.7,
-        max_speed: 220.0,
-        max_speed_zoomed: 220.0,
+        reload: 5.7,
+        max_speed: 195.0,
+        max_speed_zoomed: 195.0,
         spread: CsSpread::Rifle {
             air: (0.045, 0.5),
             run: (0.045, 0.095),
@@ -1399,6 +1443,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 6.0,
             delta: 6.0,
         },
+        semi_auto: false,
+        distance: 8192.0,
         ..BASE
     },
     // CS:GO's M4A4: CS:GO's numbers (`weapon_m4a1`), the m4a1's CS 1.6 handling.
@@ -1415,7 +1461,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.09,
         clip: 30,
         reserve: 90,
-        reload: 3.1,
+        reload: 3.067,
         max_speed: 225.0,
         max_speed_zoomed: 225.0,
         semi_auto: false,
@@ -1460,7 +1506,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.08,
         clip: 30,
         reserve: 120,
-        reload: 3.1,
+        reload: 3.133,
         max_speed: 220.0,
         max_speed_zoomed: 220.0,
         semi_auto: false,
@@ -1504,7 +1550,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.08,
         clip: 64,
         reserve: 120,
-        reload: 2.4,
+        reload: 2.433,
         max_speed: 240.0,
         max_speed_zoomed: 240.0,
         semi_auto: false,
@@ -1548,7 +1594,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.85,
         clip: 5,
         reserve: 32,
-        reload: 2.5,
+        reload: 2.467,
         max_speed: 225.0,
         max_speed_zoomed: 225.0,
         semi_auto: true,
@@ -1592,7 +1638,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
             gap: 8.0,
             delta: 6.0,
         },
-        shell_reload: Some((0.55, 0.45, 0.45)),
+        shell_reload: Some((0.5, 0.5, 0.45)),
         pellets: 8,
         ..BASE
     },
@@ -1654,7 +1700,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.17,
         clip: 13,
         reserve: 52,
-        reload: 2.2,
+        reload: 2.267,
         max_speed: 240.0,
         max_speed_zoomed: 240.0,
         semi_auto: true,
@@ -1694,7 +1740,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.12,
         clip: 18,
         reserve: 90,
-        reload: 2.5,
+        reload: 2.567,
         max_speed: 240.0,
         max_speed_zoomed: 240.0,
         semi_auto: true,
@@ -1734,7 +1780,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.1,
         clip: 12,
         reserve: 12,
-        reload: 2.7,
+        reload: 2.733,
         max_speed: 240.0,
         max_speed_zoomed: 240.0,
         semi_auto: false,
@@ -1774,7 +1820,7 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         cycle: 0.5,
         clip: 8,
         reserve: 8,
-        reload: 2.3,
+        reload: 2.267,
         max_speed: 180.0,
         max_speed_zoomed: 220.0,
         semi_auto: false,
@@ -2675,54 +2721,79 @@ pub const CS_ARMOR_BONUS: f32 = 0.5;
 pub const CS_KEVLAR_PRICE: i32 = 650;
 pub const CS_KEVLAR_HELMET_PRICE: i32 = 1000;
 
-/// How much more of its damage a CS weapon puts through kevlar (`TakeDamage`'s `flRatio *=`).
+/// How much more of its damage a CS weapon puts through kevlar: CS:GO's `armor ratio` (the
+/// grenade's for every blast).
 #[must_use]
 pub fn armor_penetration(index: u8) -> f32 {
     if is_knife(index) {
         return 1.7;
     }
-    // `TakeDamage`'s per-weapon `flRatio *=`.
+    if cs_grenade(index).is_some() {
+        return 1.2;
+    }
     match cs_weapon(index).map(|w| w.name) {
-        Some("ak47" | "galil") => 1.55,
-        Some("m4a1" | "aug" | "famas" | "sg552") => 1.4,
-        Some("awp") => 1.95,
-        Some("g3sg1") => 1.65,
-        Some("sg550") => 1.45,
-        Some("m249") => 1.5,
-        Some("deagle" | "fiveseven" | "p90") => 1.5,
-        Some("glock" | "elite") => 1.05,
-        Some("mac10") => 0.95,
-        Some("p228") => 1.25,
-        Some("scout") => 1.7,
-        Some("m4a4") => 1.4,
-        Some("mp7") => 1.25,
+        Some("glock") => 0.94,
+        Some("m3") => 1.0,
+        Some("usp" | "p2000") => 1.01,
+        Some("elite" | "mac10") => 1.15,
+        Some("tmp") => 1.2,
+        Some("mp5" | "mp7") => 1.25,
         Some("bizon") => 1.26,
-        Some("mag7") => 1.5,
-        Some("sawedoff") => 1.5,
+        Some("p228") => 1.28,
+        Some("ump45") => 1.3,
+        Some("p90") => 1.38,
+        Some("m4a1" | "famas" | "m4a4") => 1.4,
         Some("negev") => 1.42,
-        Some("p2000") => 1.01,
-        Some("tec9") => 1.812,
+        Some("mag7" | "sawedoff") => 1.5,
+        Some("ak47" | "galil") => 1.55,
         Some("cz75a") => 1.553,
-        Some("revolver") => 1.864,
+        Some("xm1014" | "m249") => 1.6,
+        Some("g3sg1" | "sg550") => 1.65,
+        Some("scout") => 1.7,
+        Some("aug") => 1.8,
+        Some("tec9") => 1.812,
+        Some("fiveseven") => 1.823,
+        Some("deagle" | "revolver") => 1.864,
+        Some("awp") => 1.95,
+        Some("sg552") => 2.0,
         _ => 1.0,
     }
 }
 
-/// Damage after kevlar, and the armour left: `damage` on a covered hit with `armor` points,
-/// from a weapon with `penetration` ([`armor_penetration`]), `blast` for explosions.
+/// The money a kill with CS weapon `index` pays (CS:GO's `kill award`): $1500 for the knife,
+/// $100 for the AWP, $600 for most SMGs, $900 for shotguns, $300 for the rest.
 #[must_use]
-pub fn armor_absorb(damage: f32, armor: f32, penetration: f32, blast: bool) -> (f32, f32) {
+pub fn kill_award(index: u8) -> i32 {
+    if is_knife(index) {
+        return 1500;
+    }
+    if cs_grenade(index).is_some() {
+        return 300;
+    }
+    match cs_weapon(index).map(|w| w.name) {
+        Some("awp" | "cz75a") => 100,
+        Some("mac10" | "tmp" | "mp5" | "ump45" | "mp7" | "bizon") => 600,
+        Some("m3" | "xm1014" | "mag7" | "sawedoff") => 900,
+        _ => 300,
+    }
+}
+
+/// Damage after kevlar, and the armour left: `damage` on a covered hit with `armor` points,
+/// from a weapon with `penetration` ([`armor_penetration`]; a blast passes the grenade's).
+/// CS:GO `OnTakeDamage`: half the damage times the ratio goes through, the vest pays half the
+/// rest from its points.
+#[must_use]
+pub fn armor_absorb(damage: f32, armor: f32, penetration: f32) -> (f32, f32) {
     if armor <= 0.0 {
         return (damage, 0.0);
     }
-    let bonus = if blast { CS_ARMOR_BONUS * 2.0 } else { CS_ARMOR_BONUS };
     let kept = CS_ARMOR_RATIO * penetration * damage;
-    let cost = (damage - kept) * bonus;
+    let cost = (damage - kept) * CS_ARMOR_BONUS;
     if cost > armor {
         // The vest gives out: it stops what its points pay for, the rest goes through.
-        (damage - armor / bonus, 0.0)
+        (damage - armor / CS_ARMOR_BONUS, 0.0)
     } else {
-        (kept, armor - cost.max(1.0))
+        (kept, armor - if cost < 0.0 { 1.0 } else { cost })
     }
 }
 
@@ -2960,14 +3031,28 @@ pub fn apply_overrides(facts: &mut WeaponCombatFacts, index: u8) -> Option<(f32,
     ))
 }
 
-/// CS 1.6 `DefaultDeploy`: the drawn weapon can attack 0.75 s later (`m_flNextAttack`); the AWP
-/// (1.45 s) and Scout (1.25 s) take longer. The knife and grenades deploy like any gun.
+/// CS:GO `DefaultDeploy`: a drawn weapon can attack once its draw animation has played (its
+/// viewmodel's `ACT_VM_DRAW` length); the knife after a fixed second, grenades and the C4 after
+/// theirs.
 #[must_use]
 pub fn deploy_seconds(index: u8) -> f32 {
+    if is_knife(index) {
+        return 1.0;
+    }
+    if is_c4(index) {
+        return 1.2;
+    }
+    if cs_grenade(index).is_some() {
+        return 1.0;
+    }
     match cs_weapon(index).map(|weapon| weapon.name) {
-        Some("awp") => 1.45,
-        Some("scout") => 1.25,
-        _ => 0.75,
+        Some("glock" | "galil" | "m249" | "bizon" | "negev") => 1.1,
+        Some("m4a1" | "m4a4") => 1.133,
+        Some("aug" | "revolver") => 1.167,
+        Some("tmp") => 1.2,
+        Some("awp") => 1.25,
+        Some("cz75a") => 1.833,
+        _ => 1.0,
     }
 }
 
@@ -3436,17 +3521,18 @@ mod tests {
     #[test]
     fn kevlar_soaks_like_cs() {
         // AK body shot into full kevlar: 36 * 0.775 = 27.9 through, vest pays 4.05.
-        let (through, left) = armor_absorb(36.0, 100.0, armor_penetration(1), false);
+        let (through, left) = armor_absorb(36.0, 100.0, armor_penetration(1));
         assert!((through - 27.9).abs() < 1e-3 && (left - 95.95).abs() < 1e-3);
-        // USP into kevlar: half goes through.
+        // USP-S into kevlar: a little over half goes through (armour ratio 1.01).
         let usp = cs_weapon_index_for("usp_mp").expect("usp");
-        assert_eq!(armor_absorb(34.0, 100.0, armor_penetration(usp), false).0, 17.0);
+        assert!((armor_absorb(35.0, 100.0, armor_penetration(usp)).0 - 17.675).abs() < 1e-3);
         // A worn-out vest stops only what its points pay for.
-        let (through, left) = armor_absorb(100.0, 10.0, 1.0, false);
+        let (through, left) = armor_absorb(100.0, 10.0, 1.0);
         assert_eq!((through, left), (80.0, 0.0));
-        // HE at 100 into full kevlar: 50 through, blast bonus makes the vest pay 50.
-        assert_eq!(armor_absorb(100.0, 100.0, 1.0, true), (50.0, 50.0));
-        assert_eq!(armor_absorb(50.0, 0.0, 1.55, false), (50.0, 0.0));
+        // HE at 100 into full kevlar, at the grenade's ratio 1.2: 60 through, the vest pays 20.
+        let (through, left) = armor_absorb(100.0, 100.0, armor_penetration(CS_GRENADE_INDEX));
+        assert!((through - 60.0).abs() < 1e-3 && (left - 80.0).abs() < 1e-3);
+        assert_eq!(armor_absorb(50.0, 0.0, 1.55), (50.0, 0.0));
     }
 
     #[test]
@@ -3515,12 +3601,13 @@ mod tests {
         let index = |name: &str| {
             CS_WEAPONS.iter().position(|w| w.name == name).expect("weapon") as u8 + 1
         };
-        assert_eq!(deploy(index("ak47")), (1, 750, 750));
-        assert_eq!(deploy(index("deagle")), (1, 750, 750));
-        assert_eq!(deploy(index("awp")), (1, 1450, 1450));
-        assert_eq!(deploy(index("scout")), (1, 1250, 1250));
-        assert_eq!(deploy(CS_KNIFE_INDEX), (1, 750, 750));
-        assert_eq!(deploy(CS_GRENADE_INDEX), (1, 750, 750));
+        assert_eq!(deploy(index("ak47")), (1, 1000, 1000));
+        assert_eq!(deploy(index("deagle")), (1, 1000, 1000));
+        assert_eq!(deploy(index("awp")), (1, 1250, 1250));
+        assert_eq!(deploy(index("m4a1")), (1, 1133, 1133));
+        assert_eq!(deploy(index("cz75a")), (1, 1833, 1833));
+        assert_eq!(deploy(CS_KNIFE_INDEX), (1, 1000, 1000));
+        assert_eq!(deploy(CS_GRENADE_INDEX), (1, 1000, 1000));
     }
 
     #[test]
@@ -3529,7 +3616,7 @@ mod tests {
         assert!((damage_at_distance(ak, 0.0) - 36.0).abs() < 1e-4);
         assert!((damage_at_distance(ak, 500.0) - 36.0 * 0.98).abs() < 1e-3);
         let deagle = weapon("deagle");
-        assert!((damage_at_distance(deagle, 1000.0) - 54.0 * 0.81 * 0.81).abs() < 1e-3);
+        assert!((damage_at_distance(deagle, 1000.0) - 53.0 * 0.85 * 0.85).abs() < 1e-3);
         assert_eq!(damage_at_distance(deagle, 5000.0), 0.0);
         // An AK head hit at close range is lethal without armour.
         assert!(damage_at_distance(ak, 100.0) * CS_LOCATION_DAMAGE[2] > 100.0);
@@ -3546,12 +3633,11 @@ mod tests {
         let (m4, usp) = (weapon("m4a1"), weapon("usp"));
         let (m4_sil, usp_sil) = (m4.with_silencer(true), usp.with_silencer(true));
         assert_eq!(m4.with_silencer(false), *m4);
-        // M4A1 hits harder but loses range; the USP loses damage and range.
-        assert!((damage_at_distance(m4, 0.0) - 32.0).abs() < 1e-4);
-        assert!((damage_at_distance(&m4_sil, 0.0) - 33.0).abs() < 1e-4);
-        assert!(damage_at_distance(&m4_sil, 1000.0) < damage_at_distance(m4, 1000.0));
-        assert!((damage_at_distance(usp, 0.0) - 34.0).abs() < 1e-4);
-        assert!((damage_at_distance(&usp_sil, 0.0) - 30.0).abs() < 1e-4);
+        // CS:GO's silencer changes neither damage nor falloff.
+        assert!((damage_at_distance(m4, 0.0) - 38.0).abs() < 1e-4);
+        assert_eq!(damage_at_distance(&m4_sil, 1000.0), damage_at_distance(m4, 1000.0));
+        assert!((damage_at_distance(usp, 0.0) - 35.0).abs() < 1e-4);
+        assert_eq!(damage_at_distance(&usp_sil, 0.0), damage_at_distance(usp, 0.0));
         // The silenced gunshot differs, and the silencer bit is one per weapon index.
         assert_ne!(m4_sil.css_fire_sound, m4.css_fire_sound);
         assert_ne!(usp_sil.css_fire_sound, usp.css_fire_sound);
@@ -3608,7 +3694,7 @@ mod tests {
         let burst = famas.with_burst(1);
         assert_eq!(famas.with_burst(0), *famas);
         assert!((damage_at_distance(famas, 0.0) - 30.0).abs() < 1e-4);
-        assert!((damage_at_distance(&burst, 0.0) - 34.0).abs() < 1e-4);
+        assert_eq!(damage_at_distance(&burst, 0.0), damage_at_distance(famas, 0.0));
         // Full auto adds 0.01 to a still FAMAS's spread; burst does not.
         let auto = spread(famas, 0.5, STANDING);
         let first = spread(&burst, 0.5, STANDING);
@@ -3616,8 +3702,8 @@ mod tests {
         let glock = weapon("glock");
         let mode = glock.burst.expect("burst");
         assert_eq!(mode.follow_spread, Some(0.05));
-        assert!((damage_at_distance(&glock.with_burst(2), 500.0) - 25.0 * 0.9).abs() < 1e-4);
-        assert!((damage_at_distance(&glock.with_burst(1), 500.0) - 25.0 * 0.75).abs() < 1e-4);
+        assert!((damage_at_distance(&glock.with_burst(2), 500.0) - 30.0 * 0.85).abs() < 1e-4);
+        assert!((damage_at_distance(&glock.with_burst(1), 500.0) - 30.0 * 0.85).abs() < 1e-4);
         // Only these two have a burst mode, and the CS layer times them.
         assert_eq!(CS_WEAPONS.iter().filter(|w| w.burst.is_some()).count(), 2);
         assert!(famas.gated() && glock.gated() && !weapon("ak47").gated());
@@ -3655,11 +3741,13 @@ mod tests {
 
     #[test]
     fn shotguns_fire_pellets_and_kick_by_ground_or_air() {
-        for (name, pellets, damage) in [("m3", 9, 20.0), ("xm1014", 6, 20.0)] {
+        // CS:GO's shotguns lose damage fast: 0.7 per 500 units.
+        for (name, pellets, damage) in [("m3", 9, 26.0), ("xm1014", 6, 20.0)] {
             let gun = weapon(name);
             assert_eq!(gun.pellets, pellets);
             assert!(gun.shell_reload.is_some());
-            assert!((damage_at_distance(gun, 1000.0) - damage).abs() < 1e-4, "no falloff");
+            assert!((damage_at_distance(gun, 0.0) - damage).abs() < 1e-4);
+            assert!((damage_at_distance(gun, 1000.0) - damage * 0.49).abs() < 1e-3);
         }
         let m3 = weapon("m3");
         let mut state = fresh(m3);
@@ -3680,9 +3768,10 @@ mod tests {
         };
         assert_eq!(armor_penetration(index("scout")), 1.7);
         assert_eq!(armor_penetration(index("g3sg1")), 1.65);
-        assert_eq!(armor_penetration(index("mac10")), 0.95);
+        assert_eq!(armor_penetration(index("mac10")), 1.15);
         assert_eq!(armor_penetration(index("galil")), 1.55);
-        assert_eq!(armor_penetration(index("mp5")), 1.0);
+        assert_eq!(armor_penetration(index("mp5")), 1.25);
+        assert_eq!(armor_penetration(index("sg552")), 2.0);
     }
 
     #[test]
@@ -3818,12 +3907,12 @@ mod tests {
         let index = cs_weapon_index_for("ak47_mp").expect("ak");
         let (hip, zoomed) = apply_overrides(&mut facts, index).expect("applied");
         assert_eq!(facts.cs_weapon, index);
-        assert_eq!(facts.fire_time_ms, 96);
+        assert_eq!(facts.fire_time_ms, 100);
         assert_eq!(facts.clip_size, 30);
         assert_eq!(facts.start_ammo, 120);
         assert_eq!(facts.fire_type, 0);
         assert!(!facts.aim_down_sight);
-        assert!((hip - 221.0 / 250.0).abs() < 1e-6 && hip == zoomed);
+        assert!((hip - 215.0 / 250.0).abs() < 1e-6 && hip == zoomed);
 
         let mut awp = WeaponCombatFacts::none();
         awp.bolt_action = true;
@@ -3831,16 +3920,16 @@ mod tests {
         awp.aim_down_sight = true;
         let awp_index = cs_weapon_index_for("cheytac_mp").expect("awp");
         let (_, zoomed) = apply_overrides(&mut awp, awp_index).expect("applied");
-        assert_eq!(awp.fire_time_ms, 450);
+        assert_eq!(awp.fire_time_ms, 455);
         assert!(!awp.aim_down_sight);
-        assert!((zoomed - 0.6).abs() < 1e-6);
+        assert!((zoomed - 0.4).abs() < 1e-6);
     }
 
     #[test]
     fn shotgun_reloads_a_shell_per_pass_and_gated_guns_get_a_short_fire_time() {
         // Every pass of the reload loop is one shell, so it lasts the per-shell time (it once
         // took the whole 3 s reload per shell).
-        for (twin, start, per_shell, finish) in [("spas12_mp", 550, 450, 450), ("m1014_mp", 550, 300, 400)] {
+        for (twin, start, per_shell, finish) in [("spas12_mp", 500, 500, 450), ("m1014_mp", 500, 500, 400)] {
             let mut facts = WeaponCombatFacts::none();
             let index = cs_weapon_index_for(twin).expect("shotgun");
             apply_overrides(&mut facts, index).expect("applied");

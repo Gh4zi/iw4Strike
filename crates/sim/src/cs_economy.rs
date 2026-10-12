@@ -1,8 +1,8 @@
-//! Counter-Strike money, by CS 1.6's rules (ReGameDLL `CHalfLifeMultiplay`): $800 to start,
-//! $16000 at most, $300 per enemy killed (a team kill costs $3300), and at every round restart
-//! each team's round money — the winners' reward by how the round was won, the losers' bonus,
-//! which grows $500 with every round they lose in a row. When the sides switch everyone starts
-//! over with $800, as CS2's halftime does.
+//! Counter-Strike money, by CS:GO's rules (its `cash_` settings): $800 to start, $16000 at most,
+//! each kill its weapon's award ($300 for most guns; a team kill costs $300), and at every round
+//! restart each team's round money — the winners' reward by how the round was won, the losers'
+//! bonus, which grows $500 with every round they had already lost in a row. When the sides
+//! switch everyone starts over with $800, as CS2's halftime does.
 //!
 //! Money exists in the bomb mode alone, where rounds earn it. Every other mode (free-for-all,
 //! team deathmatch) has no round economy: everyone holds $16000 and buys for free, like CS:GO's
@@ -23,8 +23,8 @@ pub(crate) fn economy(world: &mut FrameWorld) -> bool {
 
 pub const START_MONEY: i32 = 800;
 pub const MAX_MONEY: i32 = 16000;
-pub const KILL_REWARD: i32 = 300;
-pub const TEAM_KILL_PENALTY: i32 = 3300;
+/// CS:GO `cash_player_killed_teammate`.
+pub const TEAM_KILL_PENALTY: i32 = 300;
 /// Terrorists, the target bombed (`REWARD_TARGET_BOMB`).
 const BOMB_EXPLODED: i32 = 3500;
 /// Terrorists, every Counter-Terrorist dead (`REWARD_BOMB_EXPLODED` on a bomb map).
@@ -33,10 +33,12 @@ const TERRORISTS_ELIMINATED: i32 = 3250;
 const COUNTER_TERRORISTS_WON: i32 = 3250;
 /// Terrorists whose planted bomb was defused (`REWARD_BOMB_PLANTED`), on top of the loss bonus.
 const BOMB_PLANTED: i32 = 800;
-const LOSER_BONUS_DEFAULT: i32 = 1400;
-const LOSER_BONUS_MIN: i32 = 1500;
-const LOSER_BONUS_MAX: i32 = 3000;
+/// CS:GO's loss bonus: $1400, $500 more for each round already lost in a row, counting at most
+/// four (`cash_team_loser_bonus`, `cash_team_loser_bonus_consecutive_rounds`,
+/// `mp_consecutive_loss_max`).
+const LOSER_BONUS: i32 = 1400;
 const LOSER_BONUS_ADD: i32 = 500;
+const LOSS_STREAK_MAX: u32 = 4;
 
 /// A player's money ($16000 outside the bomb mode).
 pub(crate) fn money(world: &mut FrameWorld, id: ClientId) -> i32 {
@@ -82,8 +84,14 @@ pub(crate) fn pay(world: &mut FrameWorld, id: ClientId, price: i32) -> bool {
     true
 }
 
-/// A kill's money: $300 for an enemy, minus $3300 for a teammate, nothing for yourself.
-pub(crate) fn reward_kill(world: &mut FrameWorld, victim: ClientId, attacker: Option<ClientId>) {
+/// A kill's money: the weapon's kill award for an enemy, minus $300 for a teammate, nothing for
+/// yourself.
+pub(crate) fn reward_kill(
+    world: &mut FrameWorld,
+    victim: ClientId,
+    attacker: Option<ClientId>,
+    weapon: u32,
+) {
     let Some(attacker) = attacker.filter(|attacker| *attacker != victim) else {
         return;
     };
@@ -92,11 +100,10 @@ pub(crate) fn reward_kill(world: &mut FrameWorld, victim: ClientId, attacker: Op
     }
     let team = |world: &FrameWorld, id: ClientId| world.client_meta(id).map(|m| m.client_state_team);
     let teammate = world.game_mode_kind().is_team() && team(world, victim) == team(world, attacker);
-    let amount = if teammate {
-        -TEAM_KILL_PENALTY
-    } else {
-        KILL_REWARD
-    };
+    let award = world
+        .combat_facts_for(weapon)
+        .map_or(300, |facts| weapon_iw4::cs::kill_award(facts.cs_weapon));
+    let amount = if teammate { -TEAM_KILL_PENALTY } else { award };
     add_money(world, attacker, amount);
     diag::info!(
         Sim,
@@ -246,14 +253,14 @@ pub(crate) fn settle_round(world: &mut FrameWorld, end: RoundEnd, reset: bool) {
         .ecs()
         .remove_resource::<RoundLedger>()
         .unwrap_or(RoundLedger {
-            loser_bonus: LOSER_BONUS_DEFAULT,
+            loser_bonus: LOSER_BONUS,
             ..RoundLedger::default()
         });
     let previous = std::mem::replace(&mut ledger.won, end.won);
     let clients = world.client_ids_sorted();
     if reset {
         ledger.losses = [0; 2];
-        ledger.loser_bonus = LOSER_BONUS_DEFAULT;
+        ledger.loser_bonus = LOSER_BONUS;
         for id in clients {
             set_money(world, id, START_MONEY);
         }
@@ -268,16 +275,12 @@ pub(crate) fn settle_round(world: &mut FrameWorld, end: RoundEnd, reset: bool) {
         return;
     };
     let terrorists_won = winner == end.attackers;
-    // Loss streaks, then the bonus they earn (ReGameDLL order).
+    // The losers' bonus counts the rounds they had already lost in a row, then this one joins
+    // the streak (CS:GO `RoundEnd`).
     let (winners, losers) = if terrorists_won { (0, 1) } else { (1, 0) };
-    if ledger.losses[winners] > 1 {
-        ledger.loser_bonus = LOSER_BONUS_MIN;
-    }
     ledger.losses[winners] = 0;
-    ledger.losses[losers] += 1;
-    if ledger.losses[losers] > 1 && ledger.loser_bonus < LOSER_BONUS_MAX {
-        ledger.loser_bonus += LOSER_BONUS_ADD;
-    }
+    ledger.loser_bonus = LOSER_BONUS + ledger.losses[losers] as i32 * LOSER_BONUS_ADD;
+    ledger.losses[losers] = (ledger.losses[losers] + 1).min(LOSS_STREAK_MAX);
     let (terrorist_money, counter_terrorist_money) = if terrorists_won {
         let reward = if end.bomb_exploded {
             BOMB_EXPLODED

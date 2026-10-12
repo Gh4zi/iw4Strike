@@ -773,9 +773,13 @@ pub(crate) fn advance_weapon_command(
                             |view| view.origin,
                         );
 
-                    let cs_silenced = ps.cs_silencers
-                        & weapon_iw4::cs::silencer_bit(facts.cs_weapon)
-                        != 0;
+                    let cs_silenced = weapon_iw4::cs::cs_weapon(facts.cs_weapon)
+                        .is_some_and(|cs| cs.silencer.is_some())
+                        && weapon_iw4::cs::silencer_on(
+                            ps.cs_silencers,
+                            weapon_iw4::cs::silencer_bit(facts.cs_weapon),
+                            ps.cs_shooting_mode,
+                        );
                     // The burst bullet this command's gate let through (0 when not in a burst).
                     let cs_burst = ps.cs_burst_shot.min(2) as u8;
                     let cs_gun = weapon_iw4::cs::cs_weapon(facts.cs_weapon)
@@ -1273,7 +1277,7 @@ fn csgo_mode(ps: &PlayerState, cs: &weapon_iw4::cs::CsWeapon, index: u8) -> usiz
     let bit = weapon_iw4::cs::silencer_bit(index);
     weapon_iw4::csgo::gun_mode(
         ps.cs_zoom != 0,
-        cs.silencer.is_some() && ps.cs_silencers & bit != 0,
+        cs.silencer.is_some() && weapon_iw4::cs::silencer_on(ps.cs_silencers, bit, ps.cs_shooting_mode),
         cs.burst.is_some() && ps.cs_burst_modes & bit != 0,
     )
 }

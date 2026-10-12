@@ -67,13 +67,20 @@ const CS2_VIEWMODEL_OFFSET: Mat3x4 = [
     [0.0, 1.0, 0.0, -2.5],
     [0.0, 0.0, 1.0, -1.5],
 ];
-/// Walk bob: ground speed at which it is full, the step cycle (vertical; lateral is twice as
-/// long), and how much of the cycle rises.
-const BOB_FULL_SPEED: f32 = 320.0;
-const BOB_CYCLE: f64 = 0.45;
+/// CS:GO's viewmodel bob (`CalcViewModelBobHelper` at its defaults: `cl_bobcycle` 0.98,
+/// `cl_bobamt_vert` 0.25, `cl_bobamt_lat` 0.4, `cl_bob_lower_amt` 21, `cl_bobup` 0.5).
+const BOB_CYCLE_SCALE: f32 = 0.98;
+const BOB_VERT: f32 = 0.25;
+const BOB_LAT: f32 = 0.4;
+const BOB_LOWER: f32 = 21.0;
 const BOB_UP: f64 = 0.5;
-/// How fast the bob follows the player's speed (per second), so landings and take-offs ease in.
-const BOB_SPEED_EASE: f32 = 6.0;
+/// The bob's speed follows the player's at most this fast (u/s per second) and tops out here.
+const BOB_SPEED_SLEW: f32 = 640.0;
+const BOB_MAX_SPEED: f32 = 320.0;
+/// How far the gun shifts as the shooting gets steadier or shakier (`cl_viewmodel_shift_left_amt`
+/// 1.5, `cl_viewmodel_shift_right_amt` 0.75).
+const SHIFT_LEFT: f32 = 1.5;
+const SHIFT_RIGHT: f32 = 0.75;
 /// The radio call on every grenade throw (CS:S `Radio.FireInTheHole`, else CS 1.6's
 /// `radio/ct_fireinhole.wav`).
 const FIRE_IN_THE_HOLE: &str = "css/radio.fireinthehole";
@@ -82,11 +89,11 @@ const FIRE_IN_THE_HOLE_GOLDSRC: &str = "cs/radio/ct_fireinhole";
 const FLASH_SECONDS: f64 = 0.05;
 /// Flash tint (warm), scaled down as it fades.
 const FLASH_TINT: [f32; 3] = [1.0, 0.86, 0.62];
-/// Turn sway: how fast the gun's facing catches up (per second), the lag beyond which it catches
-/// up faster, and how many units one unit of facing lag moves the gun.
+/// Turn lag (`CalcViewModelLag`): how fast the gun's facing catches up (per second), the lag
+/// beyond which it catches up faster, and how many units one unit of facing lag moves the gun.
 const SWAY_CATCH_UP: f32 = 5.0;
-const SWAY_MAX_LAG: f32 = 0.5;
-const SWAY_UNITS: f32 = 1.5;
+const SWAY_MAX_LAG: f32 = 1.5;
+const SWAY_UNITS: f32 = 5.0;
 
 static SWAY: AtomicBool = AtomicBool::new(true);
 
@@ -387,6 +394,8 @@ pub struct CsViewmodels {
     bob_time: f64,
     /// Horizontal speed the bob follows, eased.
     bob_speed: f32,
+    /// How far the gun has shifted for the shooting's accuracy (`m_flGunAccuracyPosition`).
+    gun_accuracy: f32,
     /// World-space facing the gun trails toward (turn sway).
     lagged_forward: Option<[f32; 3]>,
     /// CS:S muzzle flash sprites (`sprites/muzzleflash4`, `effects/muzzleflashx`), looked up once.
@@ -1517,20 +1526,92 @@ fn view_rotation(pitch: f32, yaw: f32, roll: f32) -> Mat3x4 {
     mdl_goldsrc::concat(&mdl_goldsrc::concat(&yaw_m, &pitch_m), &roll_m)
 }
 
-/// A bob value for the phase `cycle` (0..1): rises for `BOB_UP` of it, falls for the rest,
-/// scaled by speed and biased upward.
-fn bob_wave(cycle: f64, amplitude: f32) -> f32 {
+/// A bob value of `amplitude` at `time` into a `period`: rises for `BOB_UP` of it, falls for
+/// the rest, biased upward.
+fn bob_wave(time: f64, period: f64, amplitude: f32) -> f32 {
+    let cycle = (time % period) / period;
     let phase = if cycle < BOB_UP {
         core::f64::consts::PI * cycle / BOB_UP
     } else {
         core::f64::consts::PI + core::f64::consts::PI * (cycle - BOB_UP) / (1.0 - BOB_UP)
     };
-    (amplitude * 0.3 + amplitude * 0.7 * (phase as f32).sin()).clamp(-7.0, 4.0)
+    amplitude * 0.3 + amplitude * 0.7 * (phase as f32).sin()
+}
+
+/// The run speed CS weapon `index` allows (scoped when `zoomed`), which sets the bob's pace.
+fn bob_max_speed(index: Option<u8>, zoomed: bool) -> f32 {
+    use weapon_iw4::cs;
+    let Some(index) = index else {
+        return 250.0;
+    };
+    if let Some(gun) = cs::cs_weapon(index) {
+        if zoomed { gun.max_speed_zoomed } else { gun.max_speed }
+    } else if cs::is_knife(index) {
+        cs::CS_KNIFE.max_speed
+    } else if cs::is_c4(index) {
+        cs::CS_C4.max_speed
+    } else {
+        250.0
+    }
+}
+
+/// Where the shooting's accuracy moves the gun (CS:GO `CalcViewModelBobHelper`): left as it
+/// steadies below standing still, right (a little) as moving, jumping or firing shakes it; never
+/// for the Dual Berettas, nor while reloading.
+fn accuracy_shift(ps: &PlayerState, index: Option<u8>, reloading: bool) -> f32 {
+    use weapon_iw4::{cs, csgo};
+    let Some((gun, index)) = index.and_then(|i| cs::cs_weapon(i).map(|gun| (gun, i))) else {
+        return 0.0;
+    };
+    if reloading || gun.dual || ps.cs_shooting_mode == csgo::SHOOTING_CS16 {
+        return 0.0;
+    }
+    let Some(csgo_gun) = csgo::csgo_gun(gun.name) else {
+        return 0.0;
+    };
+    let bit = cs::silencer_bit(index);
+    let mode = csgo::gun_mode(
+        ps.cs_zoom != 0,
+        gun.silencer.is_some() && cs::silencer_on(ps.cs_silencers, bit, ps.cs_shooting_mode),
+        gun.burst.is_some() && ps.cs_burst_modes & bit != 0,
+    );
+    let ducked = ps.pm_flags & playerstate_iw4::pm_flags::CROUCH != 0;
+    let base = csgo_gun.inaccuracy_stand[mode] * 0.001;
+    let accuracy = if ducked {
+        csgo_gun.inaccuracy_crouch[mode] * 0.001
+    } else {
+        csgo::inaccuracy(
+            csgo_gun,
+            mode,
+            ps.cs_accuracy,
+            csgo::CsgoShooter {
+                on_ground: ps.ground_entity_num != playerstate_iw4::ENTITYNUM_NONE,
+                ducked,
+                on_ladder: false,
+                walking: false,
+                reloading,
+                speed: ps.velocity[0].hypot(ps.velocity[1]),
+                vertical_speed: ps.velocity[2],
+            },
+        )
+    };
+    let (accuracy, scale) = if accuracy < base {
+        (accuracy, if gun.scope_overlay { 0.15 } else { 18.0 } * SHIFT_LEFT)
+    } else {
+        (accuracy.min(0.082), SHIFT_RIGHT)
+    };
+    ((accuracy - base) * scale).max(-0.1) * 80.0
 }
 
 /// Walk bob and turn sway as one view-space placement of the gun: small offsets (about a unit)
 /// and tilts (well under a degree), so the gun never swings far enough to show its back.
-fn sway_placement(state: &mut CsViewmodels, ps: &PlayerState, dt: f32) -> Mat3x4 {
+fn sway_placement(
+    state: &mut CsViewmodels,
+    ps: &PlayerState,
+    index: Option<u8>,
+    reloading: bool,
+    dt: f32,
+) -> Mat3x4 {
     if !viewmodel_sway() {
         state.lagged_forward = None;
         return mdl_goldsrc::IDENTITY;
@@ -1550,26 +1631,50 @@ fn sway_placement(state: &mut CsViewmodels, ps: &PlayerState, dt: f32) -> Mat3x4
             w[0] * up[0] + w[1] * up[1] + w[2] * up[2],
         ]
     };
-    // CS bobs by horizontal speed in the air too: gating it on the ground snapped the gun on
-    // every bhop landing.
-    let target = ps.velocity[0].hypot(ps.velocity[1]).min(BOB_FULL_SPEED);
-    state.bob_speed += (target - state.bob_speed) * (BOB_SPEED_EASE * dt).min(1.0);
-    let speed = state.bob_speed;
-    state.bob_time += f64::from(dt * speed / BOB_FULL_SPEED);
-    let amplitude = speed * 0.005;
-    let vertical = bob_wave((state.bob_time % BOB_CYCLE) / BOB_CYCLE, amplitude);
-    let lateral = bob_wave(
-        (state.bob_time % (BOB_CYCLE * 2.0)) / (BOB_CYCLE * 2.0),
-        amplitude,
-    );
+    // CS:GO `CalcViewModelBobHelper`: the horizontal speed, followed at 640 u/s per second up to
+    // 320, paces the cycle and sizes the bob; in the air it bobs a fifth as much.
+    let slew = BOB_SPEED_SLEW * dt;
+    let speed = ps.velocity[0]
+        .hypot(ps.velocity[1])
+        .clamp(state.bob_speed - slew, state.bob_speed + slew)
+        .clamp(-BOB_MAX_SPEED, BOB_MAX_SPEED);
+    state.bob_speed = speed;
+    state.bob_time += f64::from(dt * speed / BOB_MAX_SPEED);
+    let zoomed = ps.cs_zoom != 0;
+    // Running lowers the gun (not scoped).
+    let lowered = if zoomed {
+        0.0
+    } else {
+        BOB_LOWER * 0.2 * speed * 0.006
+    };
+    let period = f64::from((1000.0 - bob_max_speed(index, zoomed)) / 3.5 * 0.001 * BOB_CYCLE_SCALE);
+    // The accuracy shift eases in (`Approach` at four times the gap per second).
+    let target = accuracy_shift(ps, index, reloading);
+    let step = (target - state.gun_accuracy).abs() * dt * 4.0;
+    state.gun_accuracy += (target - state.gun_accuracy).clamp(-step, step);
+    let shift = if index.and_then(weapon_iw4::cs::cs_weapon).is_some() {
+        state.gun_accuracy
+    } else {
+        0.0
+    };
+    let on_ground = ps.ground_entity_num != playerstate_iw4::ENTITYNUM_NONE;
+    let size = speed * if on_ground { 0.00625 } else { 0.00125 };
+    let vertical = (bob_wave(state.bob_time, period, size * BOB_VERT) - (lowered - shift * 0.2))
+        .clamp(-7.0, 4.0);
+    let lateral =
+        (bob_wave(state.bob_time, period * 2.0, size * BOB_LAT) + shift * 0.25).clamp(-8.0, 8.0);
 
+    // `AddViewModelBobHelper`: 40% of the vertical bob forward, 10% up, a fifth of the lateral
+    // to the right.
     let world_up = to_view([0.0, 0.0, 1.0]);
     let mut offset: [f32; 3] = core::array::from_fn(|i| world_up[i] * vertical * 0.1);
-    offset[0] += vertical * 0.1;
-    offset[1] -= lateral * 0.8;
+    offset[0] += vertical * 0.4;
+    offset[1] -= lateral * 0.2;
 
+    // `CalcViewModelLag`: the gun trails the facing it is catching up to, and looking up or
+    // down slides it (back, left and down as the view dips).
     let lagged = state.lagged_forward.get_or_insert(forward);
-    let mut diff: [f32; 3] = core::array::from_fn(|i| forward[i] - lagged[i]);
+    let diff: [f32; 3] = core::array::from_fn(|i| forward[i] - lagged[i]);
     let lag = diff.iter().map(|v| v * v).sum::<f32>().sqrt();
     let catch_up = if lag > SWAY_MAX_LAG {
         SWAY_CATCH_UP * lag / SWAY_MAX_LAG
@@ -1586,11 +1691,14 @@ fn sway_placement(state: &mut CsViewmodels, ps: &PlayerState, dt: f32) -> Mat3x4
             *v /= len;
         }
     }
-    diff = core::array::from_fn(|i| forward[i] - lagged[i]);
     let drift = to_view(diff);
     for i in 0..3 {
         offset[i] -= drift[i] * SWAY_UNITS;
     }
+    let pitch = (view[0] + 180.0).rem_euclid(360.0) - 180.0;
+    offset[0] -= pitch * 0.035;
+    offset[1] += pitch * 0.03;
+    offset[2] -= pitch * 0.02;
     let mut place = view_rotation(-vertical * 0.4, -lateral * 0.3, vertical * 0.5);
     for (row, value) in place.iter_mut().zip(offset) {
         row[3] = value;
@@ -1680,7 +1788,8 @@ pub fn update_cs_viewmodel(
     });
     let roles = &model.roles;
     // A gun with a silencer plays its silenced or plain set by the replicated bit.
-    let silenced = weapon.silencer_bit != 0 && ps.cs_silencers & weapon.silencer_bit != 0;
+    let silenced =
+        weapon_iw4::cs::silencer_on(ps.cs_silencers, weapon.silencer_bit, ps.cs_shooting_mode);
     let (idle, draw, gun_reload, shoot) = roles.gun(silenced);
     // An empty pistol idles and reloads with its slide back, and its last shot leaves it there.
     let (idle, gun_reload, shoot) = match &roles.empty {
@@ -1896,7 +2005,8 @@ pub fn update_cs_viewmodel(
         playing.events_through = Some(anim_frame);
     }
 
-    let sway = sway_placement(&mut state, ps, time.delta_secs());
+    let cs_index = weapon_iw4::cs::cs_weapon_index_for(&weapons.0.script_name_of(weapon_index));
+    let sway = sway_placement(&mut state, ps, cs_index, reloading, time.delta_secs());
     let CsViewmodels { bones, .. } = &mut *state;
     model.studio.pose(sequence, seconds, bones);
     // A CS2 silencer that is off shrinks to a point, except while it goes on or comes off.

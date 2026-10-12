@@ -457,9 +457,9 @@ pub(crate) fn god_mode(world: &FrameWorld, id: ClientId) -> bool {
         && world.client_meta(id).is_some_and(|meta| meta.god_mode)
 }
 
-/// CS kevlar and helmet (`CBasePlayer::TakeDamage`): a covered hit (body and arms with a vest,
-/// the head only with a helmet; never legs or falls) keeps part of its damage and wears the
-/// vest down. Explosions count as body hits.
+/// CS kevlar and helmet (CS:GO `OnTakeDamage`): a covered hit (body and arms with a vest, the
+/// head only with a helmet; never legs or falls) keeps part of its damage and wears the vest
+/// down. Explosions count as body hits, at the grenade's armour ratio.
 pub(crate) fn cs_armor_absorb(
     world: &mut FrameWorld,
     id: ClientId,
@@ -482,13 +482,8 @@ pub(crate) fn cs_armor_absorb(
     if ps.cs_armor == 0 || amount <= 0 || uncovered || legs || (head && ps.cs_helmet == 0) {
         return amount;
     }
-    let blast = means.contains("GRENADE") || means.contains("EXPLOSIVE") || means.contains("PROJECTILE");
-    let (through, left) = weapon_iw4::cs::armor_absorb(
-        amount as f32,
-        ps.cs_armor as f32,
-        penetration,
-        blast,
-    );
+    let (through, left) =
+        weapon_iw4::cs::armor_absorb(amount as f32, ps.cs_armor as f32, penetration);
     ps.cs_armor = left as u32;
     if ps.cs_armor == 0 {
         ps.cs_helmet = 0;
@@ -616,7 +611,7 @@ pub(crate) fn kill(
     };
     crate::script::host::triggers::release_client_claims(world.ecs(), victim.0);
     if SCRIPT_GIVES_NO_WEAPONS {
-        crate::cs_economy::reward_kill(world, victim, attacker);
+        crate::cs_economy::reward_kill(world, victim, attacker, commit.map_or(0, |c| c.weapon));
         crate::item::drop_cs_defuser(world, tick, victim);
     }
     crate::damage::play_death(world, victim, attacker, commit.as_ref());

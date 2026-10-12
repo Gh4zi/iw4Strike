@@ -321,6 +321,8 @@ pub(super) const IW4: &[Builtin] = &[
     Builtin::new(Method, "controlslinkto", Entity, false),
     Builtin::new(Method, "controlsunlink", Entity, false),
     Builtin::new(Method, "createlootmail", Entity, false),
+    // Counter-Strike fork: the bomb mode's plant and defuse money.
+    Builtin::new(Method, "csaddmoney", Player, false),
     // Counter-Strike fork: whether a player carries a defuse kit.
     Builtin::new(Method, "cshasdefusekit", Player, false),
     Builtin::new(Method, "damageconetrace", Entity, false),
