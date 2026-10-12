@@ -628,6 +628,18 @@ pub(crate) fn apply_glass_host(
             GlassApplyAction::Weaken => {
                 if let Some(host) = fx_host.as_mut() {
                     host.0.glass.damage(i as u32);
+                    let last_change = snap.map(|s| s.last_change).unwrap_or(0);
+                    let late = last_change != 0
+                        && now.saturating_sub(last_change) > FX_GLASS_SHARD_LIFETIME_MSEC;
+                    if glass_shatter_play_oneshot(late, rebuilt)
+                        && let Some(pane) = pane
+                    {
+                        host.0.glass.push_pane_sound(
+                            i as u32,
+                            pane.origin,
+                            ::fx::GlassPaneSound::Damaged,
+                        );
+                    }
                 }
             }
             GlassApplyAction::Shatter {
@@ -656,6 +668,16 @@ pub(crate) fn apply_glass_host(
                         cause,
                         revision,
                     );
+                    // The pane's own sound, whoever shattered its pieces first: a local bullet's
+                    // prediction breaks fragments silently, the state change is what is heard.
+                    if play_oneshot && let Some(pane) = pane {
+                        let sound = if dir == [0.0; 3] {
+                            ::fx::GlassPaneSound::DestroyedQuiet
+                        } else {
+                            ::fx::GlassPaneSound::Destroyed
+                        };
+                        host.0.glass.push_pane_sound(i as u32, pane.origin, sound);
+                    }
                     host.0.marks.hide_glass_marks(i as u16);
                     host.0.glass.moved = true;
                 }

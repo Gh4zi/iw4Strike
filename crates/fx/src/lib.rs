@@ -25,8 +25,8 @@ pub use draw::{
 pub use elem::FxElemSlot;
 pub use gaps::{ChildSpawn, CodeMeshStep, FxGap, FxGapCause, FxGaps};
 pub use glass::{
-    FxGlassInitTables, FxGlassSystemHost, GlassPresentationEvent, GlassWorldContact,
-    GlassWorldTrace,
+    FxGlassInitTables, FxGlassSystemHost, GlassPaneSound, GlassPresentationEvent,
+    GlassWorldContact, GlassWorldTrace,
 };
 pub use lifetime::{
     FxMsec, LE_MOVING_TRACER, LE_TR_LINEAR, LOCAL_ENTITY_POOL_CAPACITY, LOCAL_ENTITY_SIZE,

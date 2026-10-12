@@ -86,6 +86,20 @@ pub struct GlassPresentationEvent {
     pub play_oneshot: bool,
     pub landing: bool,
     pub revision: u32,
+    /// A pane changing state, which is what MW2 plays a glass sound for; `None` for the shatter
+    /// and landing effects, which are silent.
+    pub pane_sound: Option<GlassPaneSound>,
+}
+
+/// The sound a pane plays as its state changes, one per change (`CG_Glass_SetPieceState`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlassPaneSound {
+    /// Intact to cracked.
+    Damaged,
+    /// Destroyed by something with a direction: a bullet, a blast.
+    Destroyed,
+    /// Destroyed with no impact direction.
+    DestroyedQuiet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -765,6 +779,21 @@ impl FxGlassSystemHost {
             play_oneshot,
             landing: false,
             revision,
+            pane_sound: None,
+        });
+    }
+
+    /// Queue the sound a pane plays for a state change, at the pane's centre.
+    pub fn push_pane_sound(&mut self, pane: u32, origin: [f32; 3], sound: GlassPaneSound) {
+        self.pending_events.push(GlassPresentationEvent {
+            pane,
+            origin,
+            normal: [0.0; 3],
+            cause: 0,
+            play_oneshot: true,
+            landing: false,
+            revision: 0,
+            pane_sound: Some(sound),
         });
     }
 
@@ -1322,6 +1351,7 @@ impl FxGlassSystemHost {
             play_oneshot: true,
             landing: true,
             revision: 0,
+            pane_sound: None,
         });
     }
 

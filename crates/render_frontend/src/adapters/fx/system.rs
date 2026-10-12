@@ -372,26 +372,26 @@ fn tick_fx_non_dependent_update(
         if !ev.play_oneshot {
             continue;
         }
-        let landing = ev.landing;
-        if !landing {
+        // Sound comes only from a pane changing state, once per change, as MW2's cg_glass plays
+        // it; pieces shattering and landing are effects alone. A sound per shattered fragment
+        // and per landing spot played dozens of full pane shatters for one bullet.
+        if let Some(sound) = ev.pane_sound {
+            aliases.write(audio::AliasCommand::Play(audio::PlayAlias {
+                event: None,
+                namespace: asset_core::AssetNamespace::Iw4,
+                alias: glass_pane_alias(sound).to_owned(),
+                fallback: None,
+                origin_inches: Some(ev.origin),
+                snd_ent: Some(fx_iw4::FX_ENTITYNUM_WORLD),
+            }));
+            continue;
+        }
+        if !ev.landing {
             if shatter_fx >= FX_GLASS_SHATTER_FX_PER_FRAME {
                 continue;
             }
             shatter_fx = shatter_fx.saturating_add(1);
         }
-        let (alias, fallback) = if landing {
-            ("glass_pane_shatter", "glass_pane_blowout")
-        } else {
-            glass_break_alias(ev.cause)
-        };
-        aliases.write(audio::AliasCommand::Play(audio::PlayAlias {
-            event: None,
-            namespace: asset_core::AssetNamespace::Iw4,
-            alias: alias.to_owned(),
-            fallback: Some(fallback.to_owned()),
-            origin_inches: Some(ev.origin),
-            snd_ent: Some(fx_iw4::FX_ENTITYNUM_WORLD),
-        }));
         pending_fx.push(ev);
     }
     let Some(catalog) = catalog else {
@@ -449,12 +449,15 @@ fn tick_fx_non_dependent_update(
     );
 }
 
-fn glass_break_alias(cause: u8) -> (&'static str, &'static str) {
+/// MW2's sound for each pane state change (`CG_RegisterSounds`): cracking is
+/// `glass_pane_shatter`, destroying is `glass_pane_blowout`, or `glass_pane_breakout` when
+/// nothing gave it a direction.
+fn glass_pane_alias(sound: fx::GlassPaneSound) -> &'static str {
     let [blowout, breakout, shatter] = asset_audio::GLASS_BREAK_ALIASES;
-    match cause {
-        1 => (blowout, shatter),
-        2 => (breakout, shatter),
-        _ => (shatter, blowout),
+    match sound {
+        fx::GlassPaneSound::Damaged => shatter,
+        fx::GlassPaneSound::Destroyed => blowout,
+        fx::GlassPaneSound::DestroyedQuiet => breakout,
     }
 }
 
