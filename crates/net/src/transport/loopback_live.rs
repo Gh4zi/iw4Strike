@@ -3,15 +3,18 @@ use sim::{ClientId, Snapshot, TickInput};
 
 use crate::client::predict::CmdSeq;
 use crate::transport::delta::{SnapshotDecoder, SnapshotEncoder};
-use crate::transport::frame::{
-    Frame, LoopbackTransport, Transport, TransportError, frame_from_owned_tick,
-};
+use crate::transport::frame::{Frame, TransportError, frame_from_owned_tick};
+use crate::transport::meta_wire::{WorldObjectSyncDecoder, meta_as_received};
 
+/// The listen server's channel to its own client. Frames stay in process: the meta crosses as
+/// the structure the sender built (`meta_as_received` gives it the shape a decode would), so
+/// only the player rows and the world objects go through their codecs.
 #[derive(Resource, Debug, Default)]
 pub struct ListenLoopback {
-    transport: LoopbackTransport,
+    queue: std::collections::VecDeque<Frame>,
     encoder: SnapshotEncoder,
     decoder: SnapshotDecoder,
+    world_decoder: WorldObjectSyncDecoder,
 
     pub sent: u64,
 
@@ -28,7 +31,7 @@ impl ListenLoopback {
     }
 
     pub fn pending(&self) -> usize {
-        self.transport.pending()
+        self.queue.len()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -54,24 +57,28 @@ impl ListenLoopback {
         frame.svc_game_notifies = svc_game_notifies;
 
         frame.reliable = reliable;
-        self.transport.send_owned(frame);
+        self.queue.push_back(frame);
         self.sent = self.sent.saturating_add(1);
         Ok(())
     }
 
     pub fn recv_tick(&mut self) -> Result<Option<ReceivedTick>, TransportError> {
-        let Some(mut frame) = self.transport.recv()? else {
+        let Some(mut frame) = self.queue.pop_front() else {
             return Ok(None);
         };
         let mut snapshot = self.decoder.decode(&frame.snapshot_delta)?;
         // The meta moves to the snapshot; nothing reads it off the received frame.
-        snapshot.meta = std::mem::take(&mut frame.snapshot_meta);
+        snapshot.meta = meta_as_received(
+            std::mem::take(&mut frame.snapshot_meta),
+            &frame.world_objects_wire,
+            &mut self.world_decoder,
+        )?;
         self.received = self.received.saturating_add(1);
         Ok(Some(ReceivedTick { snapshot, frame }))
     }
 
     pub fn recv_all(&mut self, out: &mut Vec<ReceivedTick>) -> Result<(), TransportError> {
-        self.last_backlog = self.transport.pending();
+        self.last_backlog = self.queue.len();
         self.peak_backlog = self.peak_backlog.max(self.last_backlog);
         loop {
             match self.recv_tick() {

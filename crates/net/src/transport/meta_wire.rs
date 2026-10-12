@@ -2768,6 +2768,66 @@ fn decode_entity_state(input: &mut WireReader<'_>) -> Result<entity_iw4::EntityS
     Ok(es)
 }
 
+/// The entity state `decode_entity_state` gives a receiver for `es`: the fields
+/// `encode_entity_state` sends, every other one at its default.
+fn entity_state_as_sent(es: &entity_iw4::EntityState) -> entity_iw4::EntityState {
+    let mut sent = entity_iw4::EntityState {
+        number: es.number,
+        e_type: es.e_type,
+        e_flags: es.e_flags,
+        tr_time: es.tr_time,
+        tr_type: es.tr_type,
+        tr_duration: es.tr_duration,
+        tr_delta: es.tr_delta,
+        tr_base: es.tr_base,
+        apos_tr_time: es.apos_tr_time,
+        apos_tr_type: es.apos_tr_type,
+        apos_tr_duration: es.apos_tr_duration,
+        apos_tr_delta: es.apos_tr_delta,
+        apos_tr_base: es.apos_tr_base,
+        index: es.index,
+        client_num: es.client_num,
+        legs_anim: es.legs_anim,
+        torso_anim: es.torso_anim,
+        ground_entity_num: es.ground_entity_num,
+        event_sequence: es.event_sequence,
+        events: es.events,
+        event_parms: es.event_parms,
+        ..Default::default()
+    };
+    sent.set_launch_time(es.launch_time());
+    sent
+}
+
+/// The script mover `decode_script_mover` gives a receiver for `mover`.
+fn script_mover_as_sent(mover: &sim::ScriptMoverGentity) -> sim::ScriptMoverGentity {
+    sim::ScriptMoverGentity {
+        id: mover.id,
+        state: entity_state_as_sent(&mover.state),
+        nonsolid: mover.nonsolid,
+        ..Default::default()
+    }
+}
+
+/// `meta` as a receiver decodes it from `encode_snapshot_meta_sections`, for an in-process
+/// receiver handed the sender's meta instead of its bytes, with `world_objects` decoded from the
+/// frame's world object wire. Every section decodes to what was sent except the entity rows,
+/// which carry only the fields `encode_entity_state` sends.
+pub fn meta_as_received(
+    mut meta: SnapshotMeta,
+    world_objects_wire: &[u8],
+    world_decoder: &mut WorldObjectSyncDecoder,
+) -> Result<SnapshotMeta, WireError> {
+    for es in &mut meta.entities {
+        *es = entity_state_as_sent(es);
+    }
+    for mover in &mut meta.script_movers {
+        *mover = script_mover_as_sent(mover);
+    }
+    meta.world_objects = world_decoder.apply_wire(world_objects_wire)?;
+    Ok(meta)
+}
+
 fn encode_script_mover(out: &mut WireWriter, mover: &sim::ScriptMoverGentity) {
     out.put_u32(mover.id.to_wire());
     out.put_u8(u8::from(mover.nonsolid));
@@ -3567,4 +3627,82 @@ fn decode_objectives(input: &mut WireReader<'_>) -> Result<sim::ObjectiveMatch, 
         state.vehicle_targets.push(target);
     }
     Ok(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every field set, so a field `encode_entity_state` starts or stops sending fails the test
+    /// until `entity_state_as_sent` follows.
+    fn full_entity_state() -> entity_iw4::EntityState {
+        entity_iw4::EntityState {
+            number: 1,
+            e_type: 2,
+            time2: 3,
+            e_flags: 4,
+            tr_time: 5,
+            tr_type: 6,
+            tr_duration: 7,
+            tr_delta: [8.0, 9.0, 10.0],
+            tr_base: [11.0, 12.0, 13.0],
+            apos_tr_time: 14,
+            apos_tr_type: 15,
+            apos_tr_duration: 16,
+            apos_tr_delta: [17.0, 18.0, 19.0],
+            apos_tr_base: [20.0, 21.0, 22.0],
+            cull_dist: 23.5,
+            period: 24,
+            anonymous_data_2: 25,
+            waist_pitch: 26,
+            torso_pitch: 27,
+            other_entity_num: 28,
+            attacker_entity_num: 29,
+            ground_entity_num: 30,
+            event_parm: 31,
+            solid: 0x00ff_ffff,
+            index: 32,
+            event_sequence: 33,
+            events: [34, 35, 36, 37],
+            event_parms: [38, 39, 40, 41],
+            client_num: 42,
+            wes: 43,
+            torso_anim: 44,
+            legs_anim: 45,
+            client_link_info: 46,
+            part_bits_0: 47,
+            part_bits_1: 48,
+            part_bits_2: 49,
+            part_bits_3: 50,
+            part_bits_4: 51,
+            part_bits_5: 52,
+            client_mask_0: 53,
+        }
+    }
+
+    #[test]
+    fn entity_rows_as_sent_match_their_decode() {
+        let es = full_entity_state();
+        let mut out = WireWriter::new();
+        encode_entity_state(&mut out, &es);
+        let bytes = out.finish();
+        let decoded = decode_entity_state(&mut WireReader::new(&bytes)).expect("decode");
+        assert_eq!(decoded, entity_state_as_sent(&es));
+
+        let mover = sim::ScriptMoverGentity {
+            id: ScriptModelId::from_wire(54),
+            state: es,
+            box_mid: [55.0; 3],
+            box_half: [56.0; 3],
+            link_mid: [57.0; 3],
+            link_half: [58.0; 3],
+            nonsolid: true,
+            shown_to: 59,
+        };
+        let mut out = WireWriter::new();
+        encode_script_mover(&mut out, &mover);
+        let bytes = out.finish();
+        let decoded = decode_script_mover(&mut WireReader::new(&bytes)).expect("decode");
+        assert_eq!(decoded, script_mover_as_sent(&mover));
+    }
 }
