@@ -1735,6 +1735,17 @@ fn smodel_pretess_submit_refusal(
     ))
 }
 
+/// A breakable glass piece's depth state. MW2's shattered glass material blends and writes
+/// depth, so smoke and every other effect behind a cracked pane drew nothing through it, in MW2
+/// as well. A blended piece keeps its depth test and leaves the depth to what is behind it, as
+/// an intact pane does.
+fn glass_piece_state1(state0: &ChangeState0Host, mut state1: ChangeState1Host) -> ChangeState1Host {
+    if !matches!(state0.blend, super::state::DrawBlend::Opaque) {
+        state1.depth_write = false;
+    }
+    state1
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ExactTessBind {
     World,
@@ -5812,6 +5823,11 @@ impl ExactPrepare<'_> {
                         let host_state = GfxPassState::from_bits(executable.state);
                         let state0 = host_state.apply_change_state_0_host(AlphaMode::Opaque, false);
                         let state1 = host_state.apply_change_state_1_host();
+                        let state1 = if tess == ExactTessBind::Glass {
+                            glass_piece_state1(&state0, state1)
+                        } else {
+                            state1
+                        };
                         let color = exact_colour_target_format(target.color, state0.srgb_write);
                         let key = ExactColourPipelineKey {
                             target: color,

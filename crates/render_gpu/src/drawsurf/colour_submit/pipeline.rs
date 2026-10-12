@@ -272,6 +272,18 @@ fn schedule_admitted_pipelines(
                     if scheduled.insert(key) {
                         current.push(request_exact_pipeline(registry, pipeline, device, key));
                     }
+                    // The same pass drawn as a glass piece (`glass_piece_state1`).
+                    let glass = ExactColourPipelineKey {
+                        state1: glass_piece_state1(&state0, state1),
+                        ..key
+                    };
+                    if !shadow
+                        && port.vertex_type == PACKED_VERTEX_TYPE
+                        && glass != key
+                        && scheduled.insert(glass)
+                    {
+                        current.push(request_exact_pipeline(registry, pipeline, device, glass));
+                    }
                 }
             }
         }
