@@ -10,6 +10,13 @@ mod sound_load_t5;
 mod sound_wma_t5;
 mod zone_sound;
 
+/// The sounds the glass system plays when a pane goes: blown out, broken out, shattered.
+pub const GLASS_BREAK_ALIASES: [&str; 3] = [
+    "glass_pane_blowout",
+    "glass_pane_breakout",
+    "glass_pane_shatter",
+];
+
 pub use asset_core::*;
 pub use asset_transport::*;
 pub use createfx::*;

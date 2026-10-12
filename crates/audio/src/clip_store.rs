@@ -355,7 +355,7 @@ impl ClipStore {
         self.service.late_prepares()
     }
     pub(crate) fn prefetch(&mut self, key: ClipKey) -> MediaRequest {
-        self.service.request_with_policy(key, true)
+        self.service.request_with_policy(key, true, None)
     }
     pub(crate) fn ready(&self, key: &ClipKey) -> Option<Result<PcmBuffer, ClipError>> {
         self.service.ready(key)
@@ -531,14 +531,20 @@ impl MediaService {
             .late_prepares
     }
 
-    pub(crate) fn request(&self, key: ClipKey) -> bool {
+    /// `alias` names the cue asking, for the late-prepare warning.
+    pub(crate) fn request(&self, key: ClipKey, alias: &str) -> bool {
         matches!(
-            self.request_with_policy(key, false),
+            self.request_with_policy(key, false, Some(alias)),
             MediaRequest::Submitted
         )
     }
 
-    fn request_with_policy(&self, key: ClipKey, defer_full: bool) -> MediaRequest {
+    fn request_with_policy(
+        &self,
+        key: ClipKey,
+        defer_full: bool,
+        alias: Option<&str>,
+    ) -> MediaRequest {
         REQUESTS.fetch_add(1, Ordering::Relaxed);
         let mut requests = self
             .0
@@ -575,8 +581,9 @@ impl MediaService {
             };
             diag::warn!(
                 Audio,
-                "audio: clip prepare after AudioReady ({key:?} {})",
-                name.unwrap_or("?")
+                "audio: clip prepare after AudioReady ({key:?} {}) for {}",
+                name.unwrap_or("?"),
+                alias.unwrap_or("a prefetch")
             );
         }
         let job = ClipJob {

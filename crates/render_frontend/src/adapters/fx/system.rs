@@ -450,10 +450,11 @@ fn tick_fx_non_dependent_update(
 }
 
 fn glass_break_alias(cause: u8) -> (&'static str, &'static str) {
+    let [blowout, breakout, shatter] = asset_audio::GLASS_BREAK_ALIASES;
     match cause {
-        1 => ("glass_pane_blowout", "glass_pane_shatter"),
-        2 => ("glass_pane_breakout", "glass_pane_shatter"),
-        _ => ("glass_pane_shatter", "glass_pane_blowout"),
+        1 => (blowout, shatter),
+        2 => (breakout, shatter),
+        _ => (shatter, blowout),
     }
 }
 

@@ -231,6 +231,16 @@ fn queue_match_clips(
         aliases += 1;
         request_named(clips, &bank.0, namespace.namespace, alias, &mut set);
     }
+    // What the map's own script plays by name (machinery loops, alarms): its string literals
+    // that are sound aliases.
+    if let Some(script) = script_sound.0.script.as_deref() {
+        for literal in quoted_literals(script) {
+            if bank.0.has_alias(namespace.namespace, literal) {
+                aliases += 1;
+                request_named(clips, &bank.0, namespace.namespace, literal, &mut set);
+            }
+        }
+    }
     if let Some(catalog) = catalog.as_deref() {
         for alias in catalog.played_sound_aliases().into_iter().chain(MENU_CODE) {
             aliases += 1;
@@ -243,6 +253,7 @@ fn queue_match_clips(
         .chain(crate::weapon_lock::ALIASES.iter())
         .chain([&gamemode_iw4::damage_feedback::HIT_ALERT_ALIAS])
         .chain(MATCH_CLOCK)
+        .chain(asset_audio::GLASS_BREAK_ALIASES.iter())
     {
         aliases += 1;
         request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
@@ -404,6 +415,12 @@ fn mark_ready(ready: &mut AudioReady, prep: &mut MatchClipPrep, clips: Option<&m
             clips.arm_match_live();
         }
     }
+}
+
+/// The contents of each double-quoted literal in a GSC source, escapes not decoded (sound
+/// aliases have none).
+fn quoted_literals(source: &str) -> impl Iterator<Item = &str> {
+    source.split('"').skip(1).step_by(2)
 }
 
 fn request_named(

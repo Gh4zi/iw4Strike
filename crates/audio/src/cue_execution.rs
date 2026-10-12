@@ -201,7 +201,7 @@ impl CueWork {
                 Ok(cue) => {
                     self.request.state.resolved(Ok(cue.clone()));
                     if let (Some(media), Some(clip)) = (&cue.media, &cue.clip) {
-                        media.request(clip.clone());
+                        media.request(clip.clone(), &self.request.alias);
                     }
                     self.resolved = Some(cue);
                 }
