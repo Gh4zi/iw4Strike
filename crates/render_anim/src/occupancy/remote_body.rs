@@ -79,6 +79,7 @@ pub fn register_remote_body_systems(app: &mut App) {
         .init_resource::<crate::occupancy::csgo_body::CsgoBodies>()
         .init_resource::<crate::occupancy::csgo_body::CsgoBodyHidden>()
         .init_resource::<crate::occupancy::csgo_body::CsgoBodyDraws>()
+        .init_resource::<crate::occupancy::csgo_body::Mw2BodyPoses>()
         .add_systems(
             Update,
             crate::occupancy::csgo_body::update_csgo_bodies
@@ -481,6 +482,8 @@ struct RemotePoseFrame<'a> {
     pending: Vec<PendingBodySkin<'a>>,
     /// Weapon hands of bodies holding a CS weapon drawn as its CS:S world model.
     held: &'a mut Vec<crate::occupancy::cs_world_model::CsHeldWeaponTag>,
+    /// The joints a CS:GO body standing in for a MW2 one follows when it dies.
+    mw2_poses: &'a mut crate::occupancy::csgo_body::Mw2BodyPoses,
 
     world_gun_gap: Option<WorldGunGap>,
 }
@@ -531,6 +534,7 @@ fn pose_remote_bodies(
         Res<HostGfxScene>,
         Option<Res<FrameClock>>,
         Res<render_scene::SunShadowCasterVolume>,
+        ResMut<crate::occupancy::csgo_body::Mw2BodyPoses>,
     ),
     mut roots: Query<
         (
@@ -548,8 +552,16 @@ fn pose_remote_bodies(
         ),
     >,
 ) {
-    let (cameras, lod_skinned, mut dobj_poses, mut posed_players, gfx, cg_clock, sun_casters) =
-        dpvs;
+    let (
+        cameras,
+        lod_skinned,
+        mut dobj_poses,
+        mut posed_players,
+        gfx,
+        cg_clock,
+        sun_casters,
+        mut mw2_poses,
+    ) = dpvs;
     submit.clear();
     held.0.clear();
     for (_, _, _, mut bolts, _) in &mut roots {
@@ -664,6 +676,7 @@ fn pose_remote_bodies(
         last_cache_hits: &last_cache_hits,
         pending: Vec::new(),
         held: &mut held.0,
+        mw2_poses: &mut mw2_poses,
         world_gun_gap: None,
     };
     for (identity, runtime, transform, mut bolts, remote) in &mut roots {
@@ -818,6 +831,7 @@ impl<'a> RemotePoseFrame<'a> {
         let posed_players = &mut *self.posed_players;
         let world_gun_gap = &mut self.world_gun_gap;
         let held = &mut *self.held;
+        let mw2_poses = &mut *self.mw2_poses;
         let result = (|| {
             let origin = transform.translation.to_array();
             let model_set =
@@ -879,6 +893,13 @@ impl<'a> RemotePoseFrame<'a> {
                 anim_runtime,
                 remote_player_controller(is_corpse, view_pitch_deg, prone, crouch, hold),
             )?;
+            crate::occupancy::csgo_body::record_mw2_pose(
+                mw2_poses,
+                persist_key,
+                |name| dobj.find(name),
+                &world,
+                transform.to_matrix(),
+            );
             let skin = publish_remote_dobj(
                 dobj,
                 kit.bolt_bones,

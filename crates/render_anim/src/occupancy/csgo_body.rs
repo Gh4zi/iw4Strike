@@ -16,8 +16,12 @@
 //! The MW2 body still poses underneath (hit boxes, head, effects) but is not drawn; the body is
 //! skinned on the GPU through the CS model pass. The held weapon is CS:GO's own world model
 //! (`w_rif_ak47.mdl`), which carries the player skeleton and is bone-merged onto the body as
-//! CS:GO does: each of its bones follows the body's bone of the same name. Corpses keep the MW2
-//! body.
+//! CS:GO does: each of its bones follows the body's bone of the same name.
+//!
+//! A player who dies stays the CS:GO agent: CS:GO's corpses are ragdolls, ours fall the way the
+//! MW2 corpse's death animation does. The agent's main bones follow the MW2 corpse's matching
+//! joints, each keeping the turn it had from that joint in the last living pose (so the fall
+//! starts from where the agent stood), with the agent's own limb lengths.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -44,6 +48,140 @@ pub struct CsgoBodyHidden(pub HashSet<u32>);
 /// This frame's CS:GO bodies, for the CS model pass.
 #[derive(Resource, Default)]
 pub struct CsgoBodyDraws(pub Vec<CsWorldModelInstance>);
+
+/// The MW2 joints a CS:GO corpse follows, and the CS:GO bone each one drives.
+const RETARGET: [(&str, &str); 20] = [
+    ("j_mainroot", "pelvis"),
+    ("j_spinelower", "spine_0"),
+    ("j_spineupper", "spine_2"),
+    ("j_spine4", "spine_3"),
+    ("j_neck", "neck_0"),
+    ("j_head", "head_0"),
+    ("j_clavicle_le", "clavicle_L"),
+    ("j_shoulder_le", "arm_upper_L"),
+    ("j_elbow_le", "arm_lower_L"),
+    ("j_wrist_le", "hand_L"),
+    ("j_clavicle_ri", "clavicle_R"),
+    ("j_shoulder_ri", "arm_upper_R"),
+    ("j_elbow_ri", "arm_lower_R"),
+    ("j_wrist_ri", "hand_R"),
+    ("j_hip_le", "leg_upper_L"),
+    ("j_knee_le", "leg_lower_L"),
+    ("j_ankle_le", "ankle_L"),
+    ("j_hip_ri", "leg_upper_R"),
+    ("j_knee_ri", "leg_lower_R"),
+    ("j_ankle_ri", "ankle_R"),
+];
+
+/// Where the MW2 bodies' [`RETARGET`] joints were last posed (world space), by entity.
+#[derive(Resource, Default)]
+pub struct Mw2BodyPoses(pub HashMap<u32, [Option<Mat4>; RETARGET.len()]>);
+
+/// Records MW2 body `entity`'s joints as remote body posing places them: `world` in the body's
+/// frame (`world_from_body` places it), its joints found by name with `find`.
+pub fn record_mw2_pose(
+    poses: &mut Mw2BodyPoses,
+    entity: u32,
+    find: impl Fn(&str) -> Option<usize>,
+    world: &[Mat4],
+    world_from_body: Mat4,
+) {
+    let joints = RETARGET.map(|(joint, _)| {
+        find(joint)
+            .and_then(|i| world.get(i))
+            .map(|m| world_from_body * *m)
+    });
+    poses.0.insert(entity, joints);
+}
+
+/// A living body's last pose, kept to start its corpse from.
+struct AliveRecord {
+    character: Arc<Character>,
+    /// The agent's bones in world space.
+    world: Vec<Mat4>,
+    /// Its local transforms.
+    locals: Vec<BoneFrame>,
+    /// The hidden MW2 body's joints at the same moment.
+    mw2: [Option<Mat4>; RETARGET.len()],
+}
+
+/// A CS:GO corpse: the agent's last living pose and, for each bone a MW2 joint drives, which
+/// joint and the turn between them.
+struct Corpse {
+    character: Arc<Character>,
+    world: Vec<Mat4>,
+    locals: Vec<Mat4>,
+    follow: Vec<Option<(usize, Mat4)>>,
+}
+
+impl Corpse {
+    fn new(alive: &AliveRecord) -> Self {
+        let follow = alive
+            .character
+            .studio
+            .bones
+            .iter()
+            .enumerate()
+            .map(|(b, bone)| {
+                let slot = RETARGET
+                    .iter()
+                    .position(|(_, name)| bone.name.eq_ignore_ascii_case(name))?;
+                let joint = alive.mw2[slot]?;
+                Some((slot, joint.inverse() * alive.world[b]))
+            })
+            .collect();
+        Self {
+            character: alive.character.clone(),
+            world: alive.world.clone(),
+            locals: alive
+                .locals
+                .iter()
+                .map(|l| mat4(&l.matrix()))
+                .collect(),
+            follow,
+        }
+    }
+
+    /// The agent's bones (world space) with the MW2 corpse's joints at `mw2`.
+    fn pose(&self, mw2: &[Option<Mat4>; RETARGET.len()]) -> Vec<Mat4> {
+        let bones = &self.character.studio.bones;
+        let mut world: Vec<Mat4> = Vec::with_capacity(bones.len());
+        for (b, bone) in bones.iter().enumerate() {
+            // Rigid on its parent as it was, unless a joint turns it.
+            let base = match bone.parent.and_then(|p| world.get(p)) {
+                Some(parent) => *parent * self.locals[b],
+                None => self.world[b],
+            };
+            let followed = self.follow[b].and_then(|(slot, offset)| Some(mw2[slot]? * offset));
+            world.push(match followed {
+                // The root goes where the joint takes it; the rest keep the agent's lengths.
+                Some(m) if bone.parent.is_none() => m,
+                Some(m) => {
+                    let (_, rotation, _) = m.to_scale_rotation_translation();
+                    Mat4::from_rotation_translation(rotation, base.w_axis.truncate())
+                }
+                None => base,
+            });
+        }
+        world
+    }
+}
+
+fn mat4(m: &mdl_goldsrc::Mat3x4) -> Mat4 {
+    Mat4::from_cols_array(&[
+        m[0][0], m[1][0], m[2][0], 0.0, m[0][1], m[1][1], m[2][1], 0.0, m[0][2], m[1][2], m[2][2],
+        0.0, m[0][3], m[1][3], m[2][3], 1.0,
+    ])
+}
+
+fn mat3x4(m: &Mat4) -> mdl_goldsrc::Mat3x4 {
+    let c = m.to_cols_array_2d();
+    [
+        [c[0][0], c[1][0], c[2][0], c[3][0]],
+        [c[0][1], c[1][1], c[2][1], c[3][1]],
+        [c[0][2], c[1][2], c[2][2], c[3][2]],
+    ]
+}
 
 // CS:GO's movement numbers the animations follow (`cs_shareddefs.cpp`).
 const SPEED_RUN: f32 = 260.0;
@@ -1269,6 +1407,9 @@ pub struct CsgoBodies {
     held_ready: HashMap<String, Arc<HeldModel>>,
     /// Bone merges by (agent, weapon) model id.
     merges: HashMap<(u64, u64), Arc<Vec<Option<usize>>>>,
+    /// Each living player's last pose (by client), and the corpses (by entity).
+    alive: HashMap<sim::ClientId, AliveRecord>,
+    corpses: HashMap<u32, Corpse>,
     states: HashMap<u32, AnimState>,
     locals: Vec<BoneFrame>,
 }
@@ -1431,6 +1572,7 @@ pub fn update_csgo_bodies(
     mut hidden: ResMut<CsgoBodyHidden>,
     mut draws: ResMut<CsgoBodyDraws>,
     mut held: ResMut<CsHeldWeaponTags>,
+    mut mw2_poses: ResMut<Mw2BodyPoses>,
     mut images: ResMut<Assets<Image>>,
     roots: Query<(&CEntity, &CEntityRuntime, &RemotePlayer)>,
 ) {
@@ -1458,9 +1600,40 @@ pub fn update_csgo_bodies(
     for (identity, runtime, remote) in &roots {
         let is_corpse = runtime.next_state.e_type == ET_PLAYER_CORPSE
             || runtime.pose_e_type == ET_PLAYER_CORPSE as u8;
-        let Some(client) = identity.client().filter(|_| !is_corpse) else {
+        let Some(client) = identity.client() else {
             continue;
         };
+        if is_corpse {
+            // The victim's agent falls with the MW2 corpse.
+            let entity = u32::from(identity.number());
+            let Some(mw2) = mw2_poses.0.get(&entity) else {
+                continue;
+            };
+            if !bodies.corpses.contains_key(&entity) {
+                let Some(alive) = bodies.alive.get(&client) else {
+                    continue;
+                };
+                bodies.corpses.insert(entity, Corpse::new(alive));
+            }
+            let corpse = &bodies.corpses[&entity];
+            let world = corpse.pose(mw2);
+            let skin: Vec<mdl_goldsrc::Mat3x4> = world
+                .iter()
+                .zip(&corpse.character.studio.bones)
+                .map(|(w, bone)| mdl_goldsrc::concat(&mat3x4(w), &bone.pose_to_bone))
+                .collect();
+            draws.0.push(CsWorldModelInstance {
+                model: corpse.character.gpu.clone(),
+                world_from_model: Mat4::IDENTITY.to_cols_array_2d(),
+                ambient: AMBIENT,
+                sun_dir: [0.0; 3],
+                sun: [0.0; 3],
+                bones: Some(Arc::new(skin)),
+            });
+            hidden.0.insert(entity);
+            live.insert(entity);
+            continue;
+        }
         let Some(ps) = presented.player(client) else {
             continue;
         };
@@ -1595,6 +1768,18 @@ pub fn update_csgo_bodies(
             bones: Some(Arc::new(skin)),
         });
         hidden.0.insert(entity);
+        // Kept to start a corpse from.
+        if let Some(mw2) = mw2_poses.0.get(&entity) {
+            bodies.alive.insert(
+                client,
+                AliveRecord {
+                    character: character.clone(),
+                    world: world.iter().map(|m| world_from_model * mat4(m)).collect(),
+                    locals: agent_locals.clone(),
+                    mw2: *mw2,
+                },
+            );
+        }
         // The weapon: CS:GO's world model on the body's bones, not the MW2 body's CS:S one.
         held.0.retain(|tag| tag.entity != entity);
         let held_model = cs_index
@@ -1614,4 +1799,7 @@ pub fn update_csgo_bodies(
         }
     }
     bodies.states.retain(|entity, _| live.contains(entity));
+    bodies.corpses.retain(|entity, _| live.contains(entity));
+    let present: HashSet<u32> = roots.iter().map(|(identity, _, _)| u32::from(identity.number())).collect();
+    mw2_poses.0.retain(|entity, _| present.contains(entity));
 }
