@@ -414,6 +414,8 @@ struct Character {
 /// A weapon's CS:GO world model, bone-merged onto the body holding it.
 struct HeldModel {
     gpu: Arc<CsViewmodelModel>,
+    /// The gun without its silencer (the M4A1-S and USP-S).
+    unsilenced: Option<Arc<CsViewmodelModel>>,
     studio: StudioModel,
 }
 
@@ -489,11 +491,12 @@ fn image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
 }
 
 /// A model on the GPU (bind-space vertices, skinned by up to three bones), its skeleton kept for
-/// posing (the geometry and animations dropped).
+/// posing (the geometry and animations dropped), and for a gun with a silencer part the same
+/// gun without it.
 fn gpu_model(
     loaded: mdl_source::LoadedModel,
     images: &mut Assets<Image>,
-) -> (Arc<CsViewmodelModel>, StudioModel) {
+) -> (Arc<CsViewmodelModel>, Option<Arc<CsViewmodelModel>>, StudioModel) {
     let mut studio = loaded.model;
     let textures: Vec<Option<Handle<Image>>> = loaded
         .materials
@@ -512,7 +515,7 @@ fn gpu_model(
         })
         .collect();
     let weight = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-    let vertices = studio
+    let vertices: Vec<CsViewmodelVertex> = studio
         .vertices
         .iter()
         .map(|v| CsViewmodelVertex {
@@ -524,7 +527,11 @@ fn gpu_model(
             tangent: [0.0; 4],
         })
         .collect();
-    let draws = studio
+    let silencer = studio
+        .body_parts
+        .iter()
+        .position(|part| part.name.eq_ignore_ascii_case("silencer"));
+    let draws: Vec<(usize, CsViewmodelDraw)> = studio
         .meshes
         .iter()
         // Each body part's first model (the others are alternatives).
@@ -532,29 +539,43 @@ fn gpu_model(
         .filter_map(|mesh| {
             let material = loaded.materials.get(mesh.material)?;
             (!material.additive).then_some(())?;
-            Some(CsViewmodelDraw {
-                image: textures.get(mesh.material)?.clone()?,
-                first_vertex: mesh.first_vertex as u32,
-                vertex_count: mesh.vertex_count as u32,
-                maps: None,
-                shading: if material.fullbright {
-                    CsViewmodelShading::Fullbright
-                } else {
-                    CsViewmodelShading::Lit
+            Some((
+                mesh.body_part,
+                CsViewmodelDraw {
+                    image: textures.get(mesh.material)?.clone()?,
+                    first_vertex: mesh.first_vertex as u32,
+                    vertex_count: mesh.vertex_count as u32,
+                    maps: None,
+                    shading: if material.fullbright {
+                        CsViewmodelShading::Fullbright
+                    } else {
+                        CsViewmodelShading::Lit
+                    },
                 },
-            })
+            ))
         })
         .collect();
     studio.vertices = Vec::new();
     studio.meshes = Vec::new();
     studio.sequences = Vec::new();
     studio.animations = Vec::new();
+    let unsilenced = silencer.map(|part| {
+        Arc::new(CsViewmodelModel {
+            id: super::cs_viewmodel::next_model_id().fetch_add(1, Ordering::Relaxed),
+            vertices: vertices.clone(),
+            draws: draws
+                .iter()
+                .filter(|(p, _)| *p != part)
+                .map(|(_, draw)| draw.clone())
+                .collect(),
+        })
+    });
     let gpu = Arc::new(CsViewmodelModel {
         id: super::cs_viewmodel::next_model_id().fetch_add(1, Ordering::Relaxed),
         vertices,
-        draws,
+        draws: draws.into_iter().map(|(_, draw)| draw).collect(),
     });
-    (gpu, studio)
+    (gpu, unsilenced, studio)
 }
 
 /// An agent ready to draw, its bones matched to the animation set's.
@@ -564,7 +585,7 @@ fn character(
     animset: &Animset,
     images: &mut Assets<Image>,
 ) -> Character {
-    let (gpu, studio) = gpu_model(loaded, images);
+    let (gpu, _, studio) = gpu_model(loaded, images);
     let from_animset = studio
         .bones
         .iter()
@@ -708,6 +729,8 @@ struct Input {
 enum Event {
     Fire,
     Operate,
+    SilencerAttach,
+    SilencerDetach,
     Reload,
     ReloadStart,
     ReloadLoop,
@@ -767,6 +790,7 @@ struct AnimState {
     seen_fire_ms: i32,
     seen_weaponstate: i32,
     seen_grenade: u32,
+    seen_silencers: u32,
     /// The weapon class the idle loop was chosen for.
     alive_class: &'static str,
 }
@@ -822,6 +846,7 @@ impl AnimState {
             seen_fire_ms: 0,
             seen_weaponstate: 0,
             seen_grenade: 0,
+            seen_silencers: 0,
             alive_class: "",
         }
     }
@@ -948,6 +973,8 @@ impl AnimState {
         let (layer, activity) = match event {
             Event::Fire => (WEAPON_ACTION, "ACT_CSGO_FIRE_PRIMARY"),
             Event::Operate => (WEAPON_ACTION, "ACT_CSGO_OPERATE"),
+            Event::SilencerAttach => (WEAPON_ACTION, "ACT_CSGO_SILENCER_ATTACH"),
+            Event::SilencerDetach => (WEAPON_ACTION, "ACT_CSGO_SILENCER_DETACH"),
             // Shotguns load shell by shell instead.
             Event::Reload if self.class == "shotgun" => return,
             Event::Reload => (WEAPON_ACTION, "ACT_CSGO_RELOAD"),
@@ -1518,14 +1545,18 @@ impl CsgoBodies {
         };
         match block_on(task) {
             Ok(loaded) => {
-                let (gpu, studio) = gpu_model(loaded, images);
+                let (gpu, unsilenced, studio) = gpu_model(loaded, images);
                 diag::info!(
                     World,
                     "csgo bodies: {name}: {} triangles, {} bones",
                     gpu.vertices.len() / 3,
                     studio.bones.len()
                 );
-                let held = Arc::new(HeldModel { gpu, studio });
+                let held = Arc::new(HeldModel {
+                    gpu,
+                    unsilenced,
+                    studio,
+                });
                 self.held_ready.insert(name.to_owned(), held.clone());
                 Some(held)
             }
@@ -1699,6 +1730,14 @@ pub fn update_csgo_bodies(
             if ps.cs_grenade == cs_grenade::PULLED && state.seen_grenade != cs_grenade::PULLED {
                 events.push(Event::Operate);
             }
+            // The silencer screwed on or off the gun in hand.
+            if let Some(index) = cs_index.filter(|_| weapon == state.seen_weapon) {
+                let bit = weapon_iw4::cs::silencer_bit(index);
+                if (ps.cs_silencers ^ state.seen_silencers) & bit != 0 {
+                    let on = weapon_iw4::cs::silencer_on(ps.cs_silencers, bit, ps.cs_shooting_mode);
+                    events.push(if on { Event::SilencerAttach } else { Event::SilencerDetach });
+                }
+            }
             // A take-off: rising fast just after leaving the ground (the first airborne state
             // can come before the jump's speed does).
             if !input.on_ground
@@ -1713,6 +1752,7 @@ pub fn update_csgo_bodies(
         state.seen_fire_ms = ps.cs_last_fire_ms;
         state.seen_weaponstate = ps.weaponstate_primary;
         state.seen_grenade = ps.cs_grenade;
+        state.seen_silencers = ps.cs_silencers;
         state.class = class;
         // Events see this frame's speed and crouch, as CS:GO's do.
         for event in events {
@@ -1815,8 +1855,20 @@ pub fn update_csgo_bodies(
             if let (Some(brass), Some(m)) = (bolts.brass.as_mut(), attachment("shell_eject")) {
                 brass.orientation = orientation(m);
             }
+            let silencer_off = cs_index.is_some_and(|index| {
+                !weapon_iw4::cs::silencer_on(
+                    ps.cs_silencers,
+                    weapon_iw4::cs::silencer_bit(index),
+                    ps.cs_shooting_mode,
+                )
+            });
+            let gun = model
+                .unsilenced
+                .as_ref()
+                .filter(|_| silencer_off)
+                .unwrap_or(&model.gpu);
             draws.0.push(CsWorldModelInstance {
-                model: model.gpu.clone(),
+                model: gun.clone(),
                 world_from_model: world_from_model.to_cols_array_2d(),
                 ambient: AMBIENT,
                 sun_dir: [0.0; 3],

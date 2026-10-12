@@ -135,6 +135,13 @@ fn main() {
         }
         return;
     }
+    if filter == "bodyparts" {
+        // bodyparts: each body part's models.
+        for part in &model.body_parts {
+            println!("{}: {}", part.name, part.models.join(", "));
+        }
+        return;
+    }
     if filter == "attachments" {
         // attachments: each attachment's name and bone.
         for a in &model.attachments {
