@@ -655,6 +655,9 @@ pub struct SimState {
     pub(crate) weapon_notes: Vec<crate::equipment::WeaponNote>,
     /// CS smokes whose MW2 cloud is fired again to last as long as a CS:S smoke.
     pub(crate) cs_smokes: Vec<crate::equipment::CsSmoke>,
+    /// CS smoke clouds as radar spotting sees them: where each popped and until when (level
+    /// ms) it hides what is behind it.
+    pub(crate) cs_smoke_clouds: Vec<([f32; 3], i32)>,
 
     pending_player_cards: Vec<PendingPlayerCardEvent>,
 
@@ -758,6 +761,7 @@ impl Default for SimState {
             recent_kills: Vec::new(),
             weapon_notes: Vec::new(),
             cs_smokes: Vec::new(),
+            cs_smoke_clouds: Vec::new(),
             pending_player_cards: Vec::new(),
             pending_prints: Vec::new(),
             pending_local_sounds: Vec::new(),
@@ -836,6 +840,7 @@ impl SimState {
         self.placement_cointoss_unwired = 0;
         self.weapon_notes.clear();
         self.cs_smokes.clear();
+        self.cs_smoke_clouds.clear();
         self.next_shot = ShotId(1);
         self.collision_history.clear();
         self.entity_collision_history.clear();

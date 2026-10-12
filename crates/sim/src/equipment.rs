@@ -1552,6 +1552,10 @@ pub(crate) fn think_projectile(world: &mut FrameWorld, tick: Tick, entnum: i32) 
                 },
                 at: Tick(tick.0 + crate::ticks_for_ms(CS_SMOKE_REFIRE_MS)),
             });
+            world.cs_smoke_clouds.push((
+                info.origin,
+                level_time_ms(tick) + crate::cs_spotting::CS_SMOKE_SIGHT_MS,
+            ));
         }
         if !resolves_damage {
             continue;

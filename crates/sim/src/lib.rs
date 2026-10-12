@@ -18,6 +18,7 @@ pub mod hudelem;
 pub mod identities;
 pub mod input;
 mod cs_economy;
+mod cs_spotting;
 mod item;
 mod local_profile;
 pub use local_profile::LocalPlayerProfile;

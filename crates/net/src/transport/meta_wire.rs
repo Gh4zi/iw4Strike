@@ -1639,6 +1639,7 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
     out.put_u32(meta.player_card_icon);
     out.put_u32(meta.player_card_title);
     out.put_u32(meta.player_card_nameplate);
+    out.put_u8(u8::from(meta.cs_spotted));
     debug_assert!(meta.client_dvars.len() <= u16::MAX as usize);
     out.put_u16(meta.client_dvars.len() as u16);
     for (name, value) in &meta.client_dvars {
@@ -1868,6 +1869,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
     let player_card_icon = input.get_u32()?;
     let player_card_title = input.get_u32()?;
     let player_card_nameplate = input.get_u32()?;
+    let cs_spotted = input.get_u8()? != 0;
     let mut client_dvars = Vec::new();
     for _ in 0..input.get_u16()? {
         client_dvars.push((get_text(input)?, get_text(input)?));
@@ -1966,6 +1968,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         player_card_icon,
         player_card_title,
         player_card_nameplate,
+        cs_spotted,
         client_dvars,
         shellshock,
         view_effects,

@@ -151,6 +151,8 @@ pub struct ClientMatchState {
     pub(crate) cs_money: Option<i32>,
     /// The player's CS:GO loadout choices (`weapon_iw4::cs::CS_LOADOUT_*`).
     pub(crate) cs_loadout: u32,
+    /// Whether an enemy sees the player (CS:GO radar spotting, `cs_spotting`).
+    pub(crate) cs_spotted: bool,
 }
 
 /// What a surviving CS player keeps from one round to the next: guns and grenades with their
@@ -268,6 +270,7 @@ impl ClientMatchState {
             player_card_icon: self.player_card_icon,
             player_card_title: self.player_card_title,
             player_card_nameplate: self.player_card_nameplate,
+            cs_spotted: self.cs_spotted,
             client_dvars: self.client_dvars.clone(),
             shellshock: self.shellshock.clone(),
             view_effects: self.view_effects.clone(),
@@ -322,6 +325,7 @@ impl ClientMatchState {
         self.player_card_icon = meta.player_card_icon;
         self.player_card_title = meta.player_card_title;
         self.player_card_nameplate = meta.player_card_nameplate;
+        self.cs_spotted = meta.cs_spotted;
         self.client_dvars = meta.client_dvars.clone();
         self.shellshock = meta.shellshock.clone();
         self.view_effects = meta.view_effects.clone();

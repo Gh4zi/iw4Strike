@@ -185,7 +185,42 @@ const RADAR_PANEL_SIZE: f32 = 300.0;
 /// How many players the radar has icons for.
 const RADAR_ICONS: usize = 24;
 /// The icons a player package can show (one at a time, plus the local player's view cone).
-const RADAR_ICON_IDS: [&str; 6] = ["CTOnMap", "TOnMap", "CTDeath", "TDeath", "ViewFrustrum", "EnemyOnMap"];
+const RADAR_ICON_IDS: [&str; 13] = [
+    "ViewFrustrum",
+    "CTOnMap",
+    "CTOffMap",
+    "CTDeath",
+    "CTGhost",
+    "TOnMap",
+    "TOffMap",
+    "TDeath",
+    "TGhost",
+    "EnemyOnMap",
+    "EnemyOffMap",
+    "EnemyDeath",
+    "EnemyGhost",
+];
+/// How long a cross shows where a player died (`DEAD_FADE_TIME`), and a lost enemy's ghost
+/// where they were last seen (`GHOST_FADE_TIME`), fading out, in seconds.
+const RADAR_DEAD_FADE_S: f32 = 4.0;
+const RADAR_GHOST_FADE_S: f32 = 6.0;
+
+/// A player's icon on the radar this frame: where (Panorama pixels in the radar), which of the
+/// package's images, with the view cone or not, turned by `turn` radians, at `fade` opacity.
+struct RadarIcon {
+    at: (f32, f32),
+    icon: String,
+    cone: bool,
+    turn: f32,
+    fade: f32,
+}
+
+/// What the radar remembers of a player: where they were last seen, when, and when they died.
+struct RadarTrack {
+    at: [f32; 2],
+    seen_at: Option<f32>,
+    dead_at: Option<f32>,
+}
 
 /// Draws MW2's minimap `(width, height, rgba)` into `out` as CS:GO's round radar sees it:
 /// `size` pixels across, `range` world units across, centred on `at` and turned so `yaw`
@@ -298,6 +333,8 @@ pub(crate) struct CsgoPanorama {
     /// The bomb sites A and B (where their radar objectives are), for the map whose minimap
     /// this names.
     radar_sites: (String, [Option<[f32; 2]>; 2]),
+    /// The radar's memory of each player, by client number.
+    radar_tracks: std::collections::HashMap<u32, RadarTrack>,
 }
 
 /// Reads CS:GO's HUD; `None` without CS:GO (or its packed UI and fonts).
@@ -715,8 +752,6 @@ pub(crate) fn update_csgo_panorama(
                 }
                 doc.set_image_handle(inner, Some(handle));
             }
-            // The players: the local one in the middle with its view cone, teammates where they
-            // are (at the rim when off it), CT blue or T yellow, a cross once dead.
             let local_team = snap
                 .and_then(|s| s.meta.for_client(local.0))
                 .map_or(0, |m| m.client_state_team);
@@ -774,41 +809,100 @@ pub(crate) fn update_csgo_panorama(
                     0.0,
                 );
             }
-            let mut shown = Vec::new();
+            // The players (`SetupIconsFromStates`): teammates always, enemies while the server
+            // has them spotted (`cs_spotted`), then for 6 s as a fading ghost where last seen;
+            // the dead (if seen dying) as a cross fading over 4 s; anyone off the radar as an
+            // arrow at its rim pointing their way.
+            let mut shown: Vec<RadarIcon> = Vec::new();
             if let Some(snap) = snap {
+                let mut present = Vec::new();
                 for (id, other) in &snap.players {
-                    let team = snap.meta.for_client(*id).map_or(0, |m| m.client_state_team);
-                    if *id != local.0 && (team != local_team || local_team == 0) {
+                    let meta = snap.meta.for_client(*id);
+                    let team = meta.map_or(0, |m| m.client_state_team);
+                    let me = *id == local.0;
+                    let friend = me || (local_team != 0 && team == local_team);
+                    if team == 0 && !me {
                         continue;
                     }
-                    let terrorist = crate::cs_hud::is_terrorist(Some(snap), team).unwrap_or(false);
+                    present.push(id.0);
                     let dead = other.pm_type >= PM_TYPE_DEAD;
-                    let (x, y, _) = project([other.origin[0], other.origin[1]], half - 6.0);
-                    let icon = match (terrorist, dead) {
-                        (false, false) => "CTOnMap",
-                        (true, false) => "TOnMap",
-                        (false, true) => "CTDeath",
-                        (true, true) => "TDeath",
+                    let spotted = friend || meta.is_some_and(|m| m.cs_spotted);
+                    let here = [other.origin[0], other.origin[1]];
+                    let track = state.radar_tracks.entry(id.0).or_insert(RadarTrack {
+                        at: here,
+                        seen_at: None,
+                        dead_at: None,
+                    });
+                    if dead {
+                        track.dead_at.get_or_insert(now);
+                    } else {
+                        track.dead_at = None;
+                    }
+                    if spotted {
+                        track.at = here;
+                        track.seen_at = Some(now);
+                    }
+                    let (state_name, fade) = match (dead, spotted, track.dead_at, track.seen_at) {
+                        (true, true, Some(died), _) if now - died < RADAR_DEAD_FADE_S => {
+                            ("Death", 1.0 - (now - died) / RADAR_DEAD_FADE_S)
+                        }
+                        (false, true, _, _) => ("OnMap", 1.0),
+                        (false, false, _, Some(seen)) if now - seen < RADAR_GHOST_FADE_S => {
+                            ("Ghost", 1.0 - (now - seen) / RADAR_GHOST_FADE_S)
+                        }
+                        _ => continue,
                     };
-                    let cone = *id == local.0;
-                    shown.push(((half + x, half + y), icon, cone, if cone { 0.0 } else { (ps.viewangles[1] - other.viewangles[1]).to_radians() }));
+                    let (x, y, on_map) = project(track.at, half - 6.0);
+                    let state_name = if on_map || state_name == "Death" {
+                        state_name
+                    } else {
+                        "OffMap"
+                    };
+                    let side = if !friend {
+                        "Enemy"
+                    } else if crate::cs_hud::is_terrorist(Some(snap), team).unwrap_or(false) {
+                        "T"
+                    } else {
+                        "CT"
+                    };
+                    // Off the radar the arrow points out; a living teammate on it faces where
+                    // they look; everything else stays upright.
+                    let turn = if state_name == "OffMap" {
+                        y.atan2(x) + std::f32::consts::FRAC_PI_2
+                    } else if friend && !me && state_name == "OnMap" {
+                        (ps.viewangles[1] - other.viewangles[1]).to_radians()
+                    } else {
+                        0.0
+                    };
+                    shown.push(RadarIcon {
+                        at: (half + x, half + y),
+                        icon: format!("{side}{state_name}"),
+                        cone: me && state_name == "OnMap",
+                        turn,
+                        fade,
+                    });
                 }
+                state.radar_tracks.retain(|id, _| present.contains(id));
             }
             // The local player draws last, over the others.
-            shown.sort_by_key(|(_, _, cone, _)| *cone);
+            shown.sort_by_key(|icon| icon.cone);
             for (k, &icons) in state.radar_icons.iter().enumerate() {
-                let Some(&(at, icon, cone, turn)) = shown.get(k) else {
+                let Some(shown) = shown.get(k) else {
                     doc.set_visible(icons, false);
                     continue;
                 };
                 doc.set_visible(icons, true);
-                doc.set_live_transform(icons, at, 0.0);
+                doc.set_live_transform(icons, shown.at, 0.0);
+                // Fades restyle, so only in tenths.
+                let fade = (shown.fade * 10.0).ceil() / 10.0;
+                let opacity = (fade < 1.0).then(|| format!("{fade:.1}"));
+                doc.set_style(icons, "opacity", opacity.as_deref());
                 if let Some(rotated) = doc.find_in(icons, "PI_FirstRotated") {
-                    doc.set_live_transform(rotated, (0.0, 0.0), turn);
+                    doc.set_live_transform(rotated, (0.0, 0.0), shown.turn);
                 }
                 for id in RADAR_ICON_IDS {
                     if let Some(image) = doc.find_in(icons, id) {
-                        doc.set_visible(image, id == icon || (cone && id == "ViewFrustrum"));
+                        doc.set_visible(image, id == shown.icon || (shown.cone && id == "ViewFrustrum"));
                     }
                 }
             }

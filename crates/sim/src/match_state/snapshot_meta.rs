@@ -71,6 +71,9 @@ pub struct ClientSnapshotMeta {
 
     pub player_card_nameplate: u32,
 
+    /// Whether an enemy sees the player, so the enemy team's CS:GO radar shows them.
+    pub cs_spotted: bool,
+
     pub client_dvars: Vec<(String, String)>,
 
     pub shellshock: Option<hud_iw4::ShockParams>,

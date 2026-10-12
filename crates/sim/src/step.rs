@@ -621,6 +621,7 @@ fn run_entity_types_system(ecs: &mut World) {
     // Every round's freeze time is a warm-up phase until it ends, and it is the buy time too.
     if world.publishes_snapshot() {
         crate::cs_economy::update_buy_bits(&mut world, tick);
+        crate::cs_spotting::update(&mut world, tick);
     }
 }
 
