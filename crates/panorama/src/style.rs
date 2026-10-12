@@ -70,7 +70,7 @@ pub struct Style {
     pub background_image: Option<String>,
     pub border_width: [f32; 4],
     pub border_color: Option<Color>,
-    pub border_radius: f32,
+    pub border_radius: Len,
     pub visible: bool,
     pub opacity: f32,
     pub wash: Option<Color>,
@@ -111,7 +111,7 @@ impl Default for Style {
             background_image: None,
             border_width: [0.0; 4],
             border_color: None,
-            border_radius: 0.0,
+            border_radius: Len::Px(0.0),
             visible: true,
             opacity: 1.0,
             wash: None,
@@ -411,7 +411,12 @@ impl Style {
                 }
             }
             "border-radius" => {
-                self.border_radius = v.split_whitespace().next().and_then(parse_px).unwrap_or(0.0);
+                self.border_radius = v
+                    .split_whitespace()
+                    .next()
+                    .and_then(parse_len)
+                    .filter(|len| matches!(len, Len::Px(_) | Len::Percent(_)))
+                    .unwrap_or(Len::Px(0.0));
             }
             "visibility" => self.visible = !v.eq_ignore_ascii_case("collapse"),
             "opacity" => self.opacity = v.parse().unwrap_or(self.opacity),

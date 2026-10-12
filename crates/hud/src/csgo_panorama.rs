@@ -31,6 +31,7 @@ fn sublayout(tag: &str) -> Option<&'static str> {
         "csgohudteamcounter" => "file://{resources}/layout/hud/hudteamcounter.xml",
         "csgohuddeathnotice" => "file://{resources}/layout/hud/huddeathnotice.xml",
         "csgobuymenu" => "file://{resources}/layout/buymenu.xml",
+        "csgohudradar" => "file://{resources}/layout/hud/hudradar.xml",
         _ => return None,
     })
 }
@@ -67,7 +68,7 @@ struct BuyWheels {
 /// categories and, per category, a wheel of its items (four wedges when it holds four).
 fn build_buy_wheels(doc: &mut panorama::Doc, files: &panorama::Files) -> Option<BuyWheels> {
     let container = doc.find("BuyWheelContainer")?;
-    let mut wheel = |doc: &mut panorama::Doc, wedges: usize| -> Option<Wheel> {
+    let wheel = |doc: &mut panorama::Doc, wedges: usize| -> Option<Wheel> {
         let (snippet, start) = if wedges > 4 {
             ("Radial_SixSlot", -150.0)
         } else {
@@ -175,6 +176,75 @@ fn show_item_details(doc: &mut panorama::Doc, info: usize, item: &str) {
     }
 }
 
+/// CS:GO's round radar (`#Radar__Round--Inner`): 250 Panorama pixels across, showing as much of
+/// the map as MW2's minimap does.
+const RADAR_SIZE: f32 = 250.0;
+/// How many players the radar has icons for.
+const RADAR_ICONS: usize = 24;
+/// The icons a player package can show (one at a time, plus the local player's view cone).
+const RADAR_ICON_IDS: [&str; 6] = ["CTOnMap", "TOnMap", "CTDeath", "TDeath", "ViewFrustrum", "EnemyOnMap"];
+
+/// Draws MW2's minimap `(width, height, rgba)` into `out` as CS:GO's round radar sees it:
+/// `size` pixels across, `range` world units across, centred on `at` and turned so `yaw`
+/// points up; black off the map, faded out at the rim.
+fn draw_radar(
+    out: &mut [u8],
+    size: u32,
+    map: (u32, u32, &[u8]),
+    bounds: &hud_iw4::CompassMapBounds,
+    at: [f32; 2],
+    yaw: f32,
+    range: f32,
+) {
+    let (w, h, rgba) = map;
+    let (sin, cos) = yaw.to_radians().sin_cos();
+    let forward = [cos, sin];
+    let right = [sin, -cos];
+    let east = [bounds.north[1], -bounds.north[0]];
+    let south = [-bounds.north[0], -bounds.north[1]];
+    let units = range / size as f32;
+    let radius = size as f32 * 0.5;
+    let texel = |x: i64, y: i64| -> [f32; 4] {
+        if x < 0 || y < 0 || x >= i64::from(w) || y >= i64::from(h) {
+            return [0.0, 0.0, 0.0, 255.0];
+        }
+        let i = ((y as usize) * w as usize + x as usize) * 4;
+        rgba.get(i..i + 4).map_or([0.0, 0.0, 0.0, 255.0], |p| {
+            [f32::from(p[0]), f32::from(p[1]), f32::from(p[2]), 255.0]
+        })
+    };
+    for j in 0..size {
+        for i in 0..size {
+            let dx = i as f32 + 0.5 - radius;
+            let dy = j as f32 + 0.5 - radius;
+            let o = ((j * size + i) * 4) as usize;
+            let edge = (radius - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
+            if edge <= 0.0 {
+                out[o..o + 4].copy_from_slice(&[0, 0, 0, 0]);
+                continue;
+            }
+            let world = [
+                at[0] + (dx * right[0] - dy * forward[0]) * units,
+                at[1] + (dx * right[1] - dy * forward[1]) * units,
+            ];
+            let delta = [world[0] - bounds.upper_left[0], world[1] - bounds.upper_left[1]];
+            let u = (east[0] * delta[0] + east[1] * delta[1]) / bounds.world_size[0];
+            let v = (south[0] * delta[0] + south[1] * delta[1]) / bounds.world_size[1];
+            let (fx, fy) = (u * w as f32 - 0.5, v * h as f32 - 0.5);
+            let (x0, y0) = (fx.floor(), fy.floor());
+            let (tx, ty) = (fx - x0, fy - y0);
+            let (x0, y0) = (x0 as i64, y0 as i64);
+            let (a, b, c, d) = (texel(x0, y0), texel(x0 + 1, y0), texel(x0, y0 + 1), texel(x0 + 1, y0 + 1));
+            for k in 0..3 {
+                let top = a[k] + (b[k] - a[k]) * tx;
+                let bottom = c[k] + (d[k] - c[k]) * tx;
+                out[o + k] = (top + (bottom - top) * ty) as u8;
+            }
+            out[o + 3] = (edge * 255.0) as u8;
+        }
+    }
+}
+
 /// The equipment icon of what a buy name sells (`icons/equipment/<name>.svg`).
 fn buy_icon(item: &str) -> &str {
     match item {
@@ -219,6 +289,9 @@ pub(crate) struct CsgoPanorama {
     /// The newest kill feed line already shown (its time).
     feed_seen: i32,
     buy: Option<BuyWheels>,
+    /// The radar's map texture and its size in pixels, and its players' icon packages.
+    radar_image: Option<(Handle<Image>, u32)>,
+    radar_icons: Vec<usize>,
 }
 
 /// Reads CS:GO's HUD; `None` without CS:GO (or its packed UI and fonts).
@@ -328,6 +401,11 @@ pub(crate) fn update_csgo_panorama(
     view: Res<ViewSubject>,
     feed: Res<crate::cs_hud::CsKillFeed>,
     (time, mut images): (Res<Time>, ResMut<Assets<Image>>),
+    (compass, mut hud_images, mut gaps): (
+        Option<Res<assets::SessionCompass>>,
+        ResMut<crate::images::HudImages>,
+        ResMut<crate::gaps::HudPresentationGaps>,
+    ),
     (menu, mut wheel_input, windows, nodes, settings): (
         Res<crate::cs_buymenu::CsBuyMenu>,
         ResMut<crate::cs_buymenu::CsgoBuyWheel>,
@@ -551,6 +629,151 @@ pub(crate) fn update_csgo_panorama(
             }
             true
         });
+    }
+
+    // The radar (`cl_radar csgo`): CS:GO's round radar over MW2's minimap, with CS:GO's player
+    // icons; money sits under whichever radar shows.
+    let csgo_radar = settings.radar == "csgo";
+    if let Some(radar) = doc.find("HudRadar") {
+        doc.set_visible(radar, csgo_radar && ps.is_some());
+        doc.set_class(radar, "hud-radar__active", csgo_radar && ps.is_some());
+        // Only the round radar: no square one, and no bomb, bomb zone or hostage markers (the
+        // game shows those as they happen, which this radar does not yet).
+        for id in [
+            "Radar__Square",
+            "RI_BombDefuserPackage",
+            "BombZoneA",
+            "BombZoneB",
+            "HZone0",
+            "HZone1",
+            "HZone2",
+            "HZone3",
+            "DirectionArrow",
+        ] {
+            if let Some(panel) = doc.find_in(radar, id) {
+                doc.set_visible(panel, false);
+            }
+        }
+        if state.radar_icons.is_empty()
+            && let Some(inner) = doc.find_in(radar, "Radar__Round--Inner")
+        {
+            for _ in 0..RADAR_ICONS {
+                if let Some(icons) = doc.add_snippet(files, inner, "PlayerIconPackage") {
+                    for child in doc.find_class_in(icons, "PI_Text") {
+                        doc.set_visible(child, false);
+                    }
+                    if let Some(rotated) = doc.find_in(icons, "PI_FirstRotated") {
+                        for child in doc.children(rotated) {
+                            doc.set_visible(child, false);
+                        }
+                    }
+                    doc.set_visible(icons, false);
+                    state.radar_icons.push(icons);
+                }
+            }
+        }
+        let drawable = csgo_radar
+            .then(|| crate::compass::resolve(compass.as_deref(), &mut hud_images, &mut gaps))
+            .flatten();
+        if let (Some(ps), Some(drawable), Some(inner)) =
+            (ps, drawable, doc.find_in(radar, "Radar__Round--Inner"))
+        {
+            let size = (RADAR_SIZE * doc.scale).round().max(16.0) as u32;
+            if state.radar_image.as_ref().is_none_or(|(_, s)| *s != size) {
+                let image = Image::new_fill(
+                    bevy::render::render_resource::Extent3d {
+                        width: size,
+                        height: size,
+                        depth_or_array_layers: 1,
+                    },
+                    bevy::render::render_resource::TextureDimension::D2,
+                    &[0, 0, 0, 0],
+                    bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                    bevy::asset::RenderAssetUsages::default(),
+                );
+                state.radar_image = Some((images.add(image), size));
+            }
+            if let Some((handle, size)) = state.radar_image.clone() {
+                let map_ns = hud_images.map_namespace();
+                if let Some((w, h, rgba)) = hud_images.rgba(map_ns, &drawable.image_name)
+                    && let Some(mut image) = images.get_mut(&handle)
+                    && let Some(data) = image.data.as_mut()
+                {
+                    draw_radar(
+                        data,
+                        size,
+                        (*w, *h, rgba.as_slice()),
+                        &drawable.bounds,
+                        [ps.origin[0], ps.origin[1]],
+                        ps.viewangles[1],
+                        drawable.max_range,
+                    );
+                }
+                doc.set_image_handle(inner, Some(handle));
+            }
+            // The players: the local one in the middle with its view cone, teammates where they
+            // are (at the rim when off it), CT blue or T yellow, a cross once dead.
+            let local_team = snap
+                .and_then(|s| s.meta.for_client(local.0))
+                .map_or(0, |m| m.client_state_team);
+            let (sin, cos) = ps.viewangles[1].to_radians().sin_cos();
+            let units = drawable.max_range / RADAR_SIZE;
+            let half = RADAR_SIZE * 0.5;
+            let mut shown = Vec::new();
+            if let Some(snap) = snap {
+                for (id, other) in &snap.players {
+                    let team = snap.meta.for_client(*id).map_or(0, |m| m.client_state_team);
+                    if *id != local.0 && (team != local_team || local_team == 0) {
+                        continue;
+                    }
+                    let terrorist = crate::cs_hud::is_terrorist(Some(snap), team).unwrap_or(false);
+                    let dead = other.pm_type >= PM_TYPE_DEAD;
+                    let d = [other.origin[0] - ps.origin[0], other.origin[1] - ps.origin[1]];
+                    let mut x = (d[0] * sin - d[1] * cos) / units;
+                    let mut y = -(d[0] * cos + d[1] * sin) / units;
+                    let rim = half - 6.0;
+                    let len = (x * x + y * y).sqrt();
+                    if len > rim {
+                        x *= rim / len;
+                        y *= rim / len;
+                    }
+                    let icon = match (terrorist, dead) {
+                        (false, false) => "CTOnMap",
+                        (true, false) => "TOnMap",
+                        (false, true) => "CTDeath",
+                        (true, true) => "TDeath",
+                    };
+                    let cone = *id == local.0;
+                    shown.push(((half + x, half + y), icon, cone, if cone { 0.0 } else { (ps.viewangles[1] - other.viewangles[1]).to_radians() }));
+                }
+            }
+            // The local player draws last, over the others.
+            shown.sort_by_key(|(_, _, cone, _)| *cone);
+            for (k, &icons) in state.radar_icons.iter().enumerate() {
+                let Some(&(at, icon, cone, turn)) = shown.get(k) else {
+                    doc.set_visible(icons, false);
+                    continue;
+                };
+                doc.set_visible(icons, true);
+                doc.set_live_transform(icons, at, 0.0);
+                if let Some(rotated) = doc.find_in(icons, "PI_FirstRotated") {
+                    doc.set_live_transform(rotated, (0.0, 0.0), turn);
+                }
+                for id in RADAR_ICON_IDS {
+                    if let Some(image) = doc.find_in(icons, id) {
+                        doc.set_visible(image, id == icon || (cone && id == "ViewFrustrum"));
+                    }
+                }
+            }
+        } else {
+            for &icons in &state.radar_icons {
+                doc.set_visible(icons, false);
+            }
+        }
+    }
+    if let Some(money) = doc.find("HudMoney") {
+        // Under MW2's minimap (its square, 240 pixels from the top) when that is the radar.
+        doc.set_style(money, "margin-top", (!csgo_radar).then_some("250px"));
     }
 
     // The buy menu (`CCSGO_BuyMenu`): the category wheel, or the open category's items; the

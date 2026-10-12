@@ -137,6 +137,12 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "cl_knife [default|bayonet|m9_bayonet|karambit|butterfly|flip|gut|huntsman|falchion|bowie|shadow_daggers|navaja|stiletto|ursus|talon|classic|paracord|survival|nomad|skeleton|golden] — the CS:GO knife you carry (with CS:GO installed)",
         ));
     }
+    if registry.resolve("cl_radar").is_none() {
+        registry.register(
+            crate::CommandSpec::new("cl_radar")
+                .usage("cl_radar [csgo|mw2] — CS:GO's round radar (with CS:GO installed) or MW2's minimap"),
+        );
+    }
     if registry.resolve("cl_loadout_pistol").is_none() {
         registry.register(crate::CommandSpec::new("cl_loadout_pistol").usage(
             "cl_loadout_pistol [usp|p2000] — the Counter-Terrorists' starting pistol (USP-S or P2000)",
@@ -543,6 +549,15 @@ pub(crate) fn route_movement_commands(
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
+            },
+            "cl_radar" => match cmd.args.as_slice() {
+                [] => format!("cl_radar = {}", game.radar),
+                [arg] if matches!(arg.trim(), "csgo" | "mw2") => {
+                    game.radar = arg.trim().to_owned();
+                    game.touch();
+                    format!("cl_radar = {}", game.radar)
+                }
+                _ => "usage: cl_radar [csgo|mw2]".to_owned(),
             },
             "cl_loadout_pistol" => match cmd.args.as_slice() {
                 [] => format!("cl_loadout_pistol = {}", game.loadout_pistol),

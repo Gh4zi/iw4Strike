@@ -68,7 +68,7 @@ fn hide(pass: &mut HudTessPass) {
 pub(crate) struct DrawableCompass {
     pub(crate) image_name: String,
     pub(crate) bounds: CompassMapBounds,
-    max_range: f32,
+    pub(crate) max_range: f32,
     pub(crate) north_yaw: f32,
 }
 
@@ -112,7 +112,16 @@ pub(crate) fn update_compass(
     view: Option<Res<frame::ViewSubject>>,
     local_vars: Res<crate::playercard::UiLocalVars>,
     hud_input: Option<Res<frame::HudInputView>>,
+    (settings, panorama): (
+        Res<frame::GameSettings>,
+        Res<crate::csgo_panorama::CsgoPanorama>,
+    ),
 ) {
+    // CS:GO's radar draws instead (`cl_radar csgo`, with CS:GO's HUD up).
+    if panorama.active && settings.radar == "csgo" {
+        hide(&mut pass);
+        return;
+    }
     take_fire_pings(
         &mut ping_bus,
         &presented,

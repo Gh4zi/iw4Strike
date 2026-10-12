@@ -42,6 +42,11 @@ struct Panel {
     disabled: bool,
     removed: bool,
     style: Style,
+    /// A texture the game gives the panel to draw (a radar it renders), over its `src`.
+    image_handle: Option<Handle<Image>>,
+    /// A shift (Panorama pixels) and turn (radians) the game moves the panel by every frame,
+    /// applied without restyling (`set_live_transform`).
+    live: Option<((f32, f32), f32)>,
 }
 
 /// A loaded layout, its panels and the rules that style them.
@@ -56,6 +61,8 @@ pub struct Doc {
     /// Logical pixels per Panorama pixel.
     pub scale: f32,
     changed: bool,
+    /// Panels whose live transform moved since the last sync.
+    live_dirty: Vec<usize>,
 }
 
 /// The main element of a layout document: the first child of `<root>` that is not its styles,
@@ -114,6 +121,7 @@ impl Doc {
             root: 0,
             scale: 1.0,
             changed: true,
+            live_dirty: Vec::new(),
         };
         let xml = doc.read_layout(files, layout)?;
         let main = main_element(&xml)?.clone();
@@ -384,6 +392,24 @@ impl Doc {
         }
     }
 
+    /// Draws `handle` as `panel`'s image (stretched over it), or stops (`None`).
+    pub fn set_image_handle(&mut self, panel: usize, handle: Option<Handle<Image>>) {
+        if self.panels[panel].image_handle != handle {
+            self.panels[panel].image_handle = handle;
+            self.changed = true;
+        }
+    }
+
+    /// Moves `panel` by `shift` (Panorama pixels) and turns it by `turn` radians about its
+    /// middle, over its styles' transform, cheaply enough to do every frame.
+    pub fn set_live_transform(&mut self, panel: usize, shift: (f32, f32), turn: f32) {
+        let live = Some((shift, turn));
+        if self.panels[panel].live != live {
+            self.panels[panel].live = live;
+            self.live_dirty.push(panel);
+        }
+    }
+
     /// A progress bar's fill, 0 to 1.
     pub fn set_value(&mut self, panel: usize, value: f32) {
         let value = value.clamp(0.0, 1.0);
@@ -582,9 +608,20 @@ impl Doc {
         fonts: &Fonts,
     ) {
         if !self.changed {
+            // Only live transforms moved: set them, no restyle.
+            for p in std::mem::take(&mut self.live_dirty) {
+                if let (Some(entity), Some(((x, y), turn))) = (self.panels[p].entity, self.panels[p].live) {
+                    commands.entity(entity).insert(UiTransform {
+                        translation: Val2::px(x * self.scale, y * self.scale),
+                        scale: Vec2::ONE,
+                        rotation: Rot2::radians(turn),
+                    });
+                }
+            }
             return;
         }
         self.changed = false;
+        self.live_dirty.clear();
         // Styles top-down (panels are added after their parents).
         for p in 0..self.panels.len() {
             if !self.panels[p].removed {
@@ -687,7 +724,7 @@ impl Doc {
                 right: Val::Px(s.border_width[2] * self.scale),
                 bottom: Val::Px(s.border_width[3] * self.scale),
             },
-            border_radius: BorderRadius::all(Val::Px(s.border_radius * self.scale)),
+            border_radius: BorderRadius::all(self.val(s.border_radius)),
             overflow: if s.clip {
                 Overflow::clip()
             } else {
@@ -900,11 +937,19 @@ impl Doc {
                 Val::Px(px)
             }
         };
-        e.insert(UiTransform {
-            translation: Val2::new(along(px.0, shift.0), along(px.1, shift.1)),
-            scale: Vec2::new(s.scale.0, s.scale.1),
-            rotation: Rot2::radians(s.rotate),
-        });
+        if let Some(((x, y), turn)) = p.live {
+            e.insert(UiTransform {
+                translation: Val2::px(x * self.scale, y * self.scale),
+                scale: Vec2::ONE,
+                rotation: Rot2::radians(turn),
+            });
+        } else {
+            e.insert(UiTransform {
+                translation: Val2::new(along(px.0, shift.0), along(px.1, shift.1)),
+                scale: Vec2::new(s.scale.0, s.scale.1),
+                rotation: Rot2::radians(s.rotate),
+            });
+        }
         if let Some(z) = s.z_index {
             e.insert(ZIndex(z));
         }
@@ -955,7 +1000,15 @@ impl Doc {
                 });
             }
         }
-        // An image: its own `src`, or a panel's `background-image`.
+        // A texture the game draws into, else its own `src` or a panel's `background-image`.
+        if let Some(handle) = p.image_handle.clone().filter(|_| s.visible) {
+            let mut image = ImageNode::new(handle);
+            image.color = style::tint(Color::WHITE, wash, opacity);
+            image.image_mode = NodeImageMode::Stretch;
+            e.insert(image);
+            e.insert(node);
+            return;
+        }
         let src = if tag == "image" {
             p.image.clone()
         } else {
