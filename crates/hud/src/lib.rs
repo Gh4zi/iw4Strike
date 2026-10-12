@@ -7,6 +7,7 @@ mod cs_buymenu;
 mod cs_crosshair;
 mod cs16_hud;
 mod cs_hud;
+mod csgo_hud;
 mod cs_round_banner;
 mod cs_scoreboard;
 mod draw2d;

@@ -47,6 +47,7 @@ impl Plugin for HudPlugin {
             .init_resource::<crate::cs_buymenu::CsBuyMenu>()
             .init_resource::<crate::cs_hud::CsHudAssets>()
             .init_resource::<crate::cs16_hud::Cs16HudAssets>()
+            .init_resource::<crate::csgo_hud::CsgoHudAssets>()
             .init_resource::<crate::cs_hud::CsKillFeed>()
             .init_resource::<crate::cs_hud::CsMoneyFlash>()
             .init_resource::<crate::cs_round_banner::CsRoundBanner>()
@@ -115,6 +116,7 @@ impl Plugin for HudPlugin {
                             (
                                 crate::cs_hud::update_cs_hud,
                                 crate::cs16_hud::update_cs16_hud.after(crate::cs_hud::update_cs_hud),
+                                crate::csgo_hud::update_csgo_hud.after(crate::cs_hud::update_cs_hud),
                                 crate::cs_scoreboard::update_cs_scoreboard,
                                 crate::cs_buymenu::update_cs_buymenu,
                                 crate::cs_round_banner::update_cs_round_banner,

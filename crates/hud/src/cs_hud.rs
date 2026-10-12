@@ -32,8 +32,8 @@ const ORANGE: Color = Color::srgb(1.0, 176.0 / 255.0, 0.0);
 const RED: Color = Color::srgb(0.86, 0.0, 0.0);
 /// Panel backgrounds (`bgcolor_override 0 0 0 96`).
 const PANEL_BG: Color = Color::srgba(0.0, 0.0, 0.0, 96.0 / 255.0);
-const CT_BLUE: Color = Color::srgb(153.0 / 255.0, 204.0 / 255.0, 1.0);
-const T_RED: Color = Color::srgb(1.0, 64.0 / 255.0, 64.0 / 255.0);
+pub(crate) const CT_BLUE: Color = Color::srgb(153.0 / 255.0, 204.0 / 255.0, 1.0);
+pub(crate) const T_RED: Color = Color::srgb(1.0, 64.0 / 255.0, 64.0 / 255.0);
 /// Health at or under which the digits turn red.
 const LOW_HEALTH: i32 = 25;
 /// Seconds left under which the round timer turns red.
@@ -199,7 +199,11 @@ pub(crate) struct FeedLine {
     icon: (IconFont, char),
     /// The CS 1.6 kill sprite (`d_ak47` … `d_skull`).
     pub(crate) goldsrc_icon: &'static str,
+    /// CS:GO's kill icon (`ak47` … `suicide`).
+    pub(crate) csgo_icon: &'static str,
     pub(crate) headshot: bool,
+    /// The local player killed or died.
+    pub(crate) local: bool,
 }
 
 /// CS:S death notices: the newest last, at most [`FEED_LINES`].
@@ -335,6 +339,7 @@ pub(crate) fn spawn_cs_hud(
     mut images: ResMut<Assets<Image>>,
     mut assets: ResMut<CsHudAssets>,
     mut goldsrc: ResMut<crate::cs16_hud::Cs16HudAssets>,
+    mut csgo: ResMut<crate::csgo_hud::CsgoHudAssets>,
 ) {
     if !replaces_mw2_hud() || !existing.is_empty() {
         return;
@@ -343,9 +348,14 @@ pub(crate) fn spawn_cs_hud(
         return;
     };
     *assets = load_assets(&mut fonts, &mut images);
+    // Playing with CS:GO: its HUD instead of the CS:S panels or CS 1.6's sprites.
+    if let Some(found) = crate::csgo_hud::load(&mut fonts, &mut images) {
+        *csgo = found;
+    }
     // Playing with CS 1.6 or Condition Zero: CS 1.6's sprite HUD instead of the CS:S panels.
-    if let Some(found) = asset_transport::find_goldsrc()
-        .and_then(|dir| crate::cs16_hud::load(&dir, &mut fonts, &mut images))
+    if !csgo.active
+        && let Some(found) = asset_transport::find_goldsrc()
+            .and_then(|dir| crate::cs16_hud::load(&dir, &mut fonts, &mut images))
     {
         *goldsrc = found;
     }
@@ -364,6 +374,10 @@ pub(crate) fn spawn_cs_hud(
             },
         ))
         .with_children(|hud| {
+            if csgo.active {
+                crate::csgo_hud::spawn_parts(hud, &csgo);
+                return;
+            }
             if goldsrc.active {
                 crate::cs16_hud::spawn_parts(hud, &goldsrc);
                 return;
@@ -587,13 +601,17 @@ pub(crate) fn obituary(
         Some(weapon) if has_attacker => crate::cs16_hud::kill_sprite(weapon),
         _ => crate::cs16_hud::WORLD_KILL,
     };
+    let is_local = |client: i32| client >= 0 && client as u32 == local.0.0;
     feed.lines.push_back(FeedLine {
         start_ms: milliseconds() as i32,
         attacker: has_attacker.then(|| player(payload.attacker_entity_num)),
         victim: player(payload.other_entity_num),
         icon,
         goldsrc_icon,
+        csgo_icon: crate::csgo_hud::kill_icon(weapon.as_deref().filter(|_| has_attacker)),
         headshot: hud_iw4::obituary_mod(payload.event_parm) == Some(hud_iw4::MOD_HEAD_SHOT),
+        local: (has_attacker && is_local(payload.attacker_entity_num))
+            || is_local(payload.other_entity_num),
     });
     while feed.lines.len() > FEED_LINES {
         feed.lines.pop_front();
@@ -671,6 +689,17 @@ pub(crate) fn carries_c4(ps: &PlayerState, weapons: &PreparedWeapons) -> bool {
             weapon_iw4::cs::cs_weapon_index_for(&weapons.0.script_name_of(id))
                 .is_some_and(weapon_iw4::cs::is_c4)
         })
+}
+
+/// The magazine and reserve of what `ps` holds, as the ammo panel shows them (none for the knife
+/// and the C4; a grenade's count without a reserve).
+pub(crate) fn ammo_counts(
+    ps: &PlayerState,
+    weapons: &PreparedWeapons,
+    presented: &PresentedSnapshot,
+    local: &LocalPresentClient,
+) -> Option<(i32, Option<i32>)> {
+    ammo_values(ps, weapons, presented, local).map(|ammo| (ammo.clip, ammo.reserve))
 }
 
 fn ammo_values(ps: &PlayerState, weapons: &PreparedWeapons, presented: &PresentedSnapshot, local: &LocalPresentClient) -> Option<Ammo> {
@@ -802,7 +831,10 @@ pub(crate) fn update_cs_hud(
     mut feed: ResMut<CsKillFeed>,
     mut flash: ResMut<CsMoneyFlash>,
     (time, mut progress): (Res<Time>, Local<Option<(f32, f32)>>),
-    goldsrc: Res<crate::cs16_hud::Cs16HudAssets>,
+    (goldsrc, csgo): (
+        Res<crate::cs16_hud::Cs16HudAssets>,
+        Res<crate::csgo_hud::CsgoHudAssets>,
+    ),
     mut parts: PartQuery,
 ) {
     if !replaces_mw2_hud() {
@@ -811,8 +843,8 @@ pub(crate) fn update_cs_hud(
     let now_ms = milliseconds() as i32;
     feed.lines
         .retain(|line| now_ms.saturating_sub(line.start_ms) < FEED_SECONDS_MS);
-    // The CS 1.6 HUD draws instead (`cs16_hud`); the feed above is shared.
-    if goldsrc.active {
+    // The CS 1.6 or CS:GO HUD draws instead (`cs16_hud`, `csgo_hud`); the feed above is shared.
+    if goldsrc.active || csgo.active {
         return;
     }
     if !surface.is_ready() || view.in_killcam() {
