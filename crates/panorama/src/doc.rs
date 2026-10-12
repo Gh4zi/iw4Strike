@@ -65,6 +65,15 @@ pub struct Doc {
     /// Logical pixels per Panorama pixel.
     pub scale: f32,
     changed: bool,
+    /// Everything restyles at the next sync (sheets or the scale changed).
+    full: bool,
+    /// Panels that restyle with everything under them at the next sync (a class, style or
+    /// state changed, or they are new).
+    restyle: Vec<usize>,
+    /// Panels whose own content (text, image) changed: drawn again with their style as is.
+    reapply: Vec<usize>,
+    /// Removed panels whose nodes go at the next sync.
+    despawn: Vec<usize>,
     /// Panels whose live transform moved since the last sync.
     live_dirty: Vec<usize>,
 }
@@ -127,6 +136,10 @@ impl Doc {
             root: 0,
             scale: 1.0,
             changed: true,
+            full: true,
+            restyle: Vec::new(),
+            reapply: Vec::new(),
+            despawn: Vec::new(),
             live_dirty: Vec::new(),
         };
         let xml = doc.read_layout(files, layout)?;
@@ -196,6 +209,8 @@ impl Doc {
     }
 
     fn reindex(&mut self) {
+        self.changed = true;
+        self.full = true;
         self.index.clear();
         for (i, rule) in self.rules.iter().enumerate() {
             let key = rule.selector.subject().map_or_else(
@@ -391,7 +406,19 @@ impl Doc {
             }
             _ => return,
         }
+        self.mark_restyle(panel);
+    }
+
+    /// `panel` and everything under it restyle at the next sync.
+    fn mark_restyle(&mut self, panel: usize) {
         self.changed = true;
+        self.restyle.push(panel);
+    }
+
+    /// Only `panel`'s own content changed: it is drawn again at the next sync.
+    fn mark_reapply(&mut self, panel: usize) {
+        self.changed = true;
+        self.reapply.push(panel);
     }
 
     /// Sets dialog variable `name` on `panel` (its labels and their children's read it).
@@ -402,20 +429,21 @@ impl Doc {
             Some((_, v)) => *v = value.to_owned(),
             None => vars.push((name.to_owned(), value.to_owned())),
         }
-        self.changed = true;
+        // Its labels and their children read it.
+        self.mark_restyle(panel);
     }
 
     pub fn set_text(&mut self, panel: usize, text: &str) {
         if self.panels[panel].text.as_deref() != Some(text) {
             self.panels[panel].text = Some(text.to_owned());
-            self.changed = true;
+            self.mark_reapply(panel);
         }
     }
 
     pub fn set_image(&mut self, panel: usize, src: Option<&str>) {
         if self.panels[panel].image.as_deref() != src {
             self.panels[panel].image = src.map(str::to_owned);
-            self.changed = true;
+            self.mark_reapply(panel);
         }
     }
 
@@ -423,7 +451,7 @@ impl Doc {
     pub fn set_image_handle(&mut self, panel: usize, handle: Option<Handle<Image>>) {
         if self.panels[panel].image_handle != handle {
             self.panels[panel].image_handle = handle;
-            self.changed = true;
+            self.mark_reapply(panel);
         }
     }
 
@@ -447,28 +475,29 @@ impl Doc {
         let value = value.clamp(0.0, 1.0);
         if (self.panels[panel].value - value).abs() > 1e-4 {
             self.panels[panel].value = value;
-            self.changed = true;
+            // Its fill child draws it.
+            self.mark_restyle(panel);
         }
     }
 
     pub fn set_hover(&mut self, panel: usize, on: bool) {
         if self.panels[panel].hover != on {
             self.panels[panel].hover = on;
-            self.changed = true;
+            self.mark_restyle(panel);
         }
     }
 
     pub fn set_selected(&mut self, panel: usize, on: bool) {
         if self.panels[panel].selected != on {
             self.panels[panel].selected = on;
-            self.changed = true;
+            self.mark_restyle(panel);
         }
     }
 
     pub fn set_enabled(&mut self, panel: usize, on: bool) {
         if self.panels[panel].disabled == on {
             self.panels[panel].disabled = !on;
-            self.changed = true;
+            self.mark_restyle(panel);
         }
     }
 
@@ -485,7 +514,7 @@ impl Doc {
             }
             (None, None) => return,
         }
-        self.changed = true;
+        self.mark_restyle(panel);
     }
 
     /// Shows or hides `panel` over what its styles say, as `SetVisible` does.
@@ -508,7 +537,7 @@ impl Doc {
             let sublayout = self.sublayout;
             self.add(files, child, Some(panel), &sublayout);
         }
-        self.changed = true;
+        self.mark_restyle(panel);
         true
     }
 
@@ -521,7 +550,7 @@ impl Doc {
             children: Vec::new(),
         };
         let panel = self.add(files, &element, Some(parent), &|_| None);
-        self.changed = true;
+        self.mark_restyle(panel);
         panel
     }
 
@@ -548,7 +577,7 @@ impl Doc {
         let element = self.snippets.get(name)?.clone();
         let sublayout = self.sublayout;
         let panel = self.add(files, &element, Some(parent), &sublayout);
-        self.changed = true;
+        self.mark_restyle(panel);
         Some(panel)
     }
 
@@ -559,6 +588,7 @@ impl Doc {
         }
         self.panels[panel].removed = true;
         self.changed = true;
+        self.despawn.push(panel);
         let children = self.panels[panel].children.clone();
         for c in children {
             self.remove(c);
@@ -653,6 +683,7 @@ impl Doc {
         if (self.scale - scale).abs() > 1e-4 {
             self.scale = scale;
             self.changed = true;
+            self.full = true;
         }
     }
 
@@ -686,7 +717,15 @@ impl Doc {
             return;
         }
         self.changed = false;
-        self.live_dirty.clear();
+        let live = std::mem::take(&mut self.live_dirty);
+        if !self.full {
+            self.sync_changed(parent, commands, files, images, fonts, live);
+            return;
+        }
+        self.full = false;
+        self.restyle.clear();
+        self.reapply.clear();
+        self.despawn.clear();
         // Styles top-down (panels are added after their parents).
         for p in 0..self.panels.len() {
             if !self.panels[p].removed {
@@ -713,6 +752,77 @@ impl Doc {
                 }
             };
             self.apply(p, entity, commands, files, images, fonts);
+        }
+    }
+
+    /// [`Self::sync`] for what changed since the last one: the restyled panels' subtrees are
+    /// styled and drawn again (parents before children), the panels whose content changed drawn
+    /// again, removed panels' nodes despawned and moved live transforms set.
+    fn sync_changed(
+        &mut self,
+        parent: Entity,
+        commands: &mut Commands,
+        files: &mut Files,
+        images: &mut Assets<Image>,
+        fonts: &Fonts,
+        live: Vec<usize>,
+    ) {
+        for p in std::mem::take(&mut self.despawn) {
+            if let Some(entity) = self.panels[p].entity.take() {
+                commands.entity(entity).try_despawn();
+            }
+        }
+        let mut done = vec![false; self.panels.len()];
+        // Outermost first (a parent comes before its children in the panel list), so a root
+        // under another one is done with it, from its parent's new style.
+        let mut roots = std::mem::take(&mut self.restyle);
+        roots.sort_unstable();
+        roots.dedup();
+        let mut stack = Vec::new();
+        for root in roots {
+            stack.push(root);
+            while let Some(p) = stack.pop() {
+                if done[p] || self.panels[p].removed {
+                    continue;
+                }
+                done[p] = true;
+                self.panels[p].style = self.compute_style(p);
+                let entity = match self.panels[p].entity {
+                    Some(e) => e,
+                    None => {
+                        let parent_entity = self.panels[p]
+                            .parent
+                            .and_then(|q| self.panels[q].entity)
+                            .unwrap_or(parent);
+                        let e = commands.spawn((Node::default(), ChildOf(parent_entity))).id();
+                        self.panels[p].entity = Some(e);
+                        e
+                    }
+                };
+                self.apply(p, entity, commands, files, images, fonts);
+                stack.extend(self.panels[p].children.iter().rev().copied());
+            }
+        }
+        for p in std::mem::take(&mut self.reapply) {
+            if done[p] || self.panels[p].removed {
+                continue;
+            }
+            done[p] = true;
+            if let Some(entity) = self.panels[p].entity {
+                self.apply(p, entity, commands, files, images, fonts);
+            }
+        }
+        for p in live {
+            if done[p] {
+                continue;
+            }
+            if let (Some(entity), Some(((x, y), turn, scale))) = (self.panels[p].entity, self.panels[p].live) {
+                commands.entity(entity).insert(UiTransform {
+                    translation: Val2::px(x * self.scale, y * self.scale),
+                    scale: Vec2::splat(scale),
+                    rotation: Rot2::radians(turn),
+                });
+            }
         }
     }
 
