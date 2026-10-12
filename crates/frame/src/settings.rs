@@ -52,10 +52,9 @@ pub struct GameSettings {
     pub smoke_quality: String,
     /// Map destructibles (cars, barrels) take damage (`sv_destructibles`); off for CS play.
     pub destructibles: bool,
-    /// Every fall from higher than a crouched jump plus a stair step ends in an edgebug
-    /// (`always_edgebug`).
+    /// Every landing at an edge is an edgebug (`always_edgebug`).
     pub always_edgebug: bool,
-    /// Falling while pushing into any wall pixelsurfs along it (`always_pixelsurf`).
+    /// Falling while pushing into any wall and moving along it pixelsurfs (`always_pixelsurf`).
     pub always_pixelsurf: bool,
     pub third_person: bool,
     /// The console's look: 0 the original panel, 1 the CS2-style window.

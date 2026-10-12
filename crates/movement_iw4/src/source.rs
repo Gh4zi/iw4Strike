@@ -88,8 +88,8 @@ pub struct SourceProfile {
     /// A fixed movement tick in seconds (CS:GO servers' 64 or 128): each 100 Hz command moves in
     /// whole steps of this length. `None` moves once per command.
     pub step_seconds: Option<f32>,
-    /// `always_edgebug`: a landing from higher than a crouched jump plus a stair step is an
-    /// edgebug instead. Set from the console by [`crate::rules::active`].
+    /// `always_edgebug`: a landing at an edge, a step's travel from going off it, is an edgebug.
+    /// Set from the console by [`crate::rules::active`].
     pub always_edgebug: bool,
     /// `always_pixelsurf`: falling with the keys pushing into a wall holds the player's height.
     /// Set from the console by [`crate::rules::active`].
@@ -250,6 +250,10 @@ pub const MOMENTUM_SURF: SourceProfile = SourceProfile {
 
 /// How near a wall the hull must be for `always_pixelsurf` to hold it there.
 const PIXELSURF_REACH: f32 = 2.0;
+
+/// How fast along the wall `always_pixelsurf` needs the player to keep moving; slower is
+/// stopped, and falls.
+const PIXELSURF_MIN_SPEED: f32 = 1.0;
 
 const VIEW_HEIGHT_STAND: i32 = 0x3c;
 
@@ -785,8 +789,9 @@ impl<C: CollisionBackend> Move<'_, C> {
     }
 
     /// `always_pixelsurf`: in the air, not rising, with the keys pushing into a wall (a face too
-    /// steep to stand on) within `PIXELSURF_REACH`. Such a step keeps the player's height, as a
-    /// pixelsurf does: no gravity and no vertical speed.
+    /// steep to stand on) within `PIXELSURF_REACH` and still moving along it. Such a step keeps
+    /// the player's height, as a pixelsurf does: no gravity and no vertical speed. Stopped against
+    /// the wall (by something in the way), the player falls.
     fn pixelsurfing(&self, ps: &PlayerState, pml: &Pml, wish: Wish) -> bool {
         if !self.profile.always_pixelsurf || pml.walking != 0 || ps.velocity[2] > 0.0 {
             return false;
@@ -802,21 +807,47 @@ impl<C: CollisionBackend> Move<'_, C> {
             origin[2],
         ];
         let trace = self.player_trace(origin, reach);
-        trace.fraction < 1.0 && trace.startsolid == 0 && trace.normal[2].abs() < 0.7
-    }
-
-    /// `always_edgebug`: this landing ends a fall from higher than a crouched jump plus a stair
-    /// step (84 units in CS:GO), so jumps and hops, down a step included, still land.
-    fn edgebug_landing(&self, ps: &PlayerState) -> bool {
-        let profile = &self.profile;
-        if !profile.always_edgebug || self.gravity <= 0.0 {
+        if trace.fraction >= 1.0 || trace.startsolid != 0 || trace.normal[2].abs() >= 0.7 {
             return false;
         }
-        let jump_height = profile.jump_impulse * profile.jump_impulse / (2.0 * self.gravity);
-        let duck_lift = profile.duck_air_shift * (profile.stand_height - profile.duck_height);
-        let drop = jump_height + duck_lift + profile.step_size;
-        let fall = ps.cs_fall_velocity;
-        fall > 0.0 && fall * fall > 2.0 * self.gravity * drop
+        let mut normal = [trace.normal[0], trace.normal[1], 0.0];
+        normalize(&mut normal);
+        let into = ps.velocity[0] * normal[0] + ps.velocity[1] * normal[1];
+        let along = [
+            ps.velocity[0] - into * normal[0],
+            ps.velocity[1] - into * normal[1],
+            0.0,
+        ];
+        flat_length_sq(&along) >= PIXELSURF_MIN_SPEED * PIXELSURF_MIN_SPEED
+    }
+
+    /// `always_edgebug`: a falling landing at an edge, close enough that a step's travel carries
+    /// the hull off it with no ground within a stair step below, is an edgebug. CS:GO edgebugs
+    /// only when that travel is what is left of the landing step; this takes any landing a step
+    /// from the edge. Returns where the hull ends up, off the edge. Landings anywhere else are
+    /// ordinary ones.
+    fn edgebug_off_edge(&self, ps: &PlayerState) -> Option<[f32; 3]> {
+        if !self.profile.always_edgebug || ps.cs_fall_velocity <= 0.0 {
+            return None;
+        }
+        let origin = ps.origin;
+        let travel = [
+            origin[0] + ps.velocity[0] * self.frametime,
+            origin[1] + ps.velocity[1] * self.frametime,
+            origin[2],
+        ];
+        let slide = self.player_trace(origin, travel);
+        if slide.startsolid != 0 || slide.allsolid != 0 {
+            return None;
+        }
+        let off = slide.endpos;
+        let below = [off[0], off[1], off[2] - self.profile.step_size];
+        if standable(&self.player_trace(off, below))
+            || standable(&self.touch_ground_in_quadrants(off, below))
+        {
+            return None;
+        }
+        Some(off)
     }
 
     fn start_gravity(&self, ps: &mut PlayerState) {
@@ -875,10 +906,11 @@ impl<C: CollisionBackend> Move<'_, C> {
             if next[2] > self.profile.non_jump_velocity {
                 return;
             }
-            if self.edgebug_landing(ps) {
-                // An edgebug: the ground stops the fall and nothing else. The player stays in the
-                // air this step (no landing, no friction) and the fall leaves no damage or
-                // landing stamina behind.
+            if let Some(off) = self.edgebug_off_edge(ps) {
+                // An edgebug: the ground stops the fall and nothing else, and the step's travel
+                // takes the player off the edge. No landing, no friction, and the fall leaves no
+                // damage or landing stamina behind.
+                ps.origin = off;
                 ps.velocity[2] = 0.0;
                 ps.cs_fall_velocity = 0.0;
                 self.leave_ground(ps, pml);
@@ -2806,39 +2838,50 @@ mod tests {
         }
     }
 
-    /// Falls from 400 units drifting at 250 units/s until on the ground: the drift speed on the
-    /// step the floor stopped the fall without a landing (an edgebug), if one did, and the
-    /// hardest landing.
-    fn high_fall(always_edgebug: bool) -> (Option<f32>, f32) {
-        let mut sim = csgo_tricks(Floor, always_edgebug, false);
-        sim.ps.origin = [0.0, 0.0, 400.0];
-        sim.ps.velocity = [250.0, 0.0, 0.0];
-        let mut edgebug = None;
-        let mut hardest = 0.0_f32;
-        for _ in 0..300 {
-            let falling = sim.ps.velocity[2];
+    #[test]
+    fn always_edgebug_catches_a_landing_at_an_edge() {
+        // Coming down at 600 units/s (a landing that hurts) drifting off the platform's edge at
+        // 250, the hull's trailing side 4 units short of the edge: it lands 1.5 units short, a
+        // step's travel from going off.
+        let drop = |always_edgebug| {
+            let mut sim = csgo_tricks(EdgeBox { exact: true }, always_edgebug, false);
+            sim.ps.origin = [11.0, 0.0, 3.0];
+            sim.ps.velocity = [250.0, 0.0, -600.0];
             let result = sim.tick_result(0, 0, 0, 0.0);
-            hardest = hardest.max(result.landing_speed);
-            if sim.grounded() {
-                return (edgebug, hardest);
-            }
-            if falling < -500.0 && sim.ps.velocity[2] > -10.0 {
-                edgebug = Some(sim.flat_speed());
-            }
+            (sim, result.landing_speed)
+        };
+        let (sim, landed) = drop(false);
+        assert!(sim.grounded(), "never landed on the edge");
+        assert!(fall_damage(&CSGO, landed) > 0, "the landing does not hurt: {landed}");
+
+        let (mut sim, landed) = drop(true);
+        assert!(!sim.grounded(), "landed instead of edgebugging");
+        assert_eq!(landed, 0.0, "the edgebug left a landing behind");
+        assert!(sim.ps.origin[0] - 15.0 > 0.0, "still over the edge: {}", sim.ps.origin[0]);
+        assert!(sim.ps.velocity[2] > -10.0, "the fall was not stopped: {}", sim.ps.velocity[2]);
+        assert!((sim.flat_speed() - 250.0).abs() < 0.01, "speed lost: {}", sim.flat_speed());
+        // It goes on falling past the edge.
+        for _ in 0..20 {
+            sim.tick(0, 0, 0, 0.0);
         }
-        panic!("never landed");
+        assert!(!sim.grounded() && sim.ps.origin[2] < -10.0, "did not fall on");
     }
 
     #[test]
-    fn always_edgebug_turns_a_high_fall_into_an_edgebug() {
-        let (edgebug, hardest) = high_fall(false);
-        assert_eq!(edgebug, None);
-        assert!(fall_damage(&CSGO, hardest) > 0, "the plain fall hurts: {hardest}");
-
-        let (edgebug, hardest) = high_fall(true);
-        let speed = edgebug.expect("the floor never stopped the fall without a landing");
-        assert!((speed - 250.0).abs() < 0.01, "speed lost to the edgebug: {speed}");
-        assert_eq!(hardest, 0.0, "the edgebug left a landing behind");
+    fn always_edgebug_leaves_other_landings_alone() {
+        // Away from any edge a hard fall lands, and hurts, as ever.
+        let mut sim = csgo_tricks(Floor, true, false);
+        sim.ps.origin = [0.0, 0.0, 400.0];
+        sim.ps.velocity = [250.0, 0.0, 0.0];
+        let mut hardest = 0.0_f32;
+        for _ in 0..300 {
+            hardest = hardest.max(sim.tick_result(0, 0, 0, 0.0).landing_speed);
+            if sim.grounded() {
+                break;
+            }
+        }
+        assert!(sim.grounded());
+        assert!(fall_damage(&CSGO, hardest) > 0, "the fall did not hurt: {hardest}");
     }
 
     /// A jump on the floor, crouched in the air if asked: how fast it lands.
@@ -2864,14 +2907,26 @@ mod tests {
         }
     }
 
-    /// A wall: the face at x 16, solid beyond it.
-    struct Wall;
+    /// A wall: the face at x 16, solid beyond it; with `block`, a block standing against it from
+    /// y 100 on.
+    struct Wall {
+        block: bool,
+    }
 
     const WALL_PLANES: [[f32; 4]; 6] = [
         [1.0, 0.0, 0.0, 528.0],
         [-1.0, 0.0, 0.0, -16.0],
         [0.0, 1.0, 0.0, 4096.0],
         [0.0, -1.0, 0.0, 4096.0],
+        [0.0, 0.0, 1.0, 4096.0],
+        [0.0, 0.0, -1.0, 4096.0],
+    ];
+
+    const BLOCK_PLANES: [[f32; 4]; 6] = [
+        [1.0, 0.0, 0.0, 16.0],
+        [-1.0, 0.0, 0.0, 512.0],
+        [0.0, 1.0, 0.0, 612.0],
+        [0.0, -1.0, 0.0, -100.0],
         [0.0, 0.0, 1.0, 4096.0],
         [0.0, 0.0, -1.0, 4096.0],
     ];
@@ -2883,14 +2938,15 @@ mod tests {
                 endpos: input.end,
                 ..Trace::default()
             };
-            let brush = trace_iw4::BrushRef {
-                planes: &WALL_PLANES,
+            let brush = |planes| trace_iw4::BrushRef {
+                planes,
                 contents: 1,
                 plane_surface_flags: &[],
                 glass_encoded: 0,
             };
+            let block = self.block.then(|| brush(&BLOCK_PLANES));
             trace_iw4::trace_box_into(
-                [brush],
+                core::iter::once(brush(&WALL_PLANES)).chain(block),
                 input.start,
                 input.end,
                 input.mins,
@@ -2906,8 +2962,8 @@ mod tests {
 
     /// Falls along the wall at 200 units/s for a second, pushing into it with `push` (forward
     /// faces the wall), then lets go for a quarter of a second: the height after each.
-    fn wall_slide(always_pixelsurf: bool, push: i8) -> (f32, f32, f32) {
-        let mut sim = csgo_tricks(Wall, false, always_pixelsurf);
+    fn wall_slide(always_pixelsurf: bool, push: i8, block: bool) -> (f32, f32, f32) {
+        let mut sim = csgo_tricks(Wall { block }, false, always_pixelsurf);
         sim.ps.origin = [0.0, 0.0, 500.0];
         sim.ps.velocity = [0.0, 200.0, 0.0];
         for _ in 0..100 {
@@ -2923,16 +2979,24 @@ mod tests {
 
     #[test]
     fn always_pixelsurf_holds_height_against_a_wall() {
-        let (held, _, _) = wall_slide(false, 127);
+        let (held, _, _) = wall_slide(false, 127, false);
         assert!(held < 200.0, "no pixelsurf without the switch: {held}");
 
-        let (held, along, released) = wall_slide(true, 127);
+        let (held, along, released) = wall_slide(true, 127, false);
         assert!((held - 500.0).abs() < 0.01, "the wall did not hold the height: {held}");
         assert!(along > 150.0, "the slide along the wall stopped: {along}");
         assert!(released < held - 10.0, "letting go did not fall: {released}");
 
-        let (held, _, _) = wall_slide(true, -127);
+        let (held, _, _) = wall_slide(true, -127, false);
         assert!(held < 200.0, "pushing away from the wall still surfed: {held}");
+    }
+
+    #[test]
+    fn always_pixelsurf_falls_once_stopped() {
+        // The block stops the slide at y 85 after about 0.43 s; the rest of the second falls.
+        let (held, along, _) = wall_slide(true, 127, true);
+        assert!((along - 85.0).abs() < 1.0, "the block did not stop the slide: {along}");
+        assert!(held < 450.0, "hung on the wall after stopping: {held}");
     }
 
     const BOOSTER: u16 = 1;

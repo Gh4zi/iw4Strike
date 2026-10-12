@@ -23,12 +23,12 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
     }
     if registry.resolve("always_edgebug").is_none() {
         registry.register(crate::CommandSpec::new("always_edgebug").usage(
-            "always_edgebug [0|1] — every fall from higher than a crouched jump plus a stair step ends in an edgebug: no landing, no fall damage, your speed kept (not in mv_mode cs16)",
+            "always_edgebug [0|1] — land at any edge, close enough to go off it, and you edgebug: no landing, no fall damage, your speed kept; landings elsewhere hurt as usual (not in mv_mode cs16)",
         ));
     }
     if registry.resolve("always_pixelsurf").is_none() {
         registry.register(crate::CommandSpec::new("always_pixelsurf").usage(
-            "always_pixelsurf [0|1] — hold a key into any wall while falling to pixelsurf along it: your height holds until you let go (not in mv_mode cs16)",
+            "always_pixelsurf [0|1] — hold a key into any wall while falling and moving along it to pixelsurf: your height holds until you let go or something stops you (not in mv_mode cs16)",
         ));
     }
     if registry.resolve("shooting_mode").is_none() {

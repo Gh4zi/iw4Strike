@@ -131,8 +131,8 @@ pub fn set_mode(mode: MovementMode) {
 static ALWAYS_EDGEBUG: AtomicBool = AtomicBool::new(false);
 static ALWAYS_PIXELSURF: AtomicBool = AtomicBool::new(false);
 
-/// `always_edgebug`: every fall from higher than a crouched jump plus a stair step ends in an
-/// edgebug (Source movement only).
+/// `always_edgebug`: every landing at an edge, a step's travel from going off it, is an edgebug
+/// (Source movement only).
 #[must_use]
 pub fn always_edgebug() -> bool {
     ALWAYS_EDGEBUG.load(Ordering::Relaxed)
@@ -142,8 +142,8 @@ pub fn set_always_edgebug(on: bool) {
     ALWAYS_EDGEBUG.store(on, Ordering::Relaxed);
 }
 
-/// `always_pixelsurf`: falling while pushing into any wall pixelsurfs along it (Source movement
-/// only).
+/// `always_pixelsurf`: falling while pushing into any wall and moving along it pixelsurfs
+/// (Source movement only).
 #[must_use]
 pub fn always_pixelsurf() -> bool {
     ALWAYS_PIXELSURF.load(Ordering::Relaxed)
