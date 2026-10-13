@@ -1458,6 +1458,11 @@ pub(crate) fn update_csgo_panorama(
         for (w, (name, _)) in buy.items.iter().zip(BUY_CATEGORIES) {
             let shown = page.is_some() && page_name == name;
             doc.set_visible(w.panel, shown);
+            // Only the open category's wedges are kept up to date: a hidden one is filled in the
+            // frame it opens.
+            if !shown {
+                continue;
+            }
             let slots =
                 crate::cs_buymenu::csgo_items(name, terrorist, weapon_iw4::cs::cs_loadout_flags(&settings.loadout_pistol, &settings.loadout_m4)).map(|(_, s)| s);
             for (i, &button) in w.wedges.iter().enumerate() {
@@ -1479,9 +1484,7 @@ pub(crate) fn update_csgo_panorama(
                 }
                 doc.set_class(button, "buywheel-cant-afford", price.is_some_and(|p| money < p));
             }
-            if shown {
-                open = Some((w, slots));
-            }
+            open = Some((w, slots));
         }
         // Hover: inside the wheel's circle, the wedge the mouse's angle falls in.
         let cursor = windows.single().ok().and_then(Window::cursor_position);
