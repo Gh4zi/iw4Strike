@@ -16,6 +16,14 @@ impl From<Vec<u8>> for EncodedAudio {
     }
 }
 
+/// Bytes already shared elsewhere (a CS sound's positional and first-person aliases): no copy.
+impl From<Arc<[u8]>> for EncodedAudio {
+    fn from(bytes: Arc<[u8]>) -> Self {
+        let content_id = *blake3::hash(&bytes).as_bytes();
+        Self { bytes, content_id }
+    }
+}
+
 impl Default for EncodedAudio {
     fn default() -> Self {
         Vec::new().into()

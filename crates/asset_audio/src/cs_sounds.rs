@@ -111,7 +111,7 @@ fn add_ladder_steps(catalog: &mut SoundCatalog, waves: &[(u32, i32, Vec<u8>)]) -
                 name: format!("{name}#{i}"),
                 rate: *rate,
                 channels: *channels,
-                pcm16: pcm.clone(),
+                pcm16: pcm.clone().into(),
             })
             .collect();
         added &= catalog.add_loose_alias(name, &template, clips);
@@ -272,7 +272,7 @@ fn add_c4_sound(
             name: format!("{name}#{i}"),
             rate: *rate,
             channels: *channels,
-            pcm16: pcm.clone(),
+            pcm16: pcm.clone().into(),
         })
         .collect();
     let beep = event.starts_with("beep").then(|| beep_reach(event, css));
@@ -437,7 +437,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 name,
                 rate,
                 channels,
-                pcm16: pcm.clone(),
+                pcm16: pcm.clone().into(),
             };
             // The radio voice and the player's own sounds keep their pitch; guns vary theirs as
             // MW2's do.
@@ -492,7 +492,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                     name: String::new(),
                     rate,
                     channels,
-                    pcm16,
+                    pcm16: pcm16.into(),
                 },
             )
         })
@@ -643,7 +643,7 @@ pub fn append_csgo_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                         name: format!("{CSGO_SOUND_PREFIX}{name}#{i}"),
                         rate,
                         channels,
-                        pcm16,
+                        pcm16: pcm16.into(),
                     });
                 }
                 None => skipped += 1,
@@ -736,7 +736,7 @@ pub fn append_csgo_radio_calls(catalog: &mut SoundCatalog) -> usize {
                             name: format!("{alias}#{i}"),
                             rate,
                             channels,
-                            pcm16,
+                            pcm16: pcm16.into(),
                         });
                     }
                     None => skipped += 1,
@@ -825,7 +825,7 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                         name: format!("{CSS_SOUND_PREFIX}{name}#{i}"),
                         rate,
                         channels,
-                        pcm16,
+                        pcm16: pcm16.into(),
                     });
                 }
                 None => skipped += 1,

@@ -386,8 +386,8 @@ pub struct LooseClip {
     pub name: String,
     pub rate: u32,
     pub channels: i32,
-    /// Interleaved little-endian `i16` samples.
-    pub pcm16: Vec<u8>,
+    /// Interleaved little-endian `i16` samples, shared by every alias that plays them.
+    pub pcm16: std::sync::Arc<[u8]>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -428,6 +428,31 @@ pub struct SoundCatalog {
 }
 
 impl SoundCatalog {
+    /// Loaded sounds' bytes by the first two folders of their names (`weapons/ak47`), biggest
+    /// first: (folder, sounds, bytes). Bytes two sounds share count once.
+    pub fn loaded_bytes_by_folder(&self) -> Vec<(String, usize, usize)> {
+        let mut by: HashMap<String, (usize, usize)> = HashMap::new();
+        let mut seen = std::collections::HashSet::new();
+        for loaded in &self.loaded {
+            if !seen.insert(loaded.pcm.bytes().as_ptr()) {
+                continue;
+            }
+            let folder = loaded
+                .name
+                .replace('\\', "/")
+                .split('/')
+                .take(2)
+                .collect::<Vec<_>>()
+                .join("/");
+            let row = by.entry(folder).or_default();
+            row.0 += 1;
+            row.1 += loaded.pcm.bytes().len();
+        }
+        let mut rows: Vec<_> = by.into_iter().map(|(k, (n, b))| (k, n, b)).collect();
+        rows.sort_by(|a, b| b.2.cmp(&a.2));
+        rows
+    }
+
     pub fn absorb(&mut self, other: SoundCatalog) {
         self.absorb_unresolved(other);
         self.finalize();
@@ -880,9 +905,10 @@ impl SoundCatalog {
                 MSS_PCM,
                 clip.rate,
                 clip.channels,
-                clip.pcm16,
+                Vec::new(),
                 Vec::new(),
             );
+            loaded.pcm = clip.pcm16.into();
             loaded.samples = frames as u32;
             self.register_loaded(loaded);
             let mut alias = row.clone();

@@ -574,6 +574,24 @@ impl NotetrackSoundTable {
                 );
             }
         }
+        let folders = bank.loaded_bytes_by_folder();
+        let top_level = folders.iter().fold(
+            std::collections::BTreeMap::<String, usize>::new(),
+            |mut by, (folder, _, bytes)| {
+                *by.entry(folder.split('/').next().unwrap_or("").to_owned()).or_default() += bytes;
+                by
+            },
+        );
+        diag::info!(
+            Audio,
+            "audio: loaded sound bytes by top folder (MiB, over 1): {}",
+            top_level
+                .iter()
+                .filter(|(_, b)| **b >= 1 << 20)
+                .map(|(k, b)| format!("{k} {:.1}", *b as f64 / 1048576.0))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
         diag::info!(
             Audio,
             "audio: viewmodel notetracks bound to the sound bank: actions={} unbound_sounds={unbound} rumbles={} refused_rumbles={}",
