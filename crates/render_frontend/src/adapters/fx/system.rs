@@ -3278,7 +3278,10 @@ fn drain_pellet_fx(
     tracers: Option<Res<PreparedTracers>>,
     mut tracer_world: ResMut<TracerWorld>,
     mut gate: ResMut<TracerDrawGate>,
-    local: Res<LocalPresentClient>,
+    (local, mut dyn_ent_hits): (
+        Res<LocalPresentClient>,
+        MessageWriter<crate::adapters::anim::dyn_ent_wake::DynEntPelletHit>,
+    ),
     mut host: ResMut<HostFxSystem>,
     mut cursor: ResMut<FxJournalCursor>,
     mut combat: ResMut<CombatFxDump>,
@@ -3288,6 +3291,14 @@ fn drain_pellet_fx(
         return;
     }
     for record in core::mem::take(&mut pending.0) {
+        // Pellet records come from the server's snapshots, so each surface hit strikes a prop once.
+        if record.normal != [0.0; 3] {
+            dyn_ent_hits.write(crate::adapters::anim::dyn_ent_wake::DynEntPelletHit {
+                weapon: record.weapon,
+                start: Vec3::from_array(record.start),
+                end: Vec3::from_array(record.end),
+            });
+        }
         cursor.pellet_played = cursor.pellet_played.saturating_add(1);
         play_pellet_segment(
             record.attacker,
