@@ -102,10 +102,11 @@ pub fn place(
                 crate::prepare::scene::smodel_lighting::slot_is_lit_candidate(l, index, wants_atlas)
             });
 
+            // No `Visibility`: the model is drawn by the engine's own cull, never by bevy, and
+            // bevy's visibility passes would otherwise visit every static model every frame.
             let parent = commands
                 .spawn((
                     instance.transform,
-                    Visibility::Hidden,
                     crate::prepare::scene::cull::StaticModelEntity,
                 ))
                 .id();
