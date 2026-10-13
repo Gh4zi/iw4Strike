@@ -2557,6 +2557,7 @@ version = "0.1.0"
 dependencies = [
  "d3d9_decl",
  "d3d9_state",
+ "lz4_flex",
 ]
 
 [[package]]

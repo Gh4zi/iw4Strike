@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use d3d9_sm3::PassWgsl;
+use d3d9_sm3::PackedPassWgsl;
 use render_frame::WgpuPassLayout;
 use render_material::{
     ExecutablePassView, PackedCodeConstantLane, PassProgramAbi, PortId, RuntimeShaderStage,
@@ -15,7 +15,7 @@ use super::gpu_prepare::{
 pub struct AdmittedExactPort {
     pub id: PortId,
     pub abi: PassProgramAbi,
-    pub module: Arc<PassWgsl>,
+    pub module: Arc<PackedPassWgsl>,
     pub layout: WgpuPassLayout,
 }
 
@@ -28,11 +28,11 @@ impl AdmittedExactPort {
         &self.abi
     }
 
-    pub fn module(&self) -> &PassWgsl {
+    pub fn module(&self) -> &PackedPassWgsl {
         &self.module
     }
 
-    pub fn shared_module(&self) -> Arc<PassWgsl> {
+    pub fn shared_module(&self) -> Arc<PackedPassWgsl> {
         Arc::clone(&self.module)
     }
 

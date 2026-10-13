@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
@@ -63,6 +64,55 @@ pub struct PassWgsl {
     pub vertex_constant_len: usize,
     pub pixel_constant_len: usize,
     pub sampler_count: usize,
+}
+
+/// WGSL text kept LZ4-compressed. A generated pass runs to tens of KB, thousands of them stay
+/// loaded for pipelines built on first sight, and only creating a GPU module reads the text.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PackedWgsl(Box<[u8]>);
+
+impl PackedWgsl {
+    pub fn pack(source: &str) -> Self {
+        Self(lz4_flex::compress_prepend_size(source.as_bytes()).into_boxed_slice())
+    }
+
+    pub fn unpack(&self) -> String {
+        let bytes =
+            lz4_flex::decompress_size_prepended(&self.0).expect("PackedWgsl holds what pack wrote");
+        String::from_utf8(bytes).expect("PackedWgsl holds UTF-8")
+    }
+
+    /// Packing is deterministic, so equal bytes are equal text.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// A [`PassWgsl`] kept after compiling, its text packed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackedPassWgsl {
+    pub source: PackedWgsl,
+
+    pub attribute_count: usize,
+
+    pub varying_count: usize,
+
+    pub vertex_constant_len: usize,
+    pub pixel_constant_len: usize,
+    pub sampler_count: usize,
+}
+
+impl From<&PassWgsl> for PackedPassWgsl {
+    fn from(module: &PassWgsl) -> Self {
+        Self {
+            source: PackedWgsl::pack(&module.source),
+            attribute_count: module.attribute_count,
+            varying_count: module.varying_count,
+            vertex_constant_len: module.vertex_constant_len,
+            pixel_constant_len: module.pixel_constant_len,
+            sampler_count: module.sampler_count,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

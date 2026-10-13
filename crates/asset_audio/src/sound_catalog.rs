@@ -784,6 +784,54 @@ impl SoundCatalog {
             .collect()
     }
 
+    /// Unbinds the aliases `drop` picks and frees the loaded sounds only they play. An alias a
+    /// kept one chains to stays, as does a loaded sound a kept alias also plays. Returns the
+    /// aliases unbound and the bytes freed.
+    pub fn release_aliases(&mut self, drop: impl Fn(&str) -> bool) -> (usize, usize) {
+        let mut keep: Vec<bool> = self.sounds.iter().map(|sound| !drop(&sound.name)).collect();
+        let mut open: Vec<usize> = (0..self.sounds.len()).filter(|&i| keep[i]).collect();
+        while let Some(i) = open.pop() {
+            let ns = ns_of(self.sounds[i].game);
+            for alias in &self.sounds[i].aliases {
+                for next in [alias.secondary.as_deref(), alias.chain.as_deref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(j) = self.index_in(ns, next)
+                        && !keep[j]
+                    {
+                        keep[j] = true;
+                        open.push(j);
+                    }
+                }
+            }
+        }
+        let mut loaded_kept = vec![false; self.loaded.len()];
+        let mut loaded_dropped = Vec::new();
+        for (sound, &kept) in self.sounds.iter().zip(&keep) {
+            for index in sound.aliases.iter().filter_map(|alias| alias.loaded.bound_index()) {
+                if kept {
+                    loaded_kept[index] = true;
+                } else {
+                    loaded_dropped.push(index);
+                }
+            }
+        }
+        loaded_dropped.sort_unstable();
+        loaded_dropped.dedup();
+        let mut freed = 0;
+        for index in loaded_dropped.into_iter().filter(|&index| !loaded_kept[index]) {
+            let loaded = &mut self.loaded[index];
+            freed += loaded.pcm.bytes().len();
+            loaded.pcm = crate::encoded_audio::EncodedAudio::default();
+            loaded.seek_table = Vec::new();
+        }
+        let before = self.by_alias.len();
+        self.by_alias.retain(|_, index| keep[*index]);
+        self.by_alias_ci.retain(|_, index| keep[*index]);
+        (before - self.by_alias.len(), freed)
+    }
+
     pub fn index_in(&self, ns: AssetNamespace, alias: &str) -> Option<usize> {
         if let Some(&i) = self.by_alias.get(&(ns, alias.to_owned())) {
             return Some(i);

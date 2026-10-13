@@ -32,7 +32,7 @@ enum PendingShader {
 impl PendingShader {
     fn build(self) -> Shader {
         let Self::Generated { module, path } = self;
-        shader_from_generated_wgsl(module.source.clone(), path)
+        shader_from_generated_wgsl(module.source.unpack(), path)
     }
 }
 
@@ -169,7 +169,7 @@ impl MaterialProgramAdmit {
         let mut by_source = std::collections::HashMap::new();
         for port in self.registry.ports() {
             let handle = by_source
-                .entry(port.module().source.as_str())
+                .entry(port.module().source.as_bytes())
                 .or_insert_with(|| {
                     let handle = shaders.reserve_handle();
                     self.pending.insert(

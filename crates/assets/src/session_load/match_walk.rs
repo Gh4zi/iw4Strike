@@ -261,7 +261,24 @@ pub(super) async fn walk_prepared_match(
     let t5_xanim_added = xanims.absorb(t5_xanims);
     xanims.absorb_local(map_xanims);
     weapons.resolve_sz_xanim_edges(&xanims);
-    let weapon_clip_indices = weapons.bound_weapon_xanim_indices();
+    // Counter-Strike plays only the MW2 weapons its guns wear, so the other weapons' first-person
+    // animations are emptied before the prewarm below would decode them.
+    let cs_dropped_xanims = if movement_iw4::rules::CS_RULES {
+        let (_, dropped) = weapons.xanim_indices_split(super::cs_keeps_weapon);
+        let (count, bytes) = xanims.release_at(dropped.iter().copied());
+        report.push(format!(
+            "CS weapon animations: {count} MW2-only emptied ({:.1} MiB)",
+            bytes as f64 / 1048576.0
+        ));
+        dropped
+    } else {
+        std::collections::BTreeSet::new()
+    };
+    let weapon_clip_indices: Vec<usize> = weapons
+        .bound_weapon_xanim_indices()
+        .into_iter()
+        .filter(|index| !cs_dropped_xanims.contains(index))
+        .collect();
     let clip_prewarm_started = std::time::Instant::now();
     let failed_weapon_clips: Vec<_> = weapon_clip_indices
         .iter()
@@ -312,13 +329,8 @@ pub(super) async fn walk_prepared_match(
     // Counter-Strike plays only its own guns, each worn by one MW2 weapon, so the other MW2
     // weapons' first-person and world models (hundreds of them, ~1 GB) are never drawn.
     // The registry names weapons without their `_mp` (`ak47`, `ak47_acog`).
-    let cs_weapon_models = movement_iw4::rules::CS_RULES.then(|| {
-        weapons.model_names_for(|name| {
-            let mp = format!("{name}_mp");
-            weapon_iw4::cs::cs_weapon_index_for(&mp).is_some()
-                || matches!(mp.as_str(), "briefcase_bomb_defuse_mp" | "defaultweapon_mp")
-        })
-    });
+    let cs_weapon_models =
+        movement_iw4::rules::CS_RULES.then(|| weapons.model_names_for(super::cs_keeps_weapon));
     if let Some((view, world)) = &cs_weapon_models {
         let fpv_before = fpv_meshes.len();
         let world_before = world_weapons.len();
@@ -425,9 +437,10 @@ pub(super) async fn walk_prepared_match(
     common_scene_models.retain_names(&scene_names);
     if let Some((_, world)) = &cs_weapon_models {
         // The MW2 scripts precache every weapon, which kept every MW2 world gun in the scene
-        // catalog too (~300 MB of meshes); the CS guns' own stay.
+        // catalog too (~300 MB of meshes); the CS guns' own stay. So do the killstreak models,
+        // and CS gives no killstreaks.
         let before = common_scene_models.len();
-        let dropped: std::collections::BTreeSet<String> = common_scene_models
+        let guns: std::collections::BTreeSet<String> = common_scene_models
             .iter()
             .map(|(key, _)| key.0.as_str())
             .filter(|name| {
@@ -436,12 +449,19 @@ pub(super) async fn walk_prepared_match(
             })
             .map(str::to_owned)
             .collect();
-        scene_names.retain(|name| !dropped.contains(name));
+        let streaks: std::collections::BTreeSet<String> = common_scene_models
+            .iter()
+            .map(|(key, _)| key.0.as_str())
+            .filter(|name| is_mw2_killstreak_model(name))
+            .map(str::to_owned)
+            .collect();
+        scene_names.retain(|name| !guns.contains(name) && !streaks.contains(name));
         common_scene_models.retain_names(&scene_names);
         report.push(format!(
-            "CS scene models: {before}→{} ({} MW2 world guns dropped)",
+            "CS scene models: {before}→{} ({} MW2 world guns and {} killstreak models dropped)",
             common_scene_models.len(),
-            dropped.len()
+            guns.len(),
+            streaks.len()
         ));
     }
     t5_scene_models.retain_names(&scene_names);
@@ -797,6 +817,24 @@ pub(super) async fn walk_prepared_match(
         script_sound_aliases: None,
     };
     (MatchLoadOutcome::Ready(prepared), Some(common))
+}
+
+/// The MW2 killstreak models the scripts precache: aircraft, AC-130 rig, sentry gun, care
+/// package, Predator laptop and missiles.
+fn is_mw2_killstreak_model(name: &str) -> bool {
+    name.starts_with("vehicle_")
+        || name.starts_with("sentry_minigun")
+        || matches!(
+            name,
+            "angel_flare_rig"
+                | "c130_zoomrig"
+                | "com_plasticcase_enemy"
+                | "com_plasticcase_friendly"
+                | "mil_emergency_flare_mp"
+                | "projectile_cbu97_clusterbomb"
+                | "projectile_hellfire_missile"
+                | "prop_remotecontrol"
+        )
 }
 
 fn resolve_world_lights(

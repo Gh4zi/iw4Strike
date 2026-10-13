@@ -6243,6 +6243,33 @@ impl WeaponBuild {
 }
 
 impl WeaponRegistry {
+    /// The sound aliases the weapons `keep` picks can play (fire, reload, notetracks, ...), and
+    /// the ones only the other weapons play. Lower case.
+    pub fn sound_aliases_split(
+        &self,
+        keep: impl Fn(&str) -> bool,
+    ) -> (HashSet<String>, HashSet<String>) {
+        let (mut kept, mut others) = (HashSet::new(), HashSet::new());
+        for row in &self.rows {
+            let into = if keep(&row.name) {
+                &mut kept
+            } else {
+                &mut others
+            };
+            into.extend(
+                row.sounds
+                    .reachable_aliases()
+                    .into_iter()
+                    .chain(row.notetrack_actions.values().filter_map(|action| {
+                        action.sound_alias.as_deref()
+                    }))
+                    .map(str::to_ascii_lowercase),
+            );
+        }
+        others.retain(|alias| !kept.contains(alias));
+        (kept, others)
+    }
+
     pub fn vehicle_compass(&self) -> impl Iterator<Item = (&str, &[String; 2], [i32; 2])> {
         self.vehicle_compass
             .iter()
@@ -6779,6 +6806,32 @@ impl WeaponRegistry {
             }
         }
         census
+    }
+
+    /// The animation catalog indices the weapons `keep` picks are bound to, and the ones only
+    /// the other weapons are.
+    pub fn xanim_indices_split(
+        &self,
+        keep: impl Fn(&str) -> bool,
+    ) -> (std::collections::BTreeSet<usize>, std::collections::BTreeSet<usize>) {
+        let mut kept = std::collections::BTreeSet::new();
+        let mut others = std::collections::BTreeSet::new();
+        for row in self.rows.iter().skip(1) {
+            let into = if keep(&row.name) {
+                &mut kept
+            } else {
+                &mut others
+            };
+            into.extend(
+                row.sz_xanim_edges
+                    .iter()
+                    .chain(&row.sz_xanim_right_edges)
+                    .chain(&row.sz_xanim_left_edges)
+                    .filter_map(|edge| edge.bound_index()),
+            );
+        }
+        others.retain(|index| !kept.contains(index));
+        (kept, others)
     }
 
     pub fn bound_weapon_xanim_indices(&self) -> Vec<usize> {

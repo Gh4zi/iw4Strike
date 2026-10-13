@@ -152,6 +152,39 @@ impl XAnimCatalog {
         self.zones.get(index).copied().unwrap_or_default()
     }
 
+    /// Empties the animations at `indices`, keeping their names and places so bound indices
+    /// stay valid. Returns how many and the bytes freed.
+    pub fn release_at(&mut self, indices: impl IntoIterator<Item = usize>) -> (usize, usize) {
+        let decoded = self
+            .decoded
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (mut count, mut bytes) = (0, 0);
+        for index in indices {
+            let Some(entry) = self.entries.get_mut(index) else {
+                continue;
+            };
+            let parts = &entry.parts;
+            bytes += parts.data_byte.len()
+                + parts.random_data_byte.len()
+                + 2 * (parts.data_short.len() + parts.random_data_short.len() + parts.indices.len())
+                + 4 * (parts.data_int.len() + parts.random_data_int.len())
+                + parts
+                    .delta_trans
+                    .as_ref()
+                    .map_or(0, |delta| delta.packed.len() + 2 * delta.indices.len());
+            entry.parts = Arc::new(RawXAnimParts {
+                name: parts.name.clone(),
+                ..RawXAnimParts::default()
+            });
+            if let Some(slot) = decoded.get_mut(index) {
+                *slot = None;
+            }
+            count += 1;
+        }
+        (count, bytes)
+    }
+
     pub fn name_at(&self, index: usize) -> Option<&str> {
         self.order.get(index).map(|k| k.name.as_str())
     }
@@ -240,6 +273,10 @@ impl XAnimCatalog {
 impl XAnimBuild {
     pub fn publish(self) -> XAnimCatalog {
         self.catalog
+    }
+
+    pub fn release_at(&mut self, indices: impl IntoIterator<Item = usize>) -> (usize, usize) {
+        self.catalog.release_at(indices)
     }
 
     pub fn set_strings(&mut self, strings: ScriptStrings) {

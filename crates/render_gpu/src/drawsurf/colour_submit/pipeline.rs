@@ -15,7 +15,7 @@ pub fn cached_lighting_port_variant(
     };
     let buffers = cached_lighting_vertex_buffers(packed_buffers, location);
     let source = lighting_texcoord_register(port.abi()).and_then(|register| {
-        inject_cached_lighting_attribute(&port.module().source, location, Some(&register))
+        inject_cached_lighting_attribute(&port.module().source.unpack(), location, Some(&register))
     });
     (source, buffers)
 }
@@ -28,7 +28,7 @@ fn adapt_admitted_port(port: &crate::AdmittedExactPort) -> ExactColourPortGpu {
 
     let cached_source = cached_source
         .filter(|_| !cached_vertex_buffers.is_empty())
-        .map(Arc::<str>::from);
+        .map(|source| Arc::new(d3d9_sm3::PackedWgsl::pack(&source)));
     ExactColourPortGpu {
         constants_layout: crate::bind_group_layout_from_entries(
             "iw4_exact_colour_constants",

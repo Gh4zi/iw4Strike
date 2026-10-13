@@ -1,6 +1,6 @@
 use d3d9_sm3::{
-    ConstantSlot, DeclType, PassLoweringAbi, PassWgsl, SamplerSlot, Sm3ProgramIr, Sm3Wgsl,
-    VaryingLink, VertexInput, lower_pass_to_wgsl,
+    ConstantSlot, DeclType, PackedPassWgsl, PassLoweringAbi, PassWgsl, SamplerSlot, Sm3ProgramIr,
+    Sm3Wgsl, VaryingLink, VertexInput, lower_pass_to_wgsl,
 };
 use render_material::MATERIAL_ALPHA_TESTS;
 
@@ -10,7 +10,7 @@ pub use d3d9_sm3::{PASS_FRAGMENT_ENTRY, PASS_VERTEX_ENTRY};
 
 pub type ValidatedSm3Wgsl = Sm3Wgsl;
 
-pub type ValidatedPassWgsl = PassWgsl;
+pub type ValidatedPassWgsl = PackedPassWgsl;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Sm3WgslError {
@@ -107,7 +107,7 @@ pub fn lower_pass_to_validated_wgsl(
     abi: &PassProgramAbi,
     vertex: &Sm3ProgramIr,
     pixel: &Sm3ProgramIr,
-) -> Result<ValidatedPassWgsl, Sm3WgslError> {
+) -> Result<PassWgsl, Sm3WgslError> {
     let lowered = lower_pass_to_wgsl(&pass_lowering_abi(abi), vertex, pixel)?;
     validate_wgsl(&lowered.source)?;
     Ok(lowered)

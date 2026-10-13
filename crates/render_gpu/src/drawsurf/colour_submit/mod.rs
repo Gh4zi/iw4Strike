@@ -321,7 +321,7 @@ struct ExactColourPortGpu {
     constants_layout: BindGroupLayoutDescriptor,
     textures_layout: BindGroupLayoutDescriptor,
     vertex_buffers: Vec<VertexBufferLayout>,
-    cached_source: Option<Arc<str>>,
+    cached_source: Option<Arc<d3d9_sm3::PackedWgsl>>,
     cached_vertex_buffers: Vec<VertexBufferLayout>,
     port: super::AdmittedExactPort,
 }

@@ -127,7 +127,7 @@ impl RuntimeProgramPort {
             color_space: pass.color_space,
             hardware_shadow_compare: pass.hardware_shadow_compare,
             abi,
-            module: std::sync::Arc::new(module),
+            module: std::sync::Arc::new((&module).into()),
             wgpu_layout,
         })
     }

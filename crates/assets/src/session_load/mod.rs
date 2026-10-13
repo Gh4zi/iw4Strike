@@ -68,6 +68,15 @@ pub use resident_map::load_prepared_match;
 
 static PROCESS_CPUS: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
 
+/// Under Counter-Strike rules, whether an MW2 weapon (named without its `_mp`, as the weapon
+/// registry names them) is one a CS gun wears or the bomb, so its models, sounds and animations
+/// stay loaded.
+pub(crate) fn cs_keeps_weapon(name: &str) -> bool {
+    let mp = format!("{name}_mp");
+    weapon_iw4::cs::cs_weapon_index_for(&mp).is_some()
+        || matches!(mp.as_str(), "briefcase_bomb_defuse_mp" | "defaultweapon_mp")
+}
+
 pub fn publish_process_cpus(cpus: Vec<usize>) {
     let _ = PROCESS_CPUS.set(cpus);
 }

@@ -24,14 +24,14 @@ struct ModuleKey {
 #[derive(Clone)]
 pub(super) enum ExactModuleSource {
     Port(Arc<ValidatedPassWgsl>),
-    CachedLighting(Arc<str>),
+    CachedLighting(Arc<d3d9_sm3::PackedWgsl>),
 }
 
 impl ExactModuleSource {
-    fn wgsl(&self) -> &str {
+    fn wgsl(&self) -> String {
         match self {
-            Self::Port(module) => &module.source,
-            Self::CachedLighting(source) => source,
+            Self::Port(module) => module.source.unpack(),
+            Self::CachedLighting(source) => source.unpack(),
         }
     }
 }
@@ -257,9 +257,10 @@ fn build_port(
     let (shader, created) = match existing {
         Some(shader) => (shader, None),
         None => {
-            let own = spirv.zip(plans.first()).map(|(target, (_, plan))| {
-                port_spirv(source.wgsl(), &plan.binding_layouts, target)
-            });
+            let wgsl = source.wgsl();
+            let own = spirv
+                .zip(plans.first())
+                .map(|(target, (_, plan))| port_spirv(&wgsl, &plan.binding_layouts, target));
             let shader = Arc::new(match own {
                 // SAFETY: SPIR-V naga wrote from WGSL it validated against this device's
                 // features, binding the layouts every pipeline of this port is made with.
@@ -279,7 +280,7 @@ fn build_port(
                     unsafe {
                         device.create_shader_module(ShaderModuleDescriptor {
                             label: Some(&label),
-                            source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source.wgsl())),
+                            source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&wgsl)),
                         })
                     }
                 }

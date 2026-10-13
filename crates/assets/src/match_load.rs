@@ -154,8 +154,12 @@ fn start_match_load(
                             map,
                         );
                         prepared.sound_gaps = bank.gaps.len();
-                        prepared.script_sound_aliases = Some(bank.catalog.script_alias_looping());
-                        Ok(bank.catalog)
+                        let mut catalog = bank.catalog;
+                        if movement_iw4::rules::CS_RULES {
+                            release_dropped_weapon_sounds(&prepared.weapons, &mut catalog);
+                        }
+                        prepared.script_sound_aliases = Some(catalog.script_alias_looping());
+                        Ok(catalog)
                     }
                     _ => Err("no launch identity or map path to compose the sound bank".into()),
                 });
@@ -184,6 +188,25 @@ fn start_match_load(
         progress: cancel_handle,
     });
     commands.remove_resource::<MatchLoadRequest>();
+}
+
+/// Counter-Strike plays only the MW2 weapons its guns wear, so the `weap_` sounds only the
+/// others play (fire, reload, handling) are freed. Other sounds a dropped weapon names,
+/// explosions or bounces, can be heard from the map too and stay.
+fn release_dropped_weapon_sounds(
+    weapons: &asset_game::WeaponRegistry,
+    catalog: &mut asset_audio::SoundCatalog,
+) {
+    let (_, dropped) = weapons.sound_aliases_split(crate::session_load::cs_keeps_weapon);
+    let (unbound, freed) = catalog.release_aliases(|alias| {
+        let alias = alias.to_ascii_lowercase();
+        alias.starts_with("weap_") && dropped.contains(&alias)
+    });
+    diag::info!(
+        Audio,
+        "CS weapon sounds: {unbound} MW2-only aliases unbound, {:.1} MiB of loaded sound freed",
+        freed as f64 / 1048576.0
+    );
 }
 
 fn approve_map_load(
