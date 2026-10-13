@@ -845,6 +845,14 @@ impl FxSystemHost {
         Some(idx as u8)
     }
 
+    fn free_bolt_record(&mut self, index: u8) {
+        let Some(next) = self.bolt_next.get_mut(usize::from(index)) else {
+            return;
+        };
+        *next = self.bolt_first_free;
+        self.bolt_first_free = i32::from(index);
+    }
+
     pub fn spawn_effect(
         &mut self,
         def_name: &str,
@@ -858,6 +866,9 @@ impl FxSystemHost {
         if wants_spotlight && self.spotlight_count >= FX_SPOT_LIGHT_LIMIT {
             return Err(SpawnFail::TooManySpotlights);
         }
+        if self.ring_occupancy() >= FX_EFFECT_HANDLE_RING_SIZE as i32 {
+            return Err(SpawnFail::RingFull);
+        }
         let bolt_index = if bolt == FX_SPAWN_BOLT_NONE {
             0xff
         } else {
@@ -868,9 +879,6 @@ impl FxSystemHost {
         };
 
         let alloc = self.first_free_effect;
-        if self.ring_occupancy() >= FX_EFFECT_HANDLE_RING_SIZE as i32 {
-            return Err(SpawnFail::RingFull);
-        }
         self.first_free_effect = alloc.wrapping_add(1);
 
         let ring_i = (alloc as u32 & (FX_EFFECT_HANDLE_RING_SIZE - 1)) as usize;
@@ -970,6 +978,10 @@ impl FxSystemHost {
             self.set_handle_at_ring(active_index as u32, handle);
             active_index = active_index.wrapping_add(1);
             if let Some(slot) = handle_to_slot(handle) {
+                let bolt = self.effects[slot].bolt;
+                if bolt != 0xff {
+                    self.free_bolt_record(bolt);
+                }
                 self.effects[slot] = FxEffectSlot::default();
             }
         }
