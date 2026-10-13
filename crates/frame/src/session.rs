@@ -39,6 +39,11 @@ pub enum AppScreen {
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UiDraw(pub bool);
 
+/// `sv_showhitboxes`: the server's hit boxes drawn over the players (a host sees its own
+/// server's).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShowHitboxes(pub bool);
+
 impl Default for UiDraw {
     fn default() -> Self {
         Self(true)

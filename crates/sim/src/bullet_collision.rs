@@ -968,6 +968,11 @@ pub struct BulletTraceQuery {
     pub ignore_model: Option<ScriptModelId>,
 }
 
+/// Around a CS:GO body's feet, the box every pose of it stays inside (arms out in an aim, a
+/// crouched jump), so a shot that misses it never builds the body's bones.
+const CSGO_REACH_MINS: [f32; 3] = [-64.0, -64.0, -32.0];
+const CSGO_REACH_MAXS: [f32; 3] = [64.0, 64.0, 112.0];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HitVolumeKind {
     #[default]
@@ -983,6 +988,9 @@ pub struct PlayerCollisionPose {
     pub life_sequence: LifeSequence,
     pub hit_volume: HitVolumeKind,
     pub bones: Vec<AuthorityDObjCollisionBone>,
+    /// The player's CS:GO body this step (CS:GO shooting): its hit boxes are traced instead of
+    /// `bones`.
+    pub csgo: Option<std::sync::Arc<crate::CsgoPose>>,
     pub viewangles: [f32; 3],
     pub shield: Option<crate::ShieldAttachment>,
     pub shield_normal: Option<[f32; 3]>,
@@ -1356,6 +1364,52 @@ fn bullet_trace_filtered(
             || query.ignore_hit == Some(pose.client)
             || query.mask & CONTENTS_BODY == 0
         {
+            continue;
+        }
+        if let Some(csgo) = &pose.csgo {
+            // CS:GO's hit boxes, traced as CS:GO's server traces them (the hit group counting
+            // first, not the nearest hit box). The body's bones are built only for a shot that
+            // passes within reach of it.
+            let origin = csgo.origin().to_array();
+            let reach_lo: [f32; 3] = core::array::from_fn(|i| origin[i] + CSGO_REACH_MINS[i]);
+            let reach_hi: [f32; 3] = core::array::from_fn(|i| origin[i] + CSGO_REACH_MAXS[i]);
+            if matches!(
+                ray_aabb_box(query.start, entity_end, reach_lo, reach_hi),
+                RayAabb::Miss
+            ) {
+                continue;
+            }
+            let hitboxes = csgo.hitboxes();
+            if let Some((mins, maxs)) = csgo_anim::hitbox::bounds(hitboxes)
+                && matches!(
+                    ray_aabb_box(query.start, entity_end, mins.to_array(), maxs.to_array()),
+                    RayAabb::Miss
+                )
+            {
+                continue;
+            }
+            let start = glam::Vec3::from(query.start);
+            let end = glam::Vec3::from(query.end);
+            if let Some(hit) = csgo_anim::hitbox::trace(hitboxes, start, end) {
+                let collider = ColliderId::Player {
+                    client: pose.client,
+                    life: pose.life_sequence,
+                    hitloc: crate::cs_hitbox::hitloc_for_group(hit.group),
+                };
+                if hit.start_solid {
+                    return TraceOutcome::StartSolid {
+                        collider: Some(collider),
+                        end: query.start,
+                    };
+                }
+                candidates.push(TraceCandidate {
+                    fraction: hit.fraction,
+                    endpos: (start + (end - start) * hit.fraction).to_array(),
+                    normal: hit.normal.to_array(),
+                    collider,
+                    startsolid: false,
+                });
+            }
             continue;
         }
         if !pose.bones.is_empty() {

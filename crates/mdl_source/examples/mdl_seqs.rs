@@ -11,6 +11,17 @@ fn main() {
     let mdl = vpk.read(path).expect("model in the pak");
     let model = mdl_source::StudioModel::parse(&mdl, &[], &[]).expect("parse model");
     let filter = args.get(3).map_or("", String::as_str);
+    if filter == "hitboxes" {
+        // hitboxes: the first hit box set, bone by bone.
+        for (i, h) in model.hitboxes.iter().enumerate() {
+            let bone = model.bones.get(h.bone).map_or("?", |b| b.name.as_str());
+            println!(
+                "hitbox {i} {} bone {} {bone} group {} min {:?} max {:?} angles {:?} radius {}",
+                h.name, h.bone, h.group, h.min, h.max, h.angle_offset, h.capsule_radius
+            );
+        }
+        return;
+    }
     if let Some(seq) = filter.strip_prefix("desc:") {
         // desc:<sequence index>: the raw animation descriptor its first animation uses.
         let seq: usize = seq.parse().expect("sequence index");

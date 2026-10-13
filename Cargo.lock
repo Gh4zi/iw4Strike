@@ -2518,6 +2518,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "csgo_anim"
+version = "0.1.0"
+dependencies = [
+ "asset_transport",
+ "diag",
+ "glam",
+ "mdl_goldsrc",
+ "mdl_source",
+ "playerstate_iw4",
+ "weapon_iw4",
+]
+
+[[package]]
 name = "ctrlc"
 version = "3.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5399,6 +5412,7 @@ dependencies = [
  "audio",
  "bevy",
  "bytemuck",
+ "csgo_anim",
  "diag",
  "dpvs_iw4",
  "entity_iw4",
@@ -6060,6 +6074,7 @@ dependencies = [
  "anim_iw4",
  "bevy_ecs",
  "clipmap_iw4",
+ "csgo_anim",
  "diag",
  "entity_iw4",
  "fx_iw4",

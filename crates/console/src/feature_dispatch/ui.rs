@@ -14,7 +14,7 @@ pub(crate) fn route_ui_commands(
         Res<ConsoleSettings>,
         ResMut<ConsoleLine>,
     ),
-    mut ui_draw: ResMut<UiDraw>,
+    (mut ui_draw, mut show_hitboxes): (ResMut<UiDraw>, ResMut<frame::ShowHitboxes>),
     mut game_settings: ResMut<frame::GameSettings>,
     menus: Res<hud::ScriptMenus>,
     identity: Option<Res<LaunchIdentity>>,
@@ -52,6 +52,22 @@ pub(crate) fn route_ui_commands(
                 _ => echo("usage: ui [0|1]".into(), console, line),
             },
 
+            "sv_showhitboxes" => match cmd.args.as_slice() {
+                [] => echo(
+                    format!("sv_showhitboxes = {}", u8::from(show_hitboxes.0)),
+                    console,
+                    line,
+                ),
+                [value] if value == "0" || value.eq_ignore_ascii_case("off") => {
+                    show_hitboxes.0 = false;
+                    echo("sv_showhitboxes 0".into(), console, line);
+                }
+                [value] if value == "1" || value.eq_ignore_ascii_case("on") => {
+                    show_hitboxes.0 = true;
+                    echo("sv_showhitboxes 1".into(), console, line);
+                }
+                _ => echo("usage: sv_showhitboxes [0|1]".into(), console, line),
+            },
             "thirdperson" | "cg_thirdPerson" => {
                 let next = match cmd.args.as_slice() {
                     [] => Some(!game_settings.third_person),

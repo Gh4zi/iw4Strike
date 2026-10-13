@@ -23,6 +23,7 @@ members = [
     "crates/audio",
     "crates/bots",
     "crates/clipmap_iw4",
+    "crates/csgo_anim",
     "crates/console",
     "crates/d3d9_decl",
     "crates/d3d9_sm3",
@@ -131,6 +132,7 @@ console = { path = "crates/console" }
 d3d9_decl = { path = "crates/d3d9_decl" }
 d3d9_sm3 = { path = "crates/d3d9_sm3" }
 d3d9_state = { path = "crates/d3d9_state" }
+csgo_anim = { path = "crates/csgo_anim" }
 diag = { path = "crates/diag" }
 dpvs_iw4 = { path = "crates/dpvs_iw4" }
 entity_iw4 = { path = "crates/entity_iw4" }

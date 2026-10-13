@@ -55,6 +55,23 @@ pub struct Bone {
     pub pose_to_bone: Mat3x4,
 }
 
+/// A hit box of the model's first hit box set (`mstudiobbox_t`): a capsule of
+/// [`capsule_radius`](Self::capsule_radius) between `min` and `max` in its bone's space, or,
+/// without a radius, the box they span, turned within the bone by `angle_offset`.
+#[derive(Clone, Debug)]
+pub struct Hitbox {
+    pub name: String,
+    pub bone: usize,
+    /// `HITGROUP_*`: generic 0, head 1, chest 2, stomach 3, left arm 4, right arm 5, left leg 6,
+    /// right leg 7, neck 8.
+    pub group: i32,
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    /// Pitch, yaw and roll (degrees) of the box within its bone (`angOffsetOrientation`).
+    pub angle_offset: [f32; 3],
+    pub capsule_radius: f32,
+}
+
 /// A named point on the model (`mstudioattachment_t`): the muzzle, the shell port.
 #[derive(Clone, Debug)]
 pub struct Attachment {
@@ -255,6 +272,8 @@ pub struct StudioModel {
     pub rest: Vec<BoneFrame>,
     /// The pose parameters the sequences' blend grids and layers read.
     pub pose_params: Vec<PoseParam>,
+    /// The first hit box set's hit boxes.
+    pub hitboxes: Vec<Hitbox>,
 }
 
 struct R<'a>(&'a [u8]);
@@ -348,6 +367,7 @@ impl StudioModel {
             parse_geometry(&r, &R(vvd), &R(vtx), &skin, version)?
         };
         let attachments = parse_attachments(&r, &bones).unwrap_or_default();
+        let hitboxes = parse_hitboxes(&r, bones.len()).unwrap_or_default();
         let body_parts = parse_body_parts(&r).unwrap_or_default();
         Ok(Self {
             name,
@@ -370,6 +390,7 @@ impl StudioModel {
                 })
                 .collect(),
             pose_params: parse_pose_params(&r).unwrap_or_default(),
+            hitboxes,
         })
     }
 
@@ -649,6 +670,45 @@ fn parse_includes(r: &R<'_>) -> Result<Vec<String>, String> {
 
 /// `mstudioattachment_t`: name offset, flags, bone, a 3x4 local matrix, 8 unused ints.
 const ATTACHMENT_LEN: usize = 92;
+
+/// Bytes in one `mstudiobbox_t`.
+const HITBOX_LEN: usize = 68;
+
+/// The first hit box set (`numhitboxsets` at 172, `hitboxsetindex` at 176 of the header):
+/// the one a player's hits are traced against.
+fn parse_hitboxes(r: &R<'_>, bone_count: usize) -> Result<Vec<Hitbox>, String> {
+    if r.usize(172)? == 0 {
+        return Ok(Vec::new());
+    }
+    let set = r.usize(176)?;
+    let count = r.usize(set + 4)?;
+    let base = r.rel(set, 8)?;
+    let mut out = Vec::with_capacity(count.min(256));
+    for i in 0..count.min(256) {
+        let at = base + i * HITBOX_LEN;
+        let Some(bone) = usize::try_from(r.i32(at)?)
+            .ok()
+            .filter(|&b| b < bone_count)
+        else {
+            continue;
+        };
+        let name = if r.i32(at + 32)? == 0 {
+            String::new()
+        } else {
+            r.cstr(r.rel(at, 32)?)?
+        };
+        out.push(Hitbox {
+            name,
+            bone,
+            group: r.i32(at + 4)?,
+            min: r.vec3(at + 8)?,
+            max: r.vec3(at + 20)?,
+            angle_offset: r.vec3(at + 36)?,
+            capsule_radius: r.f32(at + 48)?,
+        });
+    }
+    Ok(out)
+}
 
 fn parse_attachments(r: &R<'_>, bones: &[Bone]) -> Result<Vec<Attachment>, String> {
     let count = r.usize(240)?;

@@ -137,7 +137,7 @@ pub(crate) fn publish_factions(world: &mut FrameWorld) {
 }
 
 /// The MW2 faction a team wears on this map (`game["allies"]` / `game["axis"]`).
-fn game_faction(world: &mut FrameWorld, allies: bool) -> Option<String> {
+pub(crate) fn game_faction(world: &mut FrameWorld, allies: bool) -> Option<String> {
     let runtime = world.ecs().get_resource::<crate::script::Runtime>()?;
     let name = if allies { "allies" } else { "axis" };
     match crate::script::host::restart::game_field(runtime, name)? {

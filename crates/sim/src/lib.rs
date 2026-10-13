@@ -20,6 +20,8 @@ pub mod input;
 mod cs_economy;
 mod cs_mapvote;
 pub use cs_mapvote::mapvote_next_map;
+mod cs_hitbox;
+pub use cs_hitbox::{CsgoPose, show_csgo_hitboxes, shown_csgo_hitboxes};
 mod cs_radio;
 mod cs_spotting;
 mod item;

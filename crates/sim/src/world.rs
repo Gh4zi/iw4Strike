@@ -615,6 +615,9 @@ pub struct SimState {
 
     collision_history: CollisionHistory,
 
+    /// CS:GO's bodies and hit boxes (CS:GO shooting), posed each step for the history.
+    csgo_hit_bodies: crate::cs_hitbox::CsgoHitBodies,
+
     entity_collision_history: EntityCollisionHistory,
 
     lagcomp_sample: HashMap<ClientId, crate::bullet_collision::ShotSampleProvenance>,
@@ -736,6 +739,7 @@ impl Default for SimState {
             collision_history: CollisionHistory::with_capacity(
                 crate::bullet_collision::COLLISION_HISTORY_TICKS,
             ),
+            csgo_hit_bodies: crate::cs_hitbox::CsgoHitBodies::default(),
             entity_collision_history: EntityCollisionHistory::with_capacity(
                 crate::bullet_collision::COLLISION_HISTORY_TICKS,
             ),
@@ -2365,6 +2369,7 @@ impl SimState {
                 life_sequence: meta.life_sequence,
                 hit_volume: HitVolumeKind::Standing,
                 bones,
+                csgo: self.csgo_hit_bodies.pose(*id),
                 viewangles: ps.viewangles,
                 shield: meta.shield,
                 shield_normal,
@@ -2383,6 +2388,7 @@ impl SimState {
                     .shield_collision
                     .as_ref()
                     .map_or_else(Vec::new, |collision| collision.bones.clone()),
+                csgo: None,
                 viewangles: [0.0; 3],
                 shield: body.shield,
                 shield_normal: body
@@ -3008,6 +3014,10 @@ impl SimState {
             }
         }
         self.player_anim_trees.retain(|k, _| live.contains(k));
+    }
+
+    pub(crate) fn csgo_hit_bodies_mut(&mut self) -> &mut crate::cs_hitbox::CsgoHitBodies {
+        &mut self.csgo_hit_bodies
     }
 
     pub(crate) fn record_collision_history(

@@ -349,6 +349,10 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
             "thirdperson [0|1|toggle] — switch the saved player camera view",
         ),
         (
+            "sv_showhitboxes",
+            "sv_showhitboxes [0|1] — draw the server's hit boxes over the players (your own server's)",
+        ),
+        (
             "cg_thirdPerson",
             "cg_thirdPerson [0|1|toggle] — switch the saved player camera view",
         ),

@@ -115,6 +115,7 @@ impl Plugin for UiLayersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiLayers>()
             .init_resource::<UiDraw>()
+            .init_resource::<frame::ShowHitboxes>()
             .init_resource::<UiLayerCpu>()
             .configure_sets(
                 PostUpdate,

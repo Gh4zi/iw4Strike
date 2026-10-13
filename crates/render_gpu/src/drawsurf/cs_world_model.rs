@@ -63,6 +63,8 @@ pub struct CsWorldModelInstance {
     /// Where the map's light is read for it (world): a body's pelvis and what it holds, so the
     /// grid and the sun are not sampled at its feet. `None` reads it at the model's origin.
     pub lighting_origin: Option<[f32; 3]>,
+    /// Drawn over everything, nothing hiding it (a debug overlay: the hit boxes).
+    pub overlay: bool,
 }
 
 /// What the main world wants drawn this frame.
@@ -86,6 +88,7 @@ struct CsWorldModelPipelineKey {
     target: TextureFormat,
     samples: u32,
     fullbright: bool,
+    overlay: bool,
 }
 
 /// Vertex buffers by model id; this frame's instances in one uniform buffer (each at its dynamic
@@ -194,8 +197,12 @@ impl SpecializedRenderPipeline for CsWorldModelPipeline {
             },
             depth_stencil: Some(DepthStencilState {
                 format: SCENE_DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(CompareFunction::GreaterEqual),
+                depth_write_enabled: Some(!key.overlay),
+                depth_compare: Some(if key.overlay {
+                    CompareFunction::Always
+                } else {
+                    CompareFunction::GreaterEqual
+                }),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -438,6 +445,7 @@ fn draw_cs_world_models(
                     target: extracted_view.target_format,
                     samples: msaa.samples(),
                     fullbright: !draw.shading.is_lit(),
+                    overlay: instance.overlay,
                 },
             );
             if cache.get_render_pipeline(id).is_none() {

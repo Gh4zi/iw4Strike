@@ -31,7 +31,8 @@ pub use session::{
     Headless, HostClassLoadouts, HostClassSlot, HudInputView, LaunchIdentity, LaunchReport,
     LifeEndCause, LifeEnded, LifeStartReason, LifeStarted, LocalLoadKey, MapLoadApproved,
     MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, MenuSceneCamera, ReturnedToMenu,
-    RuntimeRole, TeardownReason, UiCamera, UiDraw, ViewSubject, WorldGeneration, WorldProducts,
+    RuntimeRole, ShowHitboxes, TeardownReason, UiCamera, UiDraw, ViewSubject, WorldGeneration,
+    WorldProducts,
 };
 pub use settings::{DisplayResolution, GameSettings};
 pub use ui::{

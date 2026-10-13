@@ -1,0 +1,18 @@
+[package]
+name = "csgo_anim"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "CS:GO's player bodies off the GPU: the animation state, the agents' skeletons and their hit boxes, read from a CS:GO install for whoever draws the bodies and whoever traces the shots."
+
+[dependencies]
+asset_transport.workspace = true
+diag.workspace = true
+glam.workspace = true
+mdl_goldsrc.workspace = true
+mdl_source.workspace = true
+playerstate_iw4.workspace = true
+weapon_iw4.workspace = true
+
+[lints]
+workspace = true

@@ -590,6 +590,7 @@ fn record_collision_state_system(ecs: &mut World) {
     } else {
         Some(cmd_ids)
     };
+    crate::cs_hitbox::tick_csgo_hit_bodies(&mut world, msec);
     world.record_collision_history(tick, msec, hitbox_cmds.as_deref());
 }
 

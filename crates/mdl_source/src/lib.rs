@@ -8,7 +8,8 @@ pub mod vpk;
 pub mod vtf;
 
 pub use studio::{
-    Animation, Attachment, AutoLayer, BodyPart, BoneFrame, EVENT_CLIENT_SOUND, PoseParam, StudioModel,
+    Animation, Attachment, AutoLayer, BodyPart, BoneFrame, EVENT_CLIENT_SOUND, Hitbox, PoseParam,
+    StudioModel,
 };
 pub use vpk::Vpk;
 

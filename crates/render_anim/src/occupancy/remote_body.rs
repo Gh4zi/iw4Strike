@@ -90,6 +90,13 @@ pub fn register_remote_body_systems(app: &mut App) {
         )
         .add_systems(
             Update,
+            crate::occupancy::csgo_hitbox_debug::draw_csgo_hitboxes
+                .after(crate::occupancy::csgo_body::update_csgo_bodies)
+                .before(crate::occupancy::cs_world_model::update_cs_world_models)
+                .in_set(ClientSet::Present),
+        )
+        .add_systems(
+            Update,
             (
                 crate::occupancy::cs_world_model::update_cs_world_models.after(pose_remote_bodies),
                 crate::occupancy::cs_bomb::beep_cs_bomb.after(PresentedPublished),
