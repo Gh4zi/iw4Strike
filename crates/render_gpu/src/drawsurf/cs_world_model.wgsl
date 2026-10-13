@@ -13,14 +13,14 @@ struct Instance {
     // Direction toward the sun (world) and its colour, zero in shadow.
     sun_dir: vec4<f32>,
     sun: vec4<f32>,
-    // x = 1 when the vertices are skinned by `bones`.
+    // x = 1 when the vertices are skinned by `bones`, y = the first bone of its palette there.
     flags: vec4<f32>,
 }
 
 @group(1) @binding(0) var<uniform> inst: Instance;
 @group(1) @binding(1) var skin_tex: texture_2d<f32>;
 @group(1) @binding(2) var skin_samp: sampler;
-// Three rows per bone (row-major 3x4), model space.
+// Three rows per bone (row-major 3x4), model space: every instance's palette, one after another.
 @group(1) @binding(3) var<storage, read> bones: array<vec4<f32>>;
 
 struct VsIn {
@@ -57,12 +57,13 @@ fn vs_world(in: VsIn) -> VsOut {
     var position = in.position;
     var normal = in.normal;
     if (inst.flags.x > 0.5) {
+        let first = u32(inst.flags.y);
         let ids = vec4<u32>(
             in.bone_ids & 0xffu,
             (in.bone_ids >> 8u) & 0xffu,
             (in.bone_ids >> 16u) & 0xffu,
             (in.bone_ids >> 24u) & 0xffu,
-        );
+        ) + vec4<u32>(first);
         var w = in.weights;
         let total = w.x + w.y + w.z + w.w;
         if (total <= 0.0) {

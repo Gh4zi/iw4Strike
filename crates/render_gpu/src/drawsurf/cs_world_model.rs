@@ -22,13 +22,13 @@ use bevy::render::render_resource::binding_types::{
 };
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
-    BufferInitDescriptor, BufferUsages, ColorTargetState, ColorWrites, CompareFunction,
-    DepthStencilState, FragmentState, FrontFace, MultisampleState, PipelineCache, PrimitiveState,
-    RenderPipelineDescriptor, SamplerBindingType, ShaderStages, SpecializedRenderPipeline,
-    SpecializedRenderPipelines, StoreOp, TextureFormat, TextureSampleType, VertexAttribute,
-    VertexFormat, VertexState, VertexStepMode,
+    BufferBinding, BufferDescriptor, BufferInitDescriptor, BufferUsages, ColorTargetState,
+    ColorWrites, CompareFunction, DepthStencilState, FragmentState, FrontFace, MultisampleState,
+    PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType, ShaderStages,
+    SpecializedRenderPipeline, SpecializedRenderPipelines, StoreOp, TextureFormat,
+    TextureSampleType, TextureViewId, VertexAttribute, VertexFormat, VertexState, VertexStepMode,
 };
-use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
+use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::texture::GpuImage;
 use bevy::render::view::{
     ExtractedView, Msaa, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms,
@@ -85,13 +85,39 @@ struct CsWorldModelPipelineKey {
     fullbright: bool,
 }
 
-/// Vertex buffers by model id, and this frame's per-instance uniforms and bone palettes (a
-/// rigid instance shares the one-bone identity palette).
+/// Vertex buffers by model id; this frame's instances in one uniform buffer (each at its dynamic
+/// offset) and their bone palettes in one storage buffer after the one-bone identity palette that
+/// rigid instances use; the mesh bind groups by texture, kept while those buffers are.
 #[derive(Resource, Default)]
 struct CsWorldModelGpu {
     vertices: HashMap<u64, Buffer>,
-    instances: Vec<(Buffer, Option<Buffer>)>,
-    identity_bones: Option<Buffer>,
+    /// Each extracted instance's offset into `uniforms`.
+    offsets: Vec<u32>,
+    uniforms: Option<Buffer>,
+    bones: Option<Buffer>,
+    binds: HashMap<TextureViewId, BindGroup>,
+    uniform_bytes: Vec<u8>,
+    bone_rows: Vec<[[f32; 4]; 3]>,
+}
+
+/// Makes `buffer` again (larger) when it cannot hold `bytes`; true when it did.
+fn ensure_buffer(
+    buffer: &mut Option<Buffer>,
+    device: &RenderDevice,
+    label: &'static str,
+    usage: BufferUsages,
+    bytes: u64,
+) -> bool {
+    if buffer.as_ref().is_some_and(|b| b.size() >= bytes) {
+        return false;
+    }
+    *buffer = Some(device.create_buffer(&BufferDescriptor {
+        label: Some(label),
+        size: bytes.max(256).next_power_of_two(),
+        usage: usage | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    }));
+    true
 }
 
 #[derive(Component)]
@@ -194,7 +220,7 @@ fn init_pipeline(mut commands: Commands, asset_server: Res<AssetServer>) {
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::VERTEX_FRAGMENT,
                 (
-                    uniform_buffer_sized(false, NonZeroU64::new(INSTANCE_SIZE)),
+                    uniform_buffer_sized(true, NonZeroU64::new(INSTANCE_SIZE)),
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
                     storage_buffer_read_only_sized(false, NonZeroU64::new(BONE_SIZE)),
@@ -215,16 +241,12 @@ fn prepare_cs_world_models(
     extracted: Res<ExtractedCsWorldModels>,
     mut gpu: ResMut<CsWorldModelGpu>,
     device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
 ) {
     let gpu = &mut *gpu;
-    gpu.instances.clear();
-    if gpu.identity_bones.is_none() {
-        let identity: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
-        gpu.identity_bones = Some(device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("cs_world_model_identity_bones"),
-            contents: bytemuck::cast_slice(&identity),
-            usage: BufferUsages::STORAGE,
-        }));
+    gpu.offsets.clear();
+    if extracted.0.instances.is_empty() {
+        return;
     }
     // Upload models seen for the first time; keep the buffers of the ones still drawn.
     gpu.vertices.retain(|id, _| {
@@ -234,6 +256,13 @@ fn prepare_cs_world_models(
             .iter()
             .any(|instance| instance.model.id == *id)
     });
+    let stride = u64::from(device.limits().min_uniform_buffer_offset_alignment)
+        .max(INSTANCE_SIZE)
+        .next_multiple_of(16) as usize;
+    gpu.uniform_bytes.clear();
+    gpu.bone_rows.clear();
+    gpu.bone_rows
+        .push([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]);
     for instance in &extracted.0.instances {
         let model = &instance.model;
         if !model.vertices.is_empty() && !gpu.vertices.contains_key(&model.id) {
@@ -244,33 +273,100 @@ fn prepare_cs_world_models(
             });
             gpu.vertices.insert(model.id, buffer);
         }
-        let mut bytes = Vec::with_capacity(INSTANCE_SIZE as usize);
+        let offset = gpu.uniform_bytes.len();
+        gpu.offsets.push(u32::try_from(offset).unwrap_or(u32::MAX));
         for column in instance.world_from_model {
             for v in column {
-                bytes.extend_from_slice(&v.to_le_bytes());
+                gpu.uniform_bytes.extend_from_slice(&v.to_le_bytes());
             }
         }
+        // flags: x = skinned, y = the first bone of its palette.
         let skinned = instance.bones.as_ref().filter(|bones| !bones.is_empty());
-        let flags = [f32::from(u8::from(skinned.is_some())), 0.0, 0.0];
+        let first_bone = skinned.map_or(0, |_| gpu.bone_rows.len());
+        if let Some(bones) = skinned {
+            gpu.bone_rows.extend_from_slice(bones);
+        }
+        let flags = [f32::from(u8::from(skinned.is_some())), first_bone as f32, 0.0];
         for colour in [instance.ambient, instance.sun_dir, instance.sun, flags] {
             for v in [colour[0], colour[1], colour[2], 0.0] {
-                bytes.extend_from_slice(&v.to_le_bytes());
+                gpu.uniform_bytes.extend_from_slice(&v.to_le_bytes());
             }
         }
-        let uniform = device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("cs_world_model_instance"),
-            contents: &bytes,
-            usage: BufferUsages::UNIFORM,
-        });
-        let bones = skinned.map(|bones| {
-            device.create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("cs_world_model_bones"),
-                contents: bytemuck::cast_slice(bones.as_slice()),
-                usage: BufferUsages::STORAGE,
-            })
-        });
-        gpu.instances.push((uniform, bones));
+        gpu.uniform_bytes.resize(offset + stride, 0);
     }
+    let grown_uniforms = ensure_buffer(
+        &mut gpu.uniforms,
+        &device,
+        "cs_world_model_instances",
+        BufferUsages::UNIFORM,
+        gpu.uniform_bytes.len() as u64,
+    );
+    let grown_bones = ensure_buffer(
+        &mut gpu.bones,
+        &device,
+        "cs_world_model_bones",
+        BufferUsages::STORAGE,
+        gpu.bone_rows.len() as u64 * BONE_SIZE,
+    );
+    if grown_uniforms || grown_bones {
+        gpu.binds.clear();
+    }
+    if let (Some(uniforms), Some(bones)) = (&gpu.uniforms, &gpu.bones) {
+        queue.write_buffer(uniforms, 0, &gpu.uniform_bytes);
+        queue.write_buffer(bones, 0, bytemuck::cast_slice(&gpu.bone_rows));
+    }
+}
+
+/// The mesh bind groups for this frame's textures: made once per texture while the instance and
+/// bone buffers stay, dropped when no longer drawn.
+fn prepare_mesh_binds(
+    pipeline: Option<Res<CsWorldModelPipeline>>,
+    extracted: Res<ExtractedCsWorldModels>,
+    mut gpu: ResMut<CsWorldModelGpu>,
+    cache: Res<PipelineCache>,
+    device: Res<RenderDevice>,
+    images: Res<RenderAssets<GpuImage>>,
+) {
+    let gpu = &mut *gpu;
+    if extracted.0.instances.is_empty() {
+        gpu.binds.clear();
+        return;
+    }
+    let (Some(pipeline), Some(uniforms), Some(bones)) = (pipeline, &gpu.uniforms, &gpu.bones)
+    else {
+        return;
+    };
+    let layout = cache.get_bind_group_layout(&pipeline.mesh_layout);
+    let mut kept = HashMap::with_capacity(gpu.binds.len());
+    for instance in &extracted.0.instances {
+        for draw in &instance.model.draws {
+            let Some(image) = images.get(&draw.image) else {
+                continue;
+            };
+            let id = image.texture_view.id();
+            if kept.contains_key(&id) {
+                continue;
+            }
+            let bind = gpu.binds.remove(&id).unwrap_or_else(|| {
+                device.create_bind_group(
+                    "cs_world_model_mesh",
+                    &layout,
+                    &BindGroupEntries::sequential((
+                        BufferBinding {
+                            buffer: uniforms,
+                            offset: 0,
+                            size: NonZeroU64::new(INSTANCE_SIZE),
+                        },
+                        &image.texture_view,
+                        &image.sampler,
+                        bones.as_entire_buffer_binding(),
+                    )),
+                )
+            });
+            kept.insert(id, bind);
+        }
+    }
+    gpu.binds = kept;
 }
 
 fn prepare_views(
@@ -313,7 +409,6 @@ fn draw_cs_world_models(
     gpu: Res<CsWorldModelGpu>,
     mut specialized: ResMut<SpecializedRenderPipelines<CsWorldModelPipeline>>,
     cache: Res<PipelineCache>,
-    device: Res<RenderDevice>,
     images: Res<RenderAssets<GpuImage>>,
     mut context: RenderContext,
 ) {
@@ -321,15 +416,11 @@ fn draw_cs_world_models(
     let (Some(pipeline), Some(view_bind)) = (pipeline, view_bind) else {
         return;
     };
-    if extracted.0.instances.is_empty() || gpu.instances.len() != extracted.0.instances.len() {
+    if extracted.0.instances.is_empty() || gpu.offsets.len() != extracted.0.instances.len() {
         return;
     }
-    let layout = cache.get_bind_group_layout(&pipeline.mesh_layout);
-    let Some(identity_bones) = gpu.identity_bones.as_ref() else {
-        return;
-    };
     let mut prepared = Vec::new();
-    for (instance, (uniform, bones)) in extracted.0.instances.iter().zip(&gpu.instances) {
+    for (instance, &offset) in extracted.0.instances.iter().zip(&gpu.offsets) {
         let Some(vertices) = gpu.vertices.get(&instance.model.id) else {
             continue;
         };
@@ -349,17 +440,10 @@ fn draw_cs_world_models(
             if cache.get_render_pipeline(id).is_none() {
                 continue;
             }
-            let bind = device.create_bind_group(
-                "cs_world_model_mesh",
-                &layout,
-                &BindGroupEntries::sequential((
-                    uniform.as_entire_buffer_binding(),
-                    &image.texture_view,
-                    &image.sampler,
-                    bones.as_ref().unwrap_or(identity_bones).as_entire_buffer_binding(),
-                )),
-            );
-            prepared.push((id, bind, vertices, draw.first_vertex, draw.vertex_count));
+            let Some(bind) = gpu.binds.get(&image.texture_view.id()) else {
+                continue;
+            };
+            prepared.push((id, bind, offset, vertices, draw.first_vertex, draw.vertex_count));
         }
     }
     if prepared.is_empty() {
@@ -387,12 +471,12 @@ fn draw_cs_world_models(
         max_depth,
     );
     pass.set_bind_group(0, &view_bind.0, &[view_offset.offset]);
-    for (id, bind, vertices, first, count) in &prepared {
+    for (id, bind, offset, vertices, first, count) in &prepared {
         let Some(gpu_pipeline) = cache.get_render_pipeline(*id) else {
             continue;
         };
         pass.set_render_pipeline(gpu_pipeline);
-        pass.set_bind_group(1, bind, &[]);
+        pass.set_bind_group(1, *bind, &[*offset]);
         pass.set_vertex_buffer(0, vertices.slice(..));
         pass.draw(*first..*first + *count, 0..1);
     }
@@ -415,6 +499,7 @@ pub(super) fn register(app: &mut App) {
             (
                 prepare_cs_world_models.in_set(RenderSystems::PrepareResources),
                 prepare_views.in_set(RenderSystems::PrepareBindGroups),
+                prepare_mesh_binds.in_set(RenderSystems::PrepareBindGroups),
             ),
         )
         .add_systems(
