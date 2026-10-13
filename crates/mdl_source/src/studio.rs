@@ -183,7 +183,8 @@ pub struct Sequence {
     /// Sequences played over this one wherever it plays (`StudioModel::sequences` indices), in
     /// order: CS:S's player poses carry their aim and hand-position layers this way.
     pub autolayers: Vec<usize>,
-    frames: Vec<BoneFrame>,
+    /// Its first animation's frames, shared with `StudioModel::animations` (not a copy).
+    frames: std::sync::Arc<[BoneFrame]>,
 }
 
 /// One decoded animation (`mstudioanimdesc_t`): `[frame][bone]` local transforms. A delta
@@ -199,7 +200,7 @@ pub struct Animation {
     /// How far the animation carries the model over one cycle (its last linear movement
     /// record's position; zero without one).
     pub movement: [f32; 3],
-    frames: Vec<BoneFrame>,
+    frames: std::sync::Arc<[BoneFrame]>,
 }
 
 impl Animation {
@@ -427,7 +428,7 @@ impl StudioModel {
                 .map(|m| m.and_then(|o| seq.weights.get(o).copied()).unwrap_or(0.0))
                 .collect();
             self.sequences.push(Sequence {
-                frames,
+                frames: frames.into(),
                 weights,
                 root_driver: seq
                     .root_driver
@@ -1002,7 +1003,7 @@ fn decode_animation(
             }
             _ => [0.0; 3],
         },
-        frames,
+        frames: frames.into(),
     })
 }
 
