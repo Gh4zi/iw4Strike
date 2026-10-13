@@ -3360,6 +3360,14 @@ pub(super) fn xmodel_shadow_materials(
         .iter()
         .filter(|draw| draw.object_id != XMODEL_OBJECT_ID_VIEWMODEL && !draw.is_scope)
         .filter_map(|draw| xmodel_shadow_draw(xmodel, draw, catalog))
+        // A surface whose material has no shadow caster technique casts nothing, as for the sun.
+        .filter(|item| {
+            super::material_runtime::add_surf_has_technique(
+                catalog,
+                render_material::MaterialDrawKey::new(item.key, item.material_rank),
+                super::TechType(super::SUN_SHADOW_CASTER_TECH),
+            )
+        })
         .collect()
 }
 
