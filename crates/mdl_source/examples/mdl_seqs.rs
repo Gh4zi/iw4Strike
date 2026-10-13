@@ -263,6 +263,10 @@ fn main() {
                     .collect();
                 println!("  posekeys {keys:?}");
             }
+            if let Some(driver) = seq.root_driver {
+                let name = model.bones.get(driver).map_or("?", |b| b.name.as_str());
+                println!("  root driver {driver} {name}");
+            }
             let anims: Vec<String> = (0..(groups.0 * groups.1) as usize)
                 .map(|i| {
                     let anim = i16_at(at + i32_at(at + 60) as usize + i * 2) as usize;

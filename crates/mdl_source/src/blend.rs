@@ -6,7 +6,7 @@
 //! [`StudioModel::pose_params`] entry.
 
 use crate::studio::{
-    AL_LOCAL, AL_NOBLEND, AL_POSE, AL_SPLINE, AL_XFADE, BoneFrame, SEQ_DELTA, SEQ_POST,
+    AL_LOCAL, AL_NOBLEND, AL_POSE, AL_SPLINE, AL_XFADE, BoneFrame, SEQ_DELTA, SEQ_POST, SEQ_ROOTXFORM,
     Sequence, StudioModel,
 };
 
@@ -68,6 +68,21 @@ fn nlerp(p: [f32; 4], q: [f32; 4], t: f32) -> [f32; 4] {
 /// The rotation `q` scaled to `t` of its angle.
 fn scale(q: [f32; 4], t: f32) -> [f32; 4] {
     mdl_goldsrc::slerp(IDENTITY, q, t)
+}
+
+/// `v` rotated by the unit quaternion `q`.
+fn rotate(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+    let u = [q[0], q[1], q[2]];
+    let cross = |a: [f32; 3], b: [f32; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let t = cross(u, v).map(|c| 2.0 * c);
+    let ut = cross(u, t);
+    core::array::from_fn(|i| v[i] + q[3] * t[i] + ut[i])
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -357,6 +372,16 @@ fn accumulate_at(
     };
     let mut sample = Vec::with_capacity(pose.len());
     if sample_sequence(model, sequence, cycle, params, &mut sample) {
+        // A root re-transform (`STUDIO_ROOTXFORM`): the root it blends toward is the pose's
+        // own root moved by the driver bone's transform in this sequence.
+        if seq.flags & SEQ_ROOTXFORM != 0
+            && let Some(driver) = seq.root_driver.and_then(|d| sample.get(d).copied())
+            && let (Some(root), Some(target)) = (pose.first().copied(), sample.first_mut())
+        {
+            target.rotation = normalize(quat_mul(driver.rotation, root.rotation));
+            let moved = rotate(driver.rotation, root.position);
+            target.position = core::array::from_fn(|i| moved[i] + driver.position[i]);
+        }
         slerp_bones(seq, pose, &sample, weight);
     }
     for layer in &seq.layers {

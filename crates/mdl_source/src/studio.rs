@@ -115,6 +115,9 @@ pub struct AutoLayer {
 pub const SEQ_DELTA: i32 = 0x0004;
 /// A delta sequence applied after (in the frame of) the pose under it (`STUDIO_POST`).
 pub const SEQ_POST: i32 = 0x0010;
+/// The sequence moves the root by one of its bones' transforms (`STUDIO_ROOTXFORM`, CS:GO's
+/// lean layer): see [`Sequence::root_driver`].
+pub const SEQ_ROOTXFORM: i32 = 0x40000;
 /// `AutoLayer::flags`.
 pub const AL_SPLINE: i32 = 0x0040;
 pub const AL_XFADE: i32 = 0x0080;
@@ -154,6 +157,9 @@ pub struct Sequence {
     /// How much the sequence moves each bone (0 leaves it to whatever plays under it, 1 takes
     /// it over), by bone index.
     pub weights: Vec<f32>,
+    /// With [`SEQ_ROOTXFORM`]: the bone whose local transform in this sequence moves the root
+    /// of the pose under it (the sequence's own root is not used).
+    pub root_driver: Option<usize>,
     /// Sequences played over this one wherever it plays (`StudioModel::sequences` indices), in
     /// order: CS:S's player poses carry their aim and hand-position layers this way.
     pub autolayers: Vec<usize>,
@@ -399,6 +405,9 @@ impl StudioModel {
             self.sequences.push(Sequence {
                 frames,
                 weights,
+                root_driver: seq
+                    .root_driver
+                    .and_then(|driver| map.iter().position(|m| *m == Some(driver))),
                 blends: Vec::new(),
                 autolayers: seq.autolayers.iter().map(|a| a + base).collect(),
                 layers: seq
@@ -1174,6 +1183,9 @@ fn parse_sequences(
             blends,
             blend_size,
             weights,
+            root_driver: usize::try_from(r.i32(at + 200).unwrap_or(0))
+                .ok()
+                .filter(|&bone| bone > 0 && flags & SEQ_ROOTXFORM != 0),
             autolayers,
             frames,
         });
