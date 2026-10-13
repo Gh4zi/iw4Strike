@@ -36,6 +36,8 @@ pub struct PlayerCorpseSlot {
     pub falling: bool,
 
     pub ground_entity_num: i32,
+
+    pub spawn_time_ms: i32,
 }
 
 impl Default for PlayerCorpseSlot {
@@ -57,6 +59,7 @@ impl Default for PlayerCorpseSlot {
             tr_base: [0.0; 3],
             falling: false,
             ground_entity_num: ENTITYNUM_NONE,
+            spawn_time_ms: 0,
         }
     }
 }
@@ -178,6 +181,7 @@ pub(crate) fn occupy_player_clone(
             tr_delta: clamp_clone_tr_delta(ps.velocity),
             tr_base: ps.origin,
             falling: true,
+            spawn_time_ms: time_ms,
             ..PlayerCorpseSlot::default()
         },
     );

@@ -20,7 +20,7 @@ pub struct PersistentRemoteTree {
     pub legs_restart: bool,
     pub torso_restart: bool,
 
-    pub occupation_tr_time: Option<i32>,
+    pub occupation_key: Option<CorpseOccupationKey>,
 
     pub legs_rate_sample: ClientAnimSample,
 
@@ -88,16 +88,38 @@ pub fn skip_frozen_corpse_dobj(
     is_corpse && tree_reused && last_was_cache_hit && has_cache
 }
 
+/// Which body a corpse slot holds: the level time of the death and the victim. Both stay the
+/// same for one body's life, while its trajectory time changes each time its fall does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CorpseOccupationKey {
+    pub spawn_time_ms: i32,
+    pub victim: i32,
+}
+
+pub fn corpse_occupation_key(es: &entity_iw4::EntityState) -> CorpseOccupationKey {
+    CorpseOccupationKey {
+        spawn_time_ms: es.time2,
+        victim: es.client_num,
+    }
+}
+
+pub fn fresh_corpse_clip_time(age_ms: i32, clip_length_ms: i32) -> f32 {
+    if clip_length_ms <= 0 || age_ms <= 0 {
+        return 0.0;
+    }
+    (age_ms as f32 / clip_length_ms as f32).min(1.0)
+}
+
 pub fn clone_corpse_tree_from_victim(
     trees: &mut RemoteBodyTrees,
     corpse_ent: u32,
     victim: u32,
-    tr_time: i32,
+    key: CorpseOccupationKey,
 ) {
     if trees
         .by_ent
         .get(&corpse_ent)
-        .is_some_and(|slot| slot.occupation_tr_time == Some(tr_time))
+        .is_some_and(|slot| slot.occupation_key == Some(key))
     {
         return;
     }
@@ -108,7 +130,7 @@ pub fn clone_corpse_tree_from_victim(
     let mut dst = src;
     dst.dobj = None;
     dst.reuse_key = None;
-    dst.occupation_tr_time = Some(tr_time);
+    dst.occupation_key = Some(key);
     trees.by_ent.insert(corpse_ent, dst);
 }
 
@@ -132,6 +154,7 @@ pub fn advance_remote_tree(
     dt: f32,
     origin: [f32; 3],
     pose_time_ms: i32,
+    corpse_age_ms: Option<i32>,
     trees: &mut RemoteBodyTrees,
 ) -> Result<AdvancedRemoteTree, String> {
     let legs_index = legs.effective_index();
@@ -139,6 +162,7 @@ pub fn advance_remote_tree(
     let legs_restart = legs.restart_toggle();
     let torso_restart = torso.restart_toggle();
     let prev = trees.by_ent.remove(&persist_key);
+    let occupation_key = prev.as_ref().and_then(|slot| slot.occupation_key);
     let prev_restart_changed_legs = prev
         .as_ref()
         .is_some_and(|slot| slot.legs_restart != legs_restart);
@@ -176,6 +200,7 @@ pub fn advance_remote_tree(
             let overlayed = overlay_legs_clip(&clip, &torso_clip);
             (Arc::new(overlayed), Some(torso_clip))
         };
+        let fresh = prev.is_none();
         let old_legs = prev.as_ref().map(|slot| slot.legs).unwrap_or(0);
         let old_torso = prev.as_ref().map(|slot| slot.torso).unwrap_or(0);
         let old_legs_moving = prev
@@ -222,7 +247,7 @@ pub fn advance_remote_tree(
                 torso: 0,
                 legs_restart: false,
                 torso_restart: false,
-                occupation_tr_time: None,
+                occupation_key,
                 legs_rate_sample: ClientAnimSample::default(),
                 torso_rate_sample: ClientAnimSample::default(),
             },
@@ -288,6 +313,25 @@ pub fn advance_remote_tree(
             slot.runtime
                 .set_state(id, state)
                 .map_err(|error| error.to_string())?;
+        }
+        // A body seen for the first time joins its death clip where the death began, not at
+        // the clip's first frame.
+        if fresh && let Some(age_ms) = corpse_age_ms {
+            for (index, leaf_clip) in [
+                (legs_index, Some(&clip)),
+                (torso_index, torso_clip.as_ref()),
+            ] {
+                let Some(leaf_clip) = leaf_clip else {
+                    continue;
+                };
+                let time = fresh_corpse_clip_time(age_ms, leaf_clip.length_msec());
+                let mut state = slot.runtime.states()[index as usize];
+                state.time = time;
+                state.old_time = time;
+                slot.runtime
+                    .set_state(xmodel_runtime::XAnimNodeId(index), state)
+                    .map_err(|error| error.to_string())?;
+            }
         }
         clips = Some(PoseClips {
             clip,

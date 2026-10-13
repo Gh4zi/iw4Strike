@@ -3,7 +3,7 @@ use crate::anim::remote_body::{
     RemoteBodySkinnedItem, RemoteBodySkinnedQueue, RemoteBodyTrees, RemoteModelLods,
     RemoteSkinModels, RemoteSkinPoseHashes, SkinAfterPose, WorldGunGap, advance_remote_tree,
     bind_remote_skin_models, clone_corpse_tree_from_victim, commit_assembled_body,
-    ensure_remote_dobj, hash_skin_matrices, occupy_lod_byte, occupy_remote_kit_dobj, packed_anim,
+    corpse_occupation_key, ensure_remote_dobj, hash_skin_matrices, occupy_lod_byte, occupy_remote_kit_dobj, packed_anim,
     pose_remote_dobj, push_cached_surfaces, radii, remote_hold_pose, remote_player_controller,
     select_remote_lods, select_remote_models, skin_after_pose, skin_slot_need,
     skip_frozen_corpse_dobj, take_unique_geom, validate_remote_tracks, zero_anim,
@@ -761,16 +761,13 @@ impl<'a> RemotePoseFrame<'a> {
         let persist_key = u32::from(identity.number());
         let is_corpse = runtime.next_state.e_type == ET_PLAYER_CORPSE
             || runtime.pose_e_type == ET_PLAYER_CORPSE as u8;
-        let occupation_tr_time = is_corpse.then_some(runtime.next_state.tr_time);
-        if is_corpse {
+        let occupation_key = is_corpse.then(|| corpse_occupation_key(&runtime.next_state));
+        if let Some(key) = occupation_key {
             let victim = u32::try_from(runtime.next_state.client_num).unwrap_or(0);
-            clone_corpse_tree_from_victim(
-                self.trees,
-                persist_key,
-                victim,
-                runtime.next_state.tr_time,
-            );
+            clone_corpse_tree_from_victim(self.trees, persist_key, victim, key);
         }
+        let corpse_age_ms =
+            occupation_key.map(|key| runtime.pose_time_ms.wrapping_sub(key.spawn_time_ms));
 
         if runtime.previous_pose.is_none() {
             if let Some(slot) = self.trees.get_mut(persist_key) {
@@ -854,6 +851,7 @@ impl<'a> RemotePoseFrame<'a> {
                 dt,
                 sample.rate_origin,
                 sample.rate_time_ms,
+                corpse_age_ms,
                 trees,
             )?;
 
@@ -981,11 +979,11 @@ impl<'a> RemotePoseFrame<'a> {
             }
             Ok(PoseOneOutcome::Posed)
         })();
-        if let Some(tr_time) = occupation_tr_time
+        if let Some(key) = occupation_key
             && let Some(slot) = trees.get_mut(persist_key)
-            && slot.occupation_tr_time.is_none()
+            && slot.occupation_key.is_none()
         {
-            slot.occupation_tr_time = Some(tr_time);
+            slot.occupation_key = Some(key);
         }
         result
     }
