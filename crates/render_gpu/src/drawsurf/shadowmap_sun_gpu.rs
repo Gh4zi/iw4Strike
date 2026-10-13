@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    Buffer, BufferDescriptor, BufferUsages, Extent3d, Texture, TextureDescriptor, TextureDimension,
-    TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
+    Extent3d, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+    TextureView, TextureViewDescriptor,
 };
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::renderer::RenderDevice;
 
 use super::backend::partition::D3dScissorRect;
 use render_frame::SUN_SHADOW_FORCED_PROFILE;
@@ -94,54 +94,6 @@ pub(super) fn ensure_shadowmap_sun_target(
         height,
     });
     (Some(color_view), true)
-}
-
-/// Uploads each epoch's indices to its buffer (grown as needed), skipping a buffer that already
-/// holds them (`last`: what each one was given last).
-pub(super) fn upload_shadow_index_epochs(
-    buffers: &mut Vec<Buffer>,
-    capacities: &mut Vec<u64>,
-    last: &mut Vec<Vec<u32>>,
-    device: &RenderDevice,
-    queue: &RenderQueue,
-    epochs: &[Vec<u32>],
-    label: &'static str,
-) -> Vec<Buffer> {
-    buffers.truncate(buffers.len().min(epochs.len()));
-    capacities.truncate(capacities.len().min(epochs.len()));
-    last.truncate(buffers.len());
-    let mut uploaded = Vec::with_capacity(epochs.len());
-    for (i, indices) in epochs.iter().enumerate() {
-        let bytes = (indices.len() * 4) as u64;
-        if buffers.len() <= i {
-            buffers.push(device.create_buffer(&BufferDescriptor {
-                label: Some(label),
-                size: bytes.max(4),
-                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            capacities.push(bytes.max(4));
-        } else if capacities[i] < bytes {
-            buffers[i] = device.create_buffer(&BufferDescriptor {
-                label: Some(label),
-                size: bytes,
-                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            capacities[i] = bytes;
-        }
-        let buf = &buffers[i];
-        if last.get(i) != Some(indices) {
-            queue.write_buffer(buf, 0, bytemuck::cast_slice(indices));
-            if let Some(kept) = last.get_mut(i) {
-                kept.clone_from(indices);
-            } else {
-                last.push(indices.clone());
-            }
-        }
-        uploaded.push(buf.clone());
-    }
-    uploaded
 }
 
 pub fn scissor_xywh(scissor: D3dScissorRect) -> (u32, u32, u32, u32) {

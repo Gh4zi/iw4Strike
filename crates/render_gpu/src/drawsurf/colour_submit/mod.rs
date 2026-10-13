@@ -31,9 +31,9 @@ use bevy::render::{Render, RenderSystems};
 
 use super::ExtractedRenderFrameProducts;
 use super::backend::{
-    ModelIndexRingCopyRefuse, ModelIndexStream, PackDraw, PackedEmit, PackedListKind,
-    SmodelRigidFlush, draw_spot_shadow_map, draw_sun_shadow_map_forced, draw_surf_list_work_colour,
-    pack_sun_shadow_frontend, prim_args_from_world_flush, prim_args_u32_index_span,
+    PackDraw, PackedEmit, PackedListKind, SmodelRigidFlush, draw_spot_shadow_map,
+    draw_sun_shadow_map_forced, draw_surf_list_work_colour, pack_sun_shadow_frontend,
+    prim_args_from_world_flush, prim_args_u32_index_span,
 };
 use super::depth_range::{
     GFX_DEPTH_RANGE_VIEWMODEL, depth_range_type_for_draw, reverse_z_viewport_depth,
@@ -1066,12 +1066,11 @@ fn count_miss_row(rows: &mut BTreeMap<String, u32>, cause: &str) {
 }
 
 /// A spot shadow slot's world and static-model casters as finished draws (constants laid over
-/// for the light), the static models' index stream, and what was refused making them; reused
-/// while [`Self::signature`] (the light and the static lists) holds.
+/// for the light) and what was refused making them; reused while [`Self::signature`] (the
+/// light and the static lists) holds.
 struct SpotStaticDraws {
     signature: u64,
     draws: Vec<PreparedExactDraw>,
-    smodel_epochs: Vec<Vec<u32>>,
     miss: u32,
     miss_rows: BTreeMap<String, u32>,
 }
@@ -3611,53 +3610,6 @@ fn sun_flush_world_from_local(kind: &RetainedDrawKind) -> Mat4 {
     }
 }
 
-fn emit_local_rigid_shadow_flush(
-    source_indices: &[u32],
-    hit_start: u32,
-    hit_count: u32,
-    stream: &mut ModelIndexStream,
-    family: &'static str,
-) -> Result<(u32, u32, u32), String> {
-    if hit_count == 0 {
-        return Err(format!("{family}DynamicFlushEmpty"));
-    }
-    if hit_count % 3 != 0 {
-        return Err(format!("{family}DynamicIndexCountNotTriangles"));
-    }
-    let start = hit_start as usize;
-    let end = start.saturating_add(hit_count as usize);
-    let indices = source_indices
-        .get(start..end)
-        .ok_or_else(|| format!("{family}DynamicIndexSourceMissing"))?;
-    let (epoch, append) = stream
-        .append_indices(indices)
-        .map_err(|refuse| match refuse {
-            ModelIndexRingCopyRefuse::SourceMissing => {
-                format!("{family}DynamicIndexSourceMissing")
-            }
-            ModelIndexRingCopyRefuse::ExceedsCapacity => format!("{family}RingExceedsCapacity"),
-        })?;
-    Ok((epoch, append.base_index, hit_count))
-}
-
-fn emit_local_xmodel_shadow_flush(
-    source_indices: &[u32],
-    hit_start: u32,
-    hit_count: u32,
-    stream: &mut ModelIndexStream,
-) -> Result<(u32, u32, u32), String> {
-    emit_local_rigid_shadow_flush(source_indices, hit_start, hit_count, stream, "XModel")
-}
-
-fn emit_local_smodel_shadow_flush(
-    source_indices: &[u32],
-    hit_start: u32,
-    hit_count: u32,
-    stream: &mut ModelIndexStream,
-) -> Result<(u32, u32, u32), String> {
-    emit_local_rigid_shadow_flush(source_indices, hit_start, hit_count, stream, "Smodel")
-}
-
 #[derive(Clone)]
 struct ShadowmapSunFlushGpu {
     draws: Vec<PreparedExactDraw>,
@@ -4608,8 +4560,6 @@ struct PreparedSpotSlot {
     envelope: super::backend::SpotShadowMapPass,
     color_view: TextureView,
     depth_view: TextureView,
-    smodel_index_epochs: Vec<Buffer>,
-    xmodel_index_epochs: Vec<Buffer>,
     draw_range: std::ops::Range<usize>,
 }
 
@@ -4853,20 +4803,19 @@ fn prepare_shadowmap_spot(
         let cached = memo_slot
             .and_then(|slot| spot_static[slot].as_ref())
             .filter(|cached| cached.signature == signature);
-        let smodel_epochs = if let Some(cached) = cached {
+        if let Some(cached) = cached {
             spot_memo_stat(0);
             all_prepared.extend(cached.draws.iter().cloned());
             miss = miss.saturating_add(cached.miss);
             for (row, n) in &cached.miss_rows {
                 *miss_rows.entry(row.clone()).or_default() += n;
             }
-            cached.smodel_epochs.clone()
         } else {
             let mut memo = memo_slot.map(|slot| std::mem::take(&mut spot_memo[slot]));
             let mut kept: Vec<(ShadowFlushKey, Result<ShadowmapSunFlushGpu, String>)> = Vec::new();
             let mut static_flushes = Vec::<ShadowmapSunFlushGpu>::new();
             let mut static_overlaid = Vec::new();
-            let (static_miss, static_rows, smodel_epochs) = {
+            let (static_miss, static_rows) = {
                 let mut miss = 0u32;
                 let mut miss_rows = BTreeMap::<String, u32>::new();
                 for flush in &work.world_flushes {
@@ -4945,7 +4894,6 @@ fn prepare_shadowmap_spot(
                     }
                 }
 
-                let mut smodel_stream = ModelIndexStream::new();
                 let mut smodel_spans = Vec::new();
                 for flush in &work.smodel_flushes {
                     let owner_start = flush.entry_start as usize;
@@ -4960,11 +4908,10 @@ fn prepare_shadowmap_spot(
                     for (entry_offset, entry) in entries.iter().enumerate() {
                         let hit_start = entry.index_byte_offset / 2;
                         let hit_count = u32::from(entry.tri_count).saturating_mul(3);
-                        match emit_local_smodel_shadow_flush(
-                            extracted.world.static_geometry.smodel_indices.as_slice(),
+                        match sun_model_index_span(
+                            extracted.world.static_geometry.smodel_indices.len(),
                             hit_start,
                             hit_count,
-                            &mut smodel_stream,
                         ) {
                             Ok((ring_epoch, draw_start, draw_count)) => smodel_spans.push((
                                 ring_epoch,
@@ -4980,7 +4927,6 @@ fn prepare_shadowmap_spot(
                         }
                     }
                 }
-                let smodel_epochs = smodel_stream.finish();
                 for (ring_epoch, draw_start, draw_count, owner, (hit_start, hit_count)) in smodel_spans {
                     let owners = slot
                         .packed
@@ -5072,14 +5018,13 @@ fn prepare_shadowmap_spot(
                         }
                     }
                 }
-                (miss, miss_rows, smodel_epochs)
+                (miss, miss_rows)
             };
             if let Some(slot) = memo_slot {
                 spot_memo[slot] = SpotFlushMemo::from_kept(kept);
                 spot_static[slot] = Some(SpotStaticDraws {
                     signature,
                     draws: static_overlaid.clone(),
-                    smodel_epochs: smodel_epochs.clone(),
                     miss: static_miss,
                     miss_rows: static_rows.clone(),
                 });
@@ -5089,9 +5034,9 @@ fn prepare_shadowmap_spot(
             for (row, n) in static_rows {
                 *miss_rows.entry(row).or_default() += n;
             }
-            smodel_epochs
-        };
-        let mut xmodel_stream = ModelIndexStream::new();
+        }
+        // Moving and static models draw their spans straight from the frame's index buffers,
+        // as the sun's do.
         let mut xmodel_spans = Vec::new();
         for flush in &work.xmodel_flushes {
             let owner_start = flush.entry_start as usize;
@@ -5106,11 +5051,10 @@ fn prepare_shadowmap_spot(
             for (entry_offset, entry) in entries.iter().enumerate() {
                 let hit_start = entry.index_byte_offset / 2;
                 let hit_count = u32::from(entry.tri_count).saturating_mul(3);
-                match emit_local_xmodel_shadow_flush(
-                    &extracted.frame.xmodel_indices,
+                match sun_model_index_span(
+                    extracted.frame.xmodel_indices.len(),
                     hit_start,
                     hit_count,
-                    &mut xmodel_stream,
                 ) {
                     Ok((ring_epoch, draw_start, draw_count)) => xmodel_spans.push((
                         ring_epoch,
@@ -5126,7 +5070,6 @@ fn prepare_shadowmap_spot(
                 }
             }
         }
-        let xmodel_epochs = xmodel_stream.finish();
         for (ring_epoch, draw_start, draw_count, owner, (hit_start, hit_count)) in xmodel_spans {
             let owners = slot
                 .packed
@@ -5251,16 +5194,10 @@ fn prepare_shadowmap_spot(
         if start == end {
             continue;
         }
-        let smodel_index_epochs =
-            shadowmap.upload_smodel_index_epochs(emitted.slot_index, device, queue, &smodel_epochs);
-        let xmodel_index_epochs =
-            shadowmap.upload_xmodel_index_epochs(emitted.slot_index, device, queue, &xmodel_epochs);
         prepared_slots.push(PreparedSpotSlot {
             envelope,
             color_view,
             depth_view,
-            smodel_index_epochs,
-            xmodel_index_epochs,
             draw_range: start..end,
         });
     }
@@ -5332,8 +5269,13 @@ fn record_shadowmap_spot(
             registry,
             geometry,
             world_index,
-            &slot.smodel_index_epochs,
-            &slot.xmodel_index_epochs,
+            geometry.smodel_index.as_slice(),
+            geometry
+                .xmodel
+                .index
+                .buffer()
+                .map(std::slice::from_ref)
+                .unwrap_or_default(),
             geometry.smodel_vertex.as_ref(),
             geometry.xmodel.vertex.buffer(),
             smodel_skinned_vertex,

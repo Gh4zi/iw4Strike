@@ -1,12 +1,10 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    Buffer, Extent3d, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+    Extent3d, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
     TextureView, TextureViewDescriptor,
 };
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::renderer::RenderDevice;
 use lighting_iw4::{GFX_SPOT_SHADOW_RT_LARGE, GFX_SPOT_SHADOW_RT_SMALL, spot_shadow_gpu_extent};
-
-use super::shadowmap_sun_gpu::upload_shadow_index_epochs;
 
 pub const SHADOWMAP_SPOT_COLOR_FORMAT: TextureFormat = TextureFormat::R32Float;
 
@@ -29,13 +27,6 @@ struct SpotGpuTarget {
 pub(super) struct ShadowmapSpotGpu {
     rt10: Option<SpotGpuTarget>,
     rt11: Option<SpotGpuTarget>,
-    smodel_index_epochs: [Vec<Buffer>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
-    smodel_index_epoch_bytes: [Vec<u64>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
-    xmodel_index_epochs: [Vec<Buffer>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
-    xmodel_index_epoch_bytes: [Vec<u64>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
-    /// What each index buffer was last given (a static model's indices rarely change).
-    smodel_index_epoch_last: [Vec<Vec<u32>>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
-    xmodel_index_epoch_last: [Vec<Vec<u32>>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
 }
 
 impl ShadowmapSpotGpu {
@@ -54,50 +45,6 @@ impl ShadowmapSpotGpu {
             GFX_SPOT_SHADOW_RT_SMALL => self.rt11.as_ref().map(|t| &t.depth_view),
             _ => None,
         }
-    }
-
-    pub(super) fn upload_smodel_index_epochs(
-        &mut self,
-        slot_index: u32,
-        device: &RenderDevice,
-        queue: &RenderQueue,
-        epochs: &[Vec<u32>],
-    ) -> Vec<Buffer> {
-        let slot = usize::try_from(slot_index)
-            .ok()
-            .filter(|&slot| slot < lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP)
-            .expect("emitted spot-shadow slot is in the slot table");
-        upload_shadow_index_epochs(
-            &mut self.smodel_index_epochs[slot],
-            &mut self.smodel_index_epoch_bytes[slot],
-            &mut self.smodel_index_epoch_last[slot],
-            device,
-            queue,
-            epochs,
-            "iw4_shadowmap_spot_smodel_index_epoch",
-        )
-    }
-
-    pub(super) fn upload_xmodel_index_epochs(
-        &mut self,
-        slot_index: u32,
-        device: &RenderDevice,
-        queue: &RenderQueue,
-        epochs: &[Vec<u32>],
-    ) -> Vec<Buffer> {
-        let slot = usize::try_from(slot_index)
-            .ok()
-            .filter(|&slot| slot < lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP)
-            .expect("emitted spot-shadow slot is in the slot table");
-        upload_shadow_index_epochs(
-            &mut self.xmodel_index_epochs[slot],
-            &mut self.xmodel_index_epoch_bytes[slot],
-            &mut self.xmodel_index_epoch_last[slot],
-            device,
-            queue,
-            epochs,
-            "iw4_shadowmap_spot_xmodel_index_epoch",
-        )
     }
 }
 
