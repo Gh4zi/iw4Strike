@@ -1014,6 +1014,18 @@ macro_rules! counters {
             category: "iw4l.sim",
             category_class: explicit,
         },
+        /// The CPU time `authority_step`'s steps used: well below their wall time means the
+        /// stepping thread waited for a core, not that the tick had more work.
+        AuthorityStepCpuMs {
+            ordinal: 69,
+            name: "authority_step_cpu",
+            unit: Milliseconds,
+            unit_class: explicit,
+            origin: Cpu,
+            origin_class: default,
+            category: "iw4l.sim",
+            category_class: explicit,
+        },
         }
     };
 }

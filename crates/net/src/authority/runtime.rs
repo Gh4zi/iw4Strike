@@ -53,7 +53,9 @@ pub struct ServerTick(pub Option<ServerTickData>);
 #[derive(Clone, Debug)]
 pub struct ServerTickData {
     pub input: sim::TickInput,
-    pub snapshot: sim::Snapshot,
+    /// Shared: the clip ring keeps every tick's snapshot for 45 s, and copying it cost a full
+    /// snapshot clone (and its drop) per tick on the main thread.
+    pub snapshot: Arc<sim::Snapshot>,
 
     pub weapon_script_names: Arc<[String]>,
 
@@ -750,6 +752,7 @@ fn run_step(
     input: &sim::TickInput,
 ) -> Result<sim::Snapshot, sim::script::Fault> {
     let started = std::time::Instant::now();
+    let cpu_started = diag::thread_cpu_ns();
     let stepped = sim::try_step(
         world,
         sim::Tick(tick),
@@ -759,6 +762,12 @@ fn run_step(
     );
     perf::Counter::AuthorityStepMs.emit(started.elapsed().as_secs_f64() * 1000.0);
     perf::Counter::AuthorityStepN.emit(1.0);
+    if let Some(cpu) = cpu_started
+        .zip(diag::thread_cpu_ns())
+        .map(|(from, to)| to.saturating_sub(from))
+    {
+        perf::Counter::AuthorityStepCpuMs.emit(cpu as f64 / 1e6);
+    }
     stepped
 }
 
@@ -799,7 +808,7 @@ fn finish_step(
     let script_exit_level = world.take_script_exit_level();
     Ok(ServerTickData {
         input,
-        snapshot,
+        snapshot: Arc::new(snapshot),
         weapon_script_names,
         pending_final_kill,
         script_seats,
@@ -1153,7 +1162,7 @@ fn fanout_loopback(
             );
             (out, Some((local.0, sample)))
         }
-        None => (tick.snapshot.clone(), None),
+        None => (sim::Snapshot::clone(&tick.snapshot), None),
     };
     let mut seat_applied = 0i32;
     if let Some((local, sample)) = viewer_sample {

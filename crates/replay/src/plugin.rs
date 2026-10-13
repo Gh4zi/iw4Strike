@@ -138,7 +138,7 @@ fn record_received_ticks(
                 cmds: tick.frame.cmds.clone(),
                 actions: tick.frame.actions.clone(),
             },
-            tick.snapshot.clone(),
+            std::sync::Arc::new(tick.snapshot.clone()),
         );
     }
 }
@@ -154,7 +154,7 @@ fn record_server_tick(
         return;
     };
     if role.runs_authority() {
-        ring.push(tick.input.clone(), tick.snapshot.clone());
+        ring.push(tick.input.clone(), std::sync::Arc::clone(&tick.snapshot));
     }
     let Some(recording) = session.0.as_mut() else {
         return;

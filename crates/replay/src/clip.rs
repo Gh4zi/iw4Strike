@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bevy::prelude::Resource;
 use net::AUTHORITY_MS;
@@ -29,7 +30,7 @@ const _: () = assert!(CLIP_TICK_MS as i32 == AUTHORITY_MS);
 #[derive(Clone, Debug)]
 struct ClipTick {
     input: TickInput,
-    snapshot: Snapshot,
+    snapshot: Arc<Snapshot>,
     bytes: usize,
 }
 
@@ -57,7 +58,7 @@ impl ClipRing {
         }
     }
 
-    pub fn push(&mut self, input: TickInput, snapshot: Snapshot) {
+    pub fn push(&mut self, input: TickInput, snapshot: Arc<Snapshot>) {
         if self
             .ticks
             .back()
@@ -119,7 +120,7 @@ impl ClipRing {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&TickInput, &Snapshot)> {
-        self.ticks.iter().map(|tick| (&tick.input, &tick.snapshot))
+        self.ticks.iter().map(|tick| (&tick.input, &*tick.snapshot))
     }
 }
 
