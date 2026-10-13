@@ -705,6 +705,9 @@ fn sync_cursor_grab(
             let now = time.elapsed_secs_f64();
             if os_cursor::clipped_to_foreground() == Some(false) && now - *last_regrab >= 1.0 {
                 *last_regrab = now;
+                // The lock is taken where the cursor stands; one that wandered off the window
+                // while it was free would be locked out there.
+                os_cursor::center_in_foreground();
                 cursor.grab_mode = CursorGrabMode::None;
                 *held_frames = 0;
                 diag::info!(

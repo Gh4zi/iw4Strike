@@ -14,7 +14,7 @@ mod imp {
         Graphics::Gdi::ClientToScreen,
         UI::WindowsAndMessaging::{
             CURSOR_SHOWING, CURSORINFO, GetClientRect, GetClipCursor, GetCursorInfo,
-            GetForegroundWindow, ShowCursor,
+            GetForegroundWindow, SetCursorPos, ShowCursor,
         },
     };
 
@@ -64,11 +64,9 @@ mod imp {
         }
     }
 
-    /// Whether the cursor is confined to the foreground window's client area (None when
-    /// Windows will not say).
-    pub fn clipped_to_foreground() -> Option<bool> {
-        // SAFETY: plain Win32 queries on the foreground window and the clip rect, into local
-        // POINT/RECT values.
+    /// The foreground window's client area on screen.
+    fn foreground_client() -> Option<RECT> {
+        // SAFETY: plain Win32 queries on the foreground window, into local POINT/RECT values.
         unsafe {
             let window = GetForegroundWindow();
             if window.is_null() {
@@ -91,17 +89,47 @@ mod imp {
             {
                 return None;
             }
+            Some(RECT {
+                left: top_left.x,
+                top: top_left.y,
+                right: bottom_right.x,
+                bottom: bottom_right.y,
+            })
+        }
+    }
+
+    /// Whether the cursor is confined inside the foreground window's client area (None when
+    /// Windows will not say). winit's lock confines it to the one pixel under it, its
+    /// confinement to the whole area; an overlay that frees it leaves the whole desktop.
+    pub fn clipped_to_foreground() -> Option<bool> {
+        let client = foreground_client()?;
+        // SAFETY: GetClipCursor fills a local RECT.
+        let clip = unsafe {
             let mut clip: RECT = std::mem::zeroed();
             if GetClipCursor(&mut clip) == 0 {
                 return None;
             }
-            let near = |a: i32, b: i32| (a - b).abs() <= 1;
-            Some(
-                near(clip.left, top_left.x)
-                    && near(clip.top, top_left.y)
-                    && near(clip.right, bottom_right.x)
-                    && near(clip.bottom, bottom_right.y),
-            )
+            clip
+        };
+        Some(
+            clip.left >= client.left - 1
+                && clip.top >= client.top - 1
+                && clip.right <= client.right + 1
+                && clip.bottom <= client.bottom + 1,
+        )
+    }
+
+    /// Puts the cursor in the middle of the foreground window, so a lock taken next lands inside
+    /// it (winit locks the cursor where it stands).
+    pub fn center_in_foreground() {
+        if let Some(client) = foreground_client() {
+            // SAFETY: SetCursorPos only moves the cursor.
+            unsafe {
+                SetCursorPos(
+                    (client.left + client.right) / 2,
+                    (client.top + client.bottom) / 2,
+                );
+            }
         }
     }
 }
@@ -119,6 +147,10 @@ mod imp {
     pub fn clipped_to_foreground() -> Option<bool> {
         None
     }
+
+    pub fn center_in_foreground() {}
 }
 
-pub(super) use imp::{clipped_to_foreground, cursor_showing, hide_cursor, show_cursor};
+pub(super) use imp::{
+    center_in_foreground, clipped_to_foreground, cursor_showing, hide_cursor, show_cursor,
+};
