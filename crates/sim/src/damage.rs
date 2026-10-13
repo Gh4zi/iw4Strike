@@ -688,13 +688,16 @@ fn apply_cs_flash(world: &mut FrameWorld, origin: [f32; 3]) {
             flash.duration_ms,
             if fresh { "" } else { " (on top of the last)" }
         );
-        hits.push((target, flash, fresh));
+        hits.push((target, flash, fresh, weapon_iw4::cs::flash_arm(hold, fade)));
     }
-    for (target, flash, fresh) in hits {
+    for (target, flash, fresh, (arm_from, arm_until)) in hits {
         if let Some(ps) = world.player_mut(target) {
             if fresh {
                 ps.cs_flash_start_ms = now;
             }
+            // Every flash sets the arm afresh, a weaker one on top of a stronger one too.
+            ps.cs_flash_arm_from_ms = now + arm_from;
+            ps.cs_flash_arm_until_ms = now + arm_until;
             ps.cs_flash_duration_ms = flash.duration_ms;
             ps.cs_flash_end_ms = flash.end_ms;
             ps.cs_flash_alpha = flash.alpha;

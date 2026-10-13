@@ -1990,11 +1990,13 @@ pub struct CsGrenade {
     pub price: i32,
     /// How many a player may carry.
     pub carry: i32,
-    /// CS:S sound script entry played when it goes off, instead of the MW2 projectile's.
+    /// Sound script entry played when it goes off, instead of the MW2 projectile's: CS:GO's
+    /// when it is in, else CS:S's (both games name it the same).
     pub css_explode_sound: Option<&'static str>,
     /// CS 1.6 `sound/weapons` waves for the same, picked by the explosion.
     pub explode_sounds: &'static [&'static str],
-    /// CS:S sound script entry played when it bounces (CS:GO's `BounceSound` plays the same).
+    /// Sound script entry played when it bounces (`BounceSound`): CS:GO's when it is in, else
+    /// CS:S's.
     pub css_bounce_sound: &'static str,
     /// CS 1.6 `sound/weapons` waves for the same, picked by the bounce.
     pub bounce_sounds: &'static [&'static str],
@@ -2637,6 +2639,24 @@ pub fn flash_for(distance: f32, facing: f32, seen: f32) -> Option<(f32, f32)> {
         (0.25, 0.5)
     };
     Some((strength * hold * seen, strength * fade * seen))
+}
+
+/// When a flashed player's raised arm starts coming down and when it is down, in ms after the
+/// flash (`Blind`): from 0.45 of the hold, until 0.7 of the screen's fade (the fade over
+/// [`CS_FLASH_DURATION_DIVISOR`]); with that under 1.5 s the arm starts down a second sooner, so
+/// a short flash never pulls it all the way up. (CS:GO also pulls both in for a flash under full
+/// white, which a CS flash never is.)
+#[must_use]
+pub fn flash_arm(hold_s: f32, fade_s: f32) -> (i32, i32) {
+    let until = fade_s / CS_FLASH_DURATION_DIVISOR * 0.7;
+    let mut from = hold_s * 0.45;
+    if until < 1.5 {
+        from -= 1.0;
+    }
+    (
+        libm::roundf(from * 1000.0) as i32,
+        libm::roundf(until * 1000.0) as i32,
+    )
 }
 
 /// The screen lasts the flash's fade over this (`Blind`).

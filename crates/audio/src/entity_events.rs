@@ -789,9 +789,9 @@ fn grenade_contact(
     });
 }
 
-/// A Counter-Strike grenade bouncing with its own sound (CS rules only): CS:S's sound script
-/// entry when it is in the bank, else one of CS 1.6's waves (picked by `seed`, the same on every
-/// client).
+/// A Counter-Strike grenade bouncing with its own sound (CS rules only): CS:GO's sound script
+/// entry when it is in the bank, else CS:S's, else one of CS 1.6's waves (picked by `seed`, the
+/// same on every client).
 fn cs_grenade_bounce_alias(
     projectile: &str,
     seed: u32,
@@ -801,16 +801,16 @@ fn cs_grenade_bounce_alias(
         return None;
     }
     let grenade = weapon_iw4::cs::cs_grenade_for_projectile(projectile)?;
-    let css = format!(
-        "{}{}",
-        asset_audio::CSS_SOUND_PREFIX,
-        grenade.css_bounce_sound.to_ascii_lowercase()
-    );
+    let entry = |prefix: &str| format!("{prefix}{}", grenade.css_bounce_sound.to_ascii_lowercase());
     let goldsrc = (!grenade.bounce_sounds.is_empty()).then(|| {
         let wave = grenade.bounce_sounds[seed as usize % grenade.bounce_sounds.len()];
         format!("{}{wave}", asset_audio::CS_SOUND_PREFIX)
     });
-    core::iter::once(css)
-        .chain(goldsrc)
+    [
+        entry(asset_audio::CSGO_SOUND_PREFIX),
+        entry(asset_audio::CSS_SOUND_PREFIX),
+    ]
+    .into_iter()
+    .chain(goldsrc)
         .find(|alias| bank.has_alias(asset_core::AssetNamespace::Iw4, alias))
 }

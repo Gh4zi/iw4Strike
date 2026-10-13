@@ -203,6 +203,10 @@ pub struct PlayerState {
     pub cs_flash_duration_ms: i32,
     pub cs_flash_end_ms: i32,
     pub cs_flash_alpha: u32,
+    /// A flashed player's arm, raised over their eyes: when (server ms) it starts coming down
+    /// and when it is down (CS:GO `m_flFlashedAmountEaseOutStart`/`End`).
+    pub cs_flash_arm_from_ms: i32,
+    pub cs_flash_arm_until_ms: i32,
     /// CS guns with their silencer on, one bit per CS weapon index (`cs::silencer_bit`), and
     /// until when (server ms) a silencer is being attached or detached (no firing).
     pub cs_silencers: u32,
@@ -506,6 +510,8 @@ impl PlayerState {
         cs_flash_duration_ms: 0,
         cs_flash_end_ms: 0,
         cs_flash_alpha: 0,
+        cs_flash_arm_from_ms: 0,
+        cs_flash_arm_until_ms: 0,
         cs_silencers: 0,
         cs_adjust_ms: 0,
         cs_burst_modes: 0,

@@ -35,6 +35,7 @@ const WEAPON_ACTION_RECROUCH: usize = 2;
 const JUMP_OR_FALL: usize = 4;
 const LAND_OR_CLIMB: usize = 5;
 const MOVE: usize = 6;
+const FLASHED: usize = 9;
 const ALIVELOOP: usize = 11;
 const LEAN: usize = 12;
 const LAYER_COUNT: usize = 13;
@@ -278,6 +279,9 @@ pub struct Input {
     pub scoped: bool,
     pub max_speed: f32,
     pub class: &'static str,
+    /// Now, and when a flash's raised arm starts down and is down (server ms).
+    pub time_ms: i32,
+    pub flash_arm_ms: (i32, i32),
 }
 
 /// Something the player did that starts an animation (`PlayerAnimEvent_t`).
@@ -350,6 +354,8 @@ pub struct AnimState {
     pub seen_silencers: u32,
     /// The weapon class the idle loop was chosen for.
     pub alive_class: &'static str,
+    /// The flashed reaction is up (`m_bFlashed`).
+    pub flashed: bool,
 }
 
 impl AnimState {
@@ -405,6 +411,7 @@ impl AnimState {
             seen_grenade: 0,
             seen_silencers: 0,
             alive_class: "",
+            flashed: false,
         }
     }
 
@@ -569,6 +576,7 @@ impl AnimState {
         self.weapon_action(animset);
         self.movement(animset, input);
         self.alive_loop(animset);
+        self.flashed_reaction(animset, input);
         self.lean(animset, input);
         self.first_run = false;
     }
@@ -962,6 +970,29 @@ impl AnimState {
 
     /// The animation set's local transforms for this frame: the rest pose with every layer
     /// played over it in order.
+    /// `SetUpFlashedReaction`: a flashed player shields their eyes, the arm held up until the
+    /// flash's ease-out starts, then lowered (a spline) until it ends.
+    fn flashed_reaction(&mut self, animset: &Animset, input: &Input) {
+        let (from, until) = input.flash_arm_ms;
+        if until < input.time_ms {
+            self.set_weight(FLASHED, 0.0);
+            self.flashed = false;
+            return;
+        }
+        if !self.flashed {
+            let seq = self.select(animset, "ACT_CSGO_FLASHBANG_REACTION");
+            self.set_sequence(animset, FLASHED, seq);
+            self.flashed = true;
+        }
+        let amount = remap_clamped(input.time_ms as f32, from as f32, until as f32, 1.0, 0.0);
+        self.layers[FLASHED].cycle = 0.0;
+        self.layers[FLASHED].rate = 0.0;
+        let previous = self.layers[FLASHED].weight;
+        let weight = amount * amount * (3.0 - 2.0 * amount);
+        self.set_weight(FLASHED, weight);
+        self.layers[FLASHED].weight_rate = if weight >= previous { 0.0 } else { previous };
+    }
+
     pub fn pose(&self, animset: &Animset, out: &mut Vec<BoneFrame>) {
         out.clear();
         out.extend_from_slice(&animset.model.rest);
@@ -1016,6 +1047,9 @@ impl AnimState {
             scoped: ps.cs_zoom != 0,
             max_speed,
             class,
+            // The player's own clock: the time of the last command they ran.
+            time_ms: ps.command_time,
+            flash_arm_ms: (ps.cs_flash_arm_from_ms, ps.cs_flash_arm_until_ms),
         };
         let mut events = Vec::new();
         if !self.first_run {

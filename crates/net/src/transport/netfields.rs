@@ -402,6 +402,8 @@ ps_netfields! {
     cs_flash_duration_ms: i32 = Replication::Replicated, Validation::Exact;
     cs_flash_end_ms: i32 = Replication::Replicated, Validation::Exact;
     cs_flash_alpha: u32 = Replication::Replicated, Validation::Exact;
+    cs_flash_arm_from_ms: i32 = Replication::Replicated, Validation::Exact;
+    cs_flash_arm_until_ms: i32 = Replication::Replicated, Validation::Exact;
     cs_silencers: u32 = Replication::Replicated, Validation::Exact;
     cs_adjust_ms: i32 = Replication::Replicated, Validation::Exact;
     cs_burst_modes: u32 = Replication::Replicated, Validation::Exact;

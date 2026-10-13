@@ -2742,22 +2742,27 @@ fn explosion(
     sync_combat_dump(&cursor, &mut combat);
 }
 
-/// A Counter-Strike grenade going off with its own sound: CS:S's sound script entry when it is in
-/// the bank, else one of CS 1.6's waves (picked by `seed`, the same on every client).
+/// A Counter-Strike grenade going off with its own sound: CS:GO's sound script entry when it is in
+/// the bank, else CS:S's, else one of CS 1.6's waves (picked by `seed`, the same on every
+/// client).
 fn cs_grenade_explosion_alias(
     projectile: &str,
     seed: u32,
     bank: &asset_audio::SoundCatalog,
 ) -> Option<String> {
     let grenade = weapon_iw4::cs::cs_grenade_for_projectile(projectile)?;
-    let css = grenade
-        .css_explode_sound
-        .map(|name| format!("{}{}", asset_audio::CSS_SOUND_PREFIX, name.to_ascii_lowercase()));
+    let entry = |prefix: &str| {
+        grenade
+            .css_explode_sound
+            .map(|name| format!("{prefix}{}", name.to_ascii_lowercase()))
+    };
     let goldsrc = (!grenade.explode_sounds.is_empty()).then(|| {
         let wave = grenade.explode_sounds[seed as usize % grenade.explode_sounds.len()];
         format!("{}{wave}", asset_audio::CS_SOUND_PREFIX)
     });
-    css.into_iter()
+    entry(asset_audio::CSGO_SOUND_PREFIX)
+        .into_iter()
+        .chain(entry(asset_audio::CSS_SOUND_PREFIX))
         .chain(goldsrc)
         .find(|alias| bank.has_alias(asset_core::AssetNamespace::Iw4, alias))
 }
