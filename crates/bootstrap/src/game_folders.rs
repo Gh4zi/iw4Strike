@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use asset_transport::{GameFolder, GamesRoot, game_paths};
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::{EnabledButtons, WindowResolution};
 use bevy::winit::{UpdateMode, WinitSettings};
@@ -67,7 +68,13 @@ pub(crate) fn run(games: &GamesRoot, artifacts: &Path, opened: Opened, cheats: s
     app.add_systems(Startup, spawn_window);
     app.add_systems(
         Update,
-        (press_buttons, poll_picker, refresh.run_if(resource_changed::<Folders>)).chain(),
+        (
+            press_buttons,
+            poll_picker,
+            refresh.run_if(resource_changed::<Folders>),
+            scroll_list,
+        )
+            .chain(),
     );
     app.run();
 
@@ -90,7 +97,9 @@ fn relaunch(cheats: sim::HostCheats) {
 }
 
 const WIDTH: u32 = 860;
-const HEIGHT: u32 = 715;
+/// Fits a 1024x768 monitor with its taskbar and title bar. The folder list scrolls when it does
+/// not fit, so Play and Quit stay on screen.
+const HEIGHT: u32 = 680;
 
 // Valve's VGUI "Steam" scheme.
 const BACKGROUND: Color = Color::srgb_u8(62, 70, 55);
@@ -573,6 +582,10 @@ struct UseMark(GameFolder);
 #[derive(Component)]
 struct BannerText;
 
+/// The game folder panels, scrolled by the mouse wheel when they are taller than the window.
+#[derive(Component)]
+struct FolderList;
+
 fn font_bytes(name: &str) -> Option<Vec<u8>> {
     let dir = std::env::var_os("WINDIR")
         .map(PathBuf::from)
@@ -707,8 +720,8 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
-            padding: UiRect::all(Val::Px(22.0)),
-            row_gap: Val::Px(12.0),
+            padding: UiRect::all(Val::Px(16.0)),
+            row_gap: Val::Px(8.0),
             ..default()
         })
         .with_children(|root| {
@@ -724,87 +737,99 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
             });
             root.spawn((text(&regular, 14.0, TEXT, ""), BannerText));
 
-            for folder in GameFolder::ALL {
-                let (border, border_color) = bevel(1.0);
-                root.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        padding: UiRect::axes(Val::Px(14.0), Val::Px(10.0)),
-                        row_gap: Val::Px(6.0),
-                        border,
-                        ..default()
-                    },
-                    border_color,
-                    BackgroundColor(PANEL),
-                ))
-                .with_children(|panel| {
-                    let tag = match folder {
-                        GameFolder::Mw2 => "required",
-                        GameFolder::Css => "recommended",
-                        GameFolder::Cs2
-                        | GameFolder::Csgo
-                        | GameFolder::Cz
-                        | GameFolder::Cs16 => "optional",
-                    };
-                    panel
-                        .spawn(Node {
-                            column_gap: Val::Px(8.0),
-                            align_items: AlignItems::FlexEnd,
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    min_height: Val::Px(0.0),
+                    row_gap: Val::Px(6.0),
+                    overflow: Overflow::scroll_y(),
+                    ..default()
+                },
+                ScrollPosition::default(),
+                FolderList,
+            ))
+            .with_children(|list| {
+                for folder in GameFolder::ALL {
+                    let (border, border_color) = bevel(1.0);
+                    list.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            flex_shrink: 0.0,
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+                            row_gap: Val::Px(4.0),
+                            border,
                             ..default()
-                        })
-                        .with_children(|title| {
-                            title.spawn(text(&bold, 15.0, TEXT, folder.title()));
-                            title.spawn(text(&regular, 12.0, DIM, tag));
-                        });
-                    panel
-                        .spawn(Node {
-                            column_gap: Val::Px(8.0),
-                            align_items: AlignItems::Center,
-                            ..default()
-                        })
-                        .with_children(|row| {
-                            if folder != GameFolder::Mw2 {
-                                use_box(row, &bold, &regular, folder);
-                            }
-                            let (border, _) = bevel(1.0);
-                            row.spawn((
-                                Node {
-                                    flex_grow: 1.0,
-                                    height: Val::Px(30.0),
-                                    padding: UiRect::horizontal(Val::Px(8.0)),
-                                    align_items: AlignItems::Center,
-                                    overflow: Overflow::clip(),
-                                    border,
-                                    ..default()
-                                },
-                                BorderColor {
-                                    top: BORDER_DARK,
-                                    left: BORDER_DARK,
-                                    bottom: BORDER_LIGHT,
-                                    right: BORDER_LIGHT,
-                                },
-                                BackgroundColor(FIELD),
-                            ))
-                            .with_children(|field| {
-                                field.spawn((
-                                    text(&regular, 13.0, TEXT, ""),
-                                    TextLayout::no_wrap(),
-                                    PathText(folder),
-                                ));
+                        },
+                        border_color,
+                        BackgroundColor(PANEL),
+                    ))
+                    .with_children(|panel| {
+                        let tag = match folder {
+                            GameFolder::Mw2 => "required",
+                            GameFolder::Css => "recommended",
+                            GameFolder::Cs2
+                            | GameFolder::Csgo
+                            | GameFolder::Cz
+                            | GameFolder::Cs16 => "optional",
+                        };
+                        panel
+                            .spawn(Node {
+                                column_gap: Val::Px(8.0),
+                                align_items: AlignItems::FlexEnd,
+                                ..default()
+                            })
+                            .with_children(|title| {
+                                title.spawn(text(&bold, 15.0, TEXT, folder.title()));
+                                title.spawn(text(&regular, 12.0, DIM, tag));
                             });
-                            button(row, &regular, "Browse...", Action::Browse(folder), 96.0);
-                            button(row, &regular, "Clear", Action::Clear(folder), 70.0);
-                        });
-                    panel.spawn((text(&regular, 12.0, DIM, ""), StatusText(folder)));
-                });
-            }
+                        panel
+                            .spawn(Node {
+                                column_gap: Val::Px(8.0),
+                                align_items: AlignItems::Center,
+                                ..default()
+                            })
+                            .with_children(|row| {
+                                if folder != GameFolder::Mw2 {
+                                    use_box(row, &bold, &regular, folder);
+                                }
+                                let (border, _) = bevel(1.0);
+                                row.spawn((
+                                    Node {
+                                        flex_grow: 1.0,
+                                        height: Val::Px(30.0),
+                                        padding: UiRect::horizontal(Val::Px(8.0)),
+                                        align_items: AlignItems::Center,
+                                        overflow: Overflow::clip(),
+                                        border,
+                                        ..default()
+                                    },
+                                    BorderColor {
+                                        top: BORDER_DARK,
+                                        left: BORDER_DARK,
+                                        bottom: BORDER_LIGHT,
+                                        right: BORDER_LIGHT,
+                                    },
+                                    BackgroundColor(FIELD),
+                                ))
+                                .with_children(|field| {
+                                    field.spawn((
+                                        text(&regular, 13.0, TEXT, ""),
+                                        TextLayout::no_wrap(),
+                                        PathText(folder),
+                                    ));
+                                });
+                                button(row, &regular, "Browse...", Action::Browse(folder), 96.0);
+                                button(row, &regular, "Clear", Action::Clear(folder), 70.0);
+                            });
+                        panel.spawn((text(&regular, 12.0, DIM, ""), StatusText(folder)));
+                    });
+                }
+            });
 
             root.spawn(Node {
-                flex_grow: 1.0,
-                ..default()
-            });
-            root.spawn(Node {
                 flex_direction: FlexDirection::Row,
+                flex_shrink: 0.0,
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,
                 column_gap: Val::Px(12.0),
@@ -838,6 +863,27 @@ fn spawn_window(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, folders
                     });
             });
         });
+}
+
+fn scroll_list(
+    mut wheels: MessageReader<MouseWheel>,
+    mut lists: Query<(&ComputedNode, &mut ScrollPosition), With<FolderList>>,
+) {
+    let pixels: f32 = wheels
+        .read()
+        .map(|wheel| match wheel.unit {
+            MouseScrollUnit::Line => wheel.y * 40.0,
+            MouseScrollUnit::Pixel => wheel.y,
+        })
+        .sum();
+    let Ok((list, mut position)) = lists.single_mut() else {
+        return;
+    };
+    let max = ((list.content_size().y - list.size().y) * list.inverse_scale_factor()).max(0.0);
+    let next = (position.y - pixels).clamp(0.0, max);
+    if next != position.y {
+        position.y = next;
+    }
 }
 
 fn press_buttons(
