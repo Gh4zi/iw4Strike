@@ -2354,11 +2354,18 @@ impl SimState {
                 poses.push(pose.clone());
                 continue;
             }
-            let (bones, shield_normal) = match self.player_hitvol_bones_cached(*id, &ps) {
-                Ok(bones) => bones,
-                Err(error) => {
-                    on_err(&error);
-                    (Vec::new(), None)
+            let csgo = self.csgo_hit_bodies.pose(*id);
+            // A CS:GO body is traced by its own hit boxes (`bullet_trace_filtered`), never by
+            // MW2's bones; posing those every tick for every player was ~15% of a fight's tick.
+            let (bones, shield_normal) = if csgo.is_some() {
+                (Vec::new(), None)
+            } else {
+                match self.player_hitvol_bones_cached(*id, &ps) {
+                    Ok(bones) => bones,
+                    Err(error) => {
+                        on_err(&error);
+                        (Vec::new(), None)
+                    }
                 }
             };
             poses.push(PlayerCollisionPose {
@@ -2369,7 +2376,7 @@ impl SimState {
                 life_sequence: meta.life_sequence,
                 hit_volume: HitVolumeKind::Standing,
                 bones,
-                csgo: self.csgo_hit_bodies.pose(*id),
+                csgo,
                 viewangles: ps.viewangles,
                 shield: meta.shield,
                 shield_normal,

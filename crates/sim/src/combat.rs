@@ -2809,7 +2809,9 @@ fn player_representation(
         return PlayerCollisionRepresentation::StandingAabbV1;
     };
     match poses.iter().find(|pose| pose.client == client) {
-        Some(pose) if !pose.bones.is_empty() => PlayerCollisionRepresentation::PosedBonesV1,
+        Some(pose) if !pose.bones.is_empty() || pose.csgo.is_some() => {
+            PlayerCollisionRepresentation::PosedBonesV1
+        }
         _ => PlayerCollisionRepresentation::StandingAabbV1,
     }
 }
