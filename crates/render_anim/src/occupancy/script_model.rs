@@ -594,15 +594,22 @@ fn pose_script_models(
         .map(|(xf, _, _)| xf.translation().to_array());
     let skinned_ramp = lod_skinned.args();
     for (entity, owner, transform, visibility) in &owners {
+        let owner_id = owner
+            .authority_owner
+            .and_then(|owner| owner.script_model())
+            .map(|id| id.to_wire());
+        // Every shown owner's DObj stays composed, posed this frame or not: the publish before
+        // this keeps them all, and dropping one here had it built again every frame.
+        if *visibility != Visibility::Hidden
+            && let Some(id) = owner_id
+        {
+            live_ids.insert(id);
+        }
         if is_weapon_camera_vehicle(owner, &presented, local.0)
             || crate::occupancy::cs_world_model::replaces_bomb_model(&owner.current_model.0)
         {
             continue;
         }
-        let owner_id = owner
-            .authority_owner
-            .and_then(|owner| owner.script_model())
-            .map(|id| id.to_wire());
         let focused_owner_id = focus_id.filter(|wanted| owner_id == Some(*wanted));
         if let Some(id) = focused_owner_id {
             focus.refuse(id, &owner.current_model.0, "unclassified_branch");
@@ -669,7 +676,6 @@ fn pose_script_models(
                 persist.by_id.remove(&id);
                 continue;
             }
-            live_ids.insert(id);
             let request = owner.dobj_state.resolve_request(|name| {
                 xanims
                     .as_ref()?
