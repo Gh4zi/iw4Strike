@@ -584,6 +584,18 @@ pub(crate) struct CsgoPanorama {
 /// Reads CS:GO's HUD; `None` without CS:GO (or its packed UI and fonts).
 pub(crate) fn load(fonts: &mut Assets<Font>) -> Option<CsgoPanorama> {
     let files = panorama::Files::open()?;
+    // With the art the layouts name, what this HUD and the scoreboard set themselves.
+    files.prefetch_images(&[
+        "file://{images}/icons/ui/elimination.svg",
+        "file://{images}/hud/teamcounter/teamcounter_playercolor.png",
+        "file://{images}/icons/ui/ping_4.svg",
+        "file://{images}/icons/ui/competitive.svg",
+        "file://{images}/icons/ui/bomb.svg",
+        "file://{images}/icons/ui/timer.svg",
+        "file://{images}/icons/ui/bomb_c4.svg",
+        "file://{images}/icons/t_logo.svg",
+        "file://{images}/icons/ct_logo.svg",
+    ]);
     let font_set = files.fonts(fonts)?;
     let mut doc = panorama::Doc::load(&files, HUD_LAYOUT, sublayout)?;
     // `cl_hud_color 0`, the default HUD colour.

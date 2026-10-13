@@ -115,24 +115,65 @@ impl Vpk {
     /// The bytes of `path`, read from whichever archive holds them.
     pub fn read(&self, path: &str) -> Option<Vec<u8>> {
         let entry = self.entries.get(&normalize(path))?;
-        let mut out = entry.preload.clone();
         if entry.length == 0 {
-            return Some(out);
+            return Some(entry.preload.clone());
         }
-        let (file, offset) = if entry.archive == IN_DIRECTORY {
-            (self.dir.clone(), self.data_start + u64::from(entry.offset))
-        } else {
-            let name = self.dir.file_name()?.to_str()?;
-            let archive = name.replace("_dir.vpk", &format!("_{:03}.vpk", entry.archive));
-            (self.dir.with_file_name(archive), u64::from(entry.offset))
-        };
-        let mut f = File::open(file).ok()?;
-        f.seek(SeekFrom::Start(offset)).ok()?;
-        let start = out.len();
-        out.resize(start + entry.length as usize, 0);
-        f.read_exact(&mut out[start..]).ok()?;
-        Some(out)
+        let (file, offset) = self.located(entry)?;
+        read_entry(&mut File::open(file).ok()?, entry, offset)
     }
+
+    /// The bytes of each of `paths` the pack holds, by path. Read in archive order with one open
+    /// per archive and ascending offsets: on a hard drive that is one sweep, where `read` per file
+    /// costs an open and a seek each (5-20 ms).
+    pub fn read_sorted(&self, paths: &[String]) -> Vec<(String, Vec<u8>)> {
+        let mut wanted: Vec<(&str, &Entry)> = paths
+            .iter()
+            .filter_map(|path| self.entries.get_key_value(&normalize(path)))
+            .map(|(path, entry)| (path.as_str(), entry))
+            .collect();
+        wanted.sort_by_key(|(path, entry)| (entry.archive, entry.offset, *path));
+        wanted.dedup_by_key(|(path, _)| *path);
+        let mut open: Option<(u16, File)> = None;
+        let mut out = Vec::with_capacity(wanted.len());
+        for (path, entry) in wanted {
+            if entry.length == 0 {
+                out.push((path.to_owned(), entry.preload.clone()));
+                continue;
+            }
+            let Some((file, offset)) = self.located(entry) else {
+                continue;
+            };
+            if open.as_ref().is_none_or(|(archive, _)| *archive != entry.archive) {
+                open = File::open(file).ok().map(|f| (entry.archive, f));
+            }
+            let Some((_, f)) = open.as_mut() else {
+                continue;
+            };
+            if let Some(bytes) = read_entry(f, entry, offset) {
+                out.push((path.to_owned(), bytes));
+            }
+        }
+        out
+    }
+
+    /// The file holding `entry`'s bytes and where they start in it.
+    fn located(&self, entry: &Entry) -> Option<(PathBuf, u64)> {
+        if entry.archive == IN_DIRECTORY {
+            return Some((self.dir.clone(), self.data_start + u64::from(entry.offset)));
+        }
+        let name = self.dir.file_name()?.to_str()?;
+        let archive = name.replace("_dir.vpk", &format!("_{:03}.vpk", entry.archive));
+        Some((self.dir.with_file_name(archive), u64::from(entry.offset)))
+    }
+}
+
+fn read_entry(f: &mut File, entry: &Entry, offset: u64) -> Option<Vec<u8>> {
+    let mut out = entry.preload.clone();
+    f.seek(SeekFrom::Start(offset)).ok()?;
+    let start = out.len();
+    out.resize(start + entry.length as usize, 0);
+    f.read_exact(&mut out[start..]).ok()?;
+    Some(out)
 }
 
 fn normalize(path: &str) -> String {

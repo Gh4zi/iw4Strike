@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use bevy::asset::{Assets, Handle, RenderAssetUsages};
 use bevy::image::{CompressedImageFormats, Image, ImageSampler, ImageType};
@@ -158,7 +159,9 @@ impl Fonts {
 /// A CS:GO install's Panorama files.
 pub struct Files {
     code: HashMap<String, Vec<u8>>,
-    pak: mdl_source::Vpk,
+    pak: Arc<mdl_source::Vpk>,
+    /// Art read ahead by `prefetch_images`, by pak path.
+    prefetched: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     dir: PathBuf,
     tokens: HashMap<String, String>,
     /// Rasterised art by path and pixel size; `None` when it could not be read.
@@ -172,7 +175,7 @@ impl Files {
         let pak = asset_transport::find_csgo_pak()?;
         let dir = pak.parent()?.to_path_buf();
         let code = read_code_pack(&dir.join("panorama").join("code.pbin"))?;
-        let pak = mdl_source::Vpk::open(&pak).ok()?;
+        let pak = Arc::new(mdl_source::Vpk::open(&pak).ok()?);
         let tokens = std::fs::read(dir.join("resource").join("csgo_english.txt"))
             .map(|bytes| read_tokens(&decode_text(&bytes)))
             .unwrap_or_default();
@@ -186,6 +189,7 @@ impl Files {
         Some(Self {
             code,
             pak,
+            prefetched: Arc::default(),
             dir,
             tokens,
             images: HashMap::new(),
@@ -239,6 +243,66 @@ impl Files {
         s.replace('\\', "/").to_ascii_lowercase()
     }
 
+    /// Reads ahead, on a thread of its own, the art a match may show for the first time: every
+    /// image the HUD and scoreboard layouts, styles and scripts name, every equipment icon (kill
+    /// feed, buy menu) and the `extra` sources the game sets itself. A first read from pak01 is an
+    /// open and a seek (5-25 ms on a hard drive), and it landed on the frame that first showed
+    /// the image.
+    pub fn prefetch_images(&self, extra: &[&str]) {
+        let mut paths: Vec<String> = extra.iter().map(|src| Self::image_path(src)).collect();
+        for (name, bytes) in &self.code {
+            if !(name.contains("/hud/") || name.contains("scoreboard")) {
+                continue;
+            }
+            let text = decode_text(bytes);
+            for (at, _) in text.match_indices("file://{images}/") {
+                let rest = &text[at..];
+                let end = rest
+                    .find(|c: char| matches!(c, '"' | '\'' | ')' | ';' | ',') || c.is_whitespace())
+                    .unwrap_or(rest.len());
+                paths.push(Self::image_path(&rest[..end]));
+            }
+        }
+        paths.extend(
+            self.pak
+                .paths()
+                .filter(|path| path.starts_with("materials/panorama/images/icons/equipment/"))
+                .map(str::to_owned),
+        );
+        // `read_image` takes a `.png` or `.svg` for a source the layout names `.vtf`.
+        let alternates: Vec<String> = paths
+            .iter()
+            .filter_map(|path| path.rsplit_once('.'))
+            .flat_map(|(stem, _)| [format!("{stem}.png"), format!("{stem}.svg")])
+            .collect();
+        paths.extend(alternates);
+        paths.sort_unstable();
+        paths.dedup();
+        let pak = Arc::clone(&self.pak);
+        let store = Arc::clone(&self.prefetched);
+        let spawned = std::thread::Builder::new()
+            .name("panorama-prefetch".into())
+            .spawn(move || {
+                let started = std::time::Instant::now();
+                let read = pak.read_sorted(&paths);
+                let bytes: usize = read.iter().map(|(_, b)| b.len()).sum();
+                let n = read.len();
+                store
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .extend(read);
+                diag::info!(
+                    World,
+                    "panorama: read ahead {n} images ({} KiB) in {:.0} ms",
+                    bytes / 1024,
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+            });
+        if let Err(error) = spawned {
+            diag::warn!(World, "panorama: no read-ahead thread: {error}");
+        }
+    }
+
     /// The image `src` as a texture, an SVG drawn at `size` pixels (or its own size when 0); its
     /// pixel size. `None` when it is not in the pak or cannot be read.
     pub fn image(
@@ -253,9 +317,15 @@ impl Files {
         if let Some(found) = self.images.get(&key) {
             return found.clone();
         }
+        let started = std::time::Instant::now();
         let found = self.read_image(&path, size, images);
         if found.is_none() {
             diag::debug!(World, "panorama: no image {path}");
+        }
+        // Read from the pak and drawn on the frame that first shows it.
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        if ms > 2.0 {
+            diag::info!(World, "panorama: image {path} {size:?} took {ms:.1} ms");
         }
         self.images.insert(key, found.clone());
         found
@@ -274,9 +344,23 @@ impl Files {
             format!("{stem}.png"),
             format!("{stem}.svg"),
         ];
-        let (path, bytes) = candidates
-            .iter()
-            .find_map(|p| self.pak.read(p).map(|b| (p.clone(), b)))?;
+        let mut prefetched = self.prefetched.lock().unwrap_or_else(|poison| poison.into_inner());
+        // A raster decodes once (`image` caches it whatever the size); an SVG may be drawn again
+        // at another size.
+        let ahead = candidates.iter().find_map(|p| {
+            if p.ends_with(".svg") {
+                prefetched.get(p).map(|b| (p.clone(), b.clone()))
+            } else {
+                prefetched.remove(p).map(|b| (p.clone(), b))
+            }
+        });
+        drop(prefetched);
+        let (path, bytes) = match ahead {
+            Some(found) => found,
+            None => candidates
+                .iter()
+                .find_map(|p| self.pak.read(p).map(|b| (p.clone(), b)))?,
+        };
         if path.ends_with(".svg") {
             return Some(raster_svg(&bytes, size, images)?);
         }
