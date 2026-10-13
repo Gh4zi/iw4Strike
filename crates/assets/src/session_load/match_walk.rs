@@ -449,24 +449,27 @@ pub(super) async fn walk_prepared_match(
     let mut scene_names = scripts.asset_names();
     scene_names.extend(facts.objective_visuals.model_names().map(str::to_owned));
     common_scene_models.retain_names(&scene_names);
-    if let Some((_, world)) = &cs_weapon_models {
+    if let Some((_, kept_world)) = &cs_weapon_models {
         // The MW2 scripts precache every weapon, which kept every MW2 world gun in the scene
         // catalog too (~300 MB of meshes); the CS guns' own stay. So do the killstreak models,
-        // and CS gives no killstreaks.
+        // and CS gives no killstreaks. A model the map itself places stays: Storm's and Strike's
+        // sentry gun props are the killstreak's own model, borrowed from common_mp.
+        let placed = |name: &str| world.map_xmodel_scene_assets.get_name(name).is_some();
         let before = common_scene_models.len();
         let guns: std::collections::BTreeSet<String> = common_scene_models
             .iter()
             .map(|(key, _)| key.0.as_str())
             .filter(|name| {
                 asset_model::model_kind(name) == Some(asset_model::ModelKind::WorldWeapon)
-                    && !world.contains(*name)
+                    && !kept_world.contains(*name)
+                    && !placed(name)
             })
             .map(str::to_owned)
             .collect();
         let streaks: std::collections::BTreeSet<String> = common_scene_models
             .iter()
             .map(|(key, _)| key.0.as_str())
-            .filter(|name| is_mw2_killstreak_model(name))
+            .filter(|name| is_mw2_killstreak_model(name) && !placed(name))
             .map(str::to_owned)
             .collect();
         scene_names.retain(|name| !guns.contains(name) && !streaks.contains(name));
