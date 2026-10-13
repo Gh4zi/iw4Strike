@@ -1,6 +1,8 @@
 use crate::frame::FrameWorld;
 use crate::world::ClientId;
-use entity_iw4::{TR_GRAVITY, TR_INTERPOLATE, Trajectory, evaluate_trajectory};
+use entity_iw4::{
+    TR_GRAVITY, TR_INTERPOLATE, Trajectory, evaluate_trajectory, evaluate_trajectory_delta,
+};
 use playerstate_iw4::{
     AnimPair, ENTITYNUM_NONE, LINK_FLAGS_WEAPON_VIEW_ONLY, MAX_CLIENT_CORPSES,
     PLAYER_CORPSE_ENTITY_BASE, PlayerState,
@@ -209,11 +211,8 @@ fn corpse_land_angles(yaw: f32, normal: [f32; 3]) -> [f32; 3] {
 }
 
 fn clamp_clone_tr_delta(mut delta: [f32; 3]) -> [f32; 3] {
-    if delta[0] > G_CLONE_PLAYER_MAX_VELOCITY {
-        delta[0] = G_CLONE_PLAYER_MAX_VELOCITY;
-    }
-    if delta[1] > G_CLONE_PLAYER_MAX_VELOCITY {
-        delta[1] = G_CLONE_PLAYER_MAX_VELOCITY;
+    for speed in &mut delta[..2] {
+        *speed = speed.clamp(-G_CLONE_PLAYER_MAX_VELOCITY, G_CLONE_PLAYER_MAX_VELOCITY);
     }
     delta
 }
@@ -224,7 +223,9 @@ const CORPSE_ANIM_AXIS_Y_SCALE: f32 = -1.0;
 
 const CORPSE_GROUND_PROBE_DROP: f32 = 1.0;
 
-const CORPSE_ANIM_DELTA_TO_VELOCITY: f32 = 20.0;
+const CORPSE_STEP_DOWN: f32 = 18.0;
+
+const CORPSE_WALL_SLIDE_GAP: f32 = 0.125;
 
 const CORPSE_UNSTICK_Z_LIFT: f32 = 32.0;
 
@@ -245,107 +246,208 @@ pub(crate) fn phase_run_corpse_move(world: &mut FrameWorld, time_ms: i32) {
         if !slot.occupied {
             continue;
         }
-        let ragdoll = is_ragdoll_tr_type(slot.tr_type);
-
-        let anim_delta = world
-            .corpse_dobj_tree_delta(slot.entnum, crate::MATCH_TICK_MS as i32)
-            .filter(|d| {
-                d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > CORPSE_ANIM_DELTA_LEN_SQ_MIN
-                    && (!slot.falling || !ragdoll)
-            });
-        if !slot.falling && anim_delta.is_none() {
-            continue;
-        }
-
-        let mut desired = evaluate_trajectory(&slot.trajectory(), time_ms);
-        let world_delta = anim_delta.map(|delta| corpse_anim_world_delta(slot.viewangles, delta));
-        if let Some(world_delta) = world_delta {
-            for axis in 0..3 {
-                desired[axis] += world_delta[axis];
-            }
-        }
-
-        let hit = world.trace_clip(
-            slot.origin,
-            desired,
-            PLAYER_MINS,
-            PLAYER_MAXS,
-            MASK_PLAYER_SOLID,
-        );
-        let mut fraction = hit.fraction;
-        let endpos = if fraction >= 1.0 { desired } else { hit.endpos };
-        world.corpses_mut().slots[i].origin = endpos;
-        if hit.startsolid != 0 {
-            fraction = 0.0;
-        }
-
-        if fraction >= 1.0 {
-            let Some(world_delta) = world_delta else {
-                continue;
-            };
-
-            {
-                let slot = &mut world.corpses_mut().slots[i];
-                slot.tr_type = if ragdoll {
-                    TR_RAGDOLL_SETTLED
-                } else {
-                    TR_INTERPOLATE
-                };
-                slot.tr_base = endpos;
-                slot.tr_time = 0;
-                slot.tr_duration = 0;
-                slot.tr_delta = [0.0; 3];
-            }
-            if ragdoll {
-                let mut probe = desired;
-                probe[2] -= CORPSE_GROUND_PROBE_DROP;
-                let ground =
-                    world.trace_clip(endpos, probe, PLAYER_MINS, PLAYER_MAXS, MASK_PLAYER_SOLID);
-                if ground.fraction < 1.0 || ground.startsolid != 0 {
-                    let slot = &mut world.corpses_mut().slots[i];
-                    slot.falling = true;
-                    let mut vel = slot.tr_delta;
-                    for axis in 0..3 {
-                        vel[axis] = (vel[axis] + world_delta[axis]) * CORPSE_ANIM_DELTA_TO_VELOCITY;
-                    }
-                    slot.tr_delta = vel;
-                    slot.tr_type = TR_BOUNCE_GRAVITY;
-                    slot.tr_time = time_ms;
-                    slot.tr_duration = 0;
-                    continue;
-                }
-            }
-            world.corpses_mut().slots[i].falling = false;
-            continue;
-        }
-
-        if !slot.falling {
-            continue;
-        }
-
-        if hit.allsolid != 0 {
-            let mut lifted = world.corpses().slots[i].origin;
-            lifted[2] += CORPSE_UNSTICK_Z_LIFT;
-            let retry = world.trace_clip(
-                lifted,
-                desired,
-                PLAYER_MINS,
-                PLAYER_MAXS,
-                MASK_PLAYER_SOLID & !CORPSE_UNSTICK_CLIPMASK_DROP,
-            );
-            if retry.allsolid == 0 {
-                let f = retry.fraction;
-                world.corpses_mut().slots[i].origin = [
-                    lifted[0] + (desired[0] - lifted[0]) * f,
-                    lifted[1] + (desired[1] - lifted[1]) * f,
-                    lifted[2] + (desired[2] - lifted[2]) * f,
-                ];
-            }
-        }
-        corpse_land(world, i, hit, time_ms);
+        let anim_delta = world.corpse_dobj_tree_delta(slot.entnum, crate::MATCH_TICK_MS as i32);
+        let frame = &*world;
+        let stepped = step_corpse(slot, anim_delta, time_ms, |start, end, mask| {
+            frame.trace_clip(start, end, PLAYER_MINS, PLAYER_MAXS, mask)
+        });
+        world.corpses_mut().slots[i] = stepped;
     }
     let live = world.corpses().entnums();
     world.corpse_dobj_tree_retain(&live);
+}
+
+fn step_corpse(
+    mut slot: PlayerCorpseSlot,
+    anim_delta: Option<[f32; 3]>,
+    time_ms: i32,
+    mut trace: impl FnMut([f32; 3], [f32; 3], u32) -> trace_iw4::Trace,
+) -> PlayerCorpseSlot {
+    let was_falling = slot.falling;
+    let ragdoll = is_ragdoll_tr_type(slot.tr_type);
+    let anim_delta = anim_delta.filter(|d| {
+        d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > CORPSE_ANIM_DELTA_LEN_SQ_MIN
+            && (!was_falling || !ragdoll)
+    });
+    if !was_falling && anim_delta.is_none() {
+        return slot;
+    }
+    let world_delta = anim_delta.map(|delta| {
+        let step = corpse_anim_world_delta(slot.viewangles, delta);
+        if was_falling {
+            step
+        } else {
+            [step[0], step[1], 0.0]
+        }
+    });
+
+    let mut desired = evaluate_trajectory(&slot.trajectory(), time_ms);
+    if let Some(step) = world_delta {
+        for axis in 0..3 {
+            desired[axis] += step[axis];
+        }
+    }
+    let hit = trace(slot.origin, desired, MASK_PLAYER_SOLID);
+    let endpos = if hit.fraction >= 1.0 {
+        desired
+    } else {
+        hit.endpos
+    };
+    slot.origin = endpos;
+
+    if hit.fraction >= 1.0 && hit.startsolid == 0 {
+        let Some(step) = world_delta else {
+            return slot;
+        };
+        if was_falling {
+            for (base, step) in slot.tr_base.iter_mut().zip(step) {
+                *base += step;
+            }
+            return slot;
+        }
+        slot.tr_type = if ragdoll {
+            TR_RAGDOLL_SETTLED
+        } else {
+            TR_INTERPOLATE
+        };
+        slot.tr_base = endpos;
+        slot.tr_time = 0;
+        slot.tr_duration = 0;
+        slot.tr_delta = [0.0; 3];
+        follow_ground_or_fall(&mut slot, time_ms, ragdoll, &mut trace);
+        return slot;
+    }
+
+    if !was_falling {
+        slot.tr_base = endpos;
+        if hit.fraction > 0.0 && hit.startsolid == 0 {
+            follow_ground_or_fall(&mut slot, time_ms, ragdoll, &mut trace);
+        }
+        return slot;
+    }
+
+    if hit.allsolid != 0 {
+        let mut lifted = slot.origin;
+        lifted[2] += CORPSE_UNSTICK_Z_LIFT;
+        let retry = trace(
+            lifted,
+            desired,
+            MASK_PLAYER_SOLID & !CORPSE_UNSTICK_CLIPMASK_DROP,
+        );
+        if retry.allsolid == 0 {
+            let f = retry.fraction;
+            slot.origin = [
+                lifted[0] + (desired[0] - lifted[0]) * f,
+                lifted[1] + (desired[1] - lifted[1]) * f,
+                lifted[2] + (desired[2] - lifted[2]) * f,
+            ];
+        }
+        land_corpse(&mut slot, &hit);
+        return slot;
+    }
+    if hit.normal[2] <= 0.0 {
+        if hit.startsolid != 0 {
+            for axis in 0..3 {
+                slot.origin[axis] += hit.normal[axis];
+            }
+            slot.tr_base = slot.origin;
+            slot.tr_time = time_ms;
+            slot.tr_delta = [0.0; 3];
+            return slot;
+        }
+        slide_down_wall(&mut slot, &hit, desired, time_ms, &mut trace);
+        return slot;
+    }
+    land_corpse(&mut slot, &hit);
+    slot
+}
+
+fn follow_ground_or_fall(
+    slot: &mut PlayerCorpseSlot,
+    time_ms: i32,
+    ragdoll: bool,
+    trace: &mut impl FnMut([f32; 3], [f32; 3], u32) -> trace_iw4::Trace,
+) {
+    let at = slot.origin;
+    let mut probe = at;
+    probe[2] -= CORPSE_GROUND_PROBE_DROP;
+    let ground = trace(at, probe, MASK_PLAYER_SOLID);
+    if ground.fraction < 1.0 || ground.startsolid != 0 {
+        slot.falling = false;
+        return;
+    }
+    let mut step_probe = at;
+    step_probe[2] -= CORPSE_STEP_DOWN;
+    let step = trace(at, step_probe, MASK_PLAYER_SOLID);
+    if step.fraction < 1.0 && step.startsolid == 0 && step.allsolid == 0 && step.normal[2] > 0.0 {
+        slot.origin = step.endpos;
+        slot.tr_base = step.endpos;
+        slot.falling = false;
+        slot.ground_entity_num = i32::from(trace_iw4::trace_get_entity_hit_id(
+            step.hit_type,
+            step.hit_id,
+        ));
+        return;
+    }
+    slot.falling = true;
+    slot.tr_type = if ragdoll {
+        TR_BOUNCE_GRAVITY
+    } else {
+        TR_GRAVITY
+    };
+    slot.tr_base = at;
+    slot.tr_time = time_ms;
+    slot.tr_duration = 0;
+    slot.tr_delta = [0.0; 3];
+}
+
+fn slide_down_wall(
+    slot: &mut PlayerCorpseSlot,
+    hit: &trace_iw4::Trace,
+    desired: [f32; 3],
+    time_ms: i32,
+    trace: &mut impl FnMut([f32; 3], [f32; 3], u32) -> trace_iw4::Trace,
+) {
+    let n = hit.normal;
+    let mut start = hit.endpos;
+    let mut rest = [0.0f32; 3];
+    for axis in 0..3 {
+        start[axis] += n[axis] * CORPSE_WALL_SLIDE_GAP;
+        rest[axis] = desired[axis] - hit.endpos[axis];
+    }
+    let into_wall = dot(rest, n);
+    let mut end = start;
+    for axis in 0..3 {
+        end[axis] += rest[axis] - into_wall * n[axis];
+    }
+    let slid = trace(start, end, MASK_PLAYER_SOLID);
+    if slid.allsolid == 0 && slid.startsolid == 0 {
+        slot.origin = if slid.fraction >= 1.0 {
+            end
+        } else {
+            slid.endpos
+        };
+        if slid.fraction < 1.0 && slid.normal[2] > 0.0 {
+            land_corpse(slot, &slid);
+            return;
+        }
+    }
+    let speed = evaluate_trajectory_delta(&slot.trajectory(), time_ms);
+    let mut velocity = [0.0, 0.0, speed[2]];
+    let into = dot(velocity, n);
+    if into < 0.0 {
+        for axis in 0..3 {
+            velocity[axis] -= into * n[axis];
+        }
+    }
+    slot.tr_base = slot.origin;
+    slot.tr_time = time_ms;
+    slot.tr_duration = 0;
+    slot.tr_delta = velocity;
+}
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
 fn corpse_anim_world_delta(angles: [f32; 3], delta: [f32; 3]) -> [f32; 3] {
@@ -364,18 +466,9 @@ fn corpse_anim_world_delta(angles: [f32; 3], delta: [f32; 3]) -> [f32; 3] {
     out
 }
 
-fn corpse_land(world: &mut FrameWorld, i: usize, hit: trace_iw4::Trace, time_ms: i32) {
-    let slot = &mut world.corpses_mut().slots[i];
+fn land_corpse(slot: &mut PlayerCorpseSlot, hit: &trace_iw4::Trace) {
     let ragdoll = is_ragdoll_tr_type(slot.tr_type);
     slot.tr_delta = [0.0; 3];
-    if hit.allsolid == 0 && hit.normal[2] <= 0.0 {
-        for axis in 0..3 {
-            slot.origin[axis] += hit.normal[axis];
-        }
-        slot.tr_base = slot.origin;
-        slot.tr_time = time_ms;
-        return;
-    }
     slot.falling = false;
     slot.tr_type = if ragdoll {
         TR_RAGDOLL_SETTLED
