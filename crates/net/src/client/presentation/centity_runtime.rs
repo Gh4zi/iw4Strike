@@ -64,9 +64,11 @@ impl CEntityRuntime {
             return;
         };
         if !self.in_next_snap()
-            || !matches!(self.pose_e_type as i32, ET_PLAYER | ET_PLAYER_CORPSE)
-            || previous.pos.tr_type != TR_INTERPOLATE
-            || self.current.pos.tr_type != TR_INTERPOLATE
+            || !lerps_between_snapshots(
+                self.pose_e_type as i32,
+                previous.pos.tr_type,
+                self.current.pos.tr_type,
+            )
         {
             return;
         }
@@ -90,6 +92,19 @@ impl CEntityRuntime {
         self.current = lerp_from_entity_state(&self.next_state);
         self.pose_e_type = u8::try_from(self.next_state.e_type).unwrap_or(0);
     }
+}
+
+fn lerps_between_snapshots(e_type: i32, previous_tr_type: i32, current_tr_type: i32) -> bool {
+    match e_type {
+        ET_PLAYER_CORPSE => true,
+        ET_PLAYER => previous_tr_type == TR_INTERPOLATE && current_tr_type == TR_INTERPOLATE,
+        _ => false,
+    }
+}
+
+fn another_body(current: &EntityState, next: &EntityState) -> bool {
+    next.e_type == ET_PLAYER_CORPSE
+        && (current.time2 != next.time2 || current.client_num != next.client_num)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,8 +256,9 @@ pub fn apply_existing(rt: &mut CEntityRuntime, next: EntityState, at_time_ms: i3
     let was_in = rt.in_next_snap();
     let e_type_changed = rt.next_state.e_type != next.e_type;
     let teleport = (rt.next_state.e_flags ^ next.e_flags) & EFLAGS_TELEPORT != 0;
-    if !was_in || e_type_changed || teleport {
-        let new_entity = !was_in || e_type_changed;
+    let other_body = another_body(&rt.next_state, &next);
+    if !was_in || e_type_changed || teleport || other_body {
+        let new_entity = !was_in || e_type_changed || other_body;
         reset_entity(rt, next, at_time_ms, new_entity);
         return;
     }
