@@ -32,6 +32,7 @@ pub(crate) fn spawn(
     };
     world.unlink_player_area(id);
     world.client_meta_mut(id).shield = None;
+    let prev_health = world.player(id).map(|p| p.health);
     let mut ps = spawn_player_state(origin, angles);
     if let Some(max) = world
         .client_meta(id)
@@ -39,8 +40,12 @@ pub(crate) fn spawn(
         .filter(|&n| n > 0)
     {
         ps.max_health = max;
-        ps.health = max;
     }
+    ps.health = match sessionstate {
+        "playing" => ps.max_health,
+        "dead" | "intermission" => prev_health.unwrap_or(0),
+        _ => 0,
+    };
     if let Some(cmd) = world.old_cmd_angles(id) {
         ps.delta_angles = std::array::from_fn(|axis| angles[axis] - cmd[axis] as f32 * SHORT2ANGLE);
     }
