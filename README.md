@@ -521,6 +521,21 @@ Known issues with CS2 on:
 - [x] Better FPS: the server's game logic on its own thread, smaller network snapshots
 
 **In progress (next release)**
+- [x] Hit boxes like CS:GO: shots hit the CS:GO player model's own hit boxes (capsules for the
+  head, neck, body, arms and legs), posed by the same animation the players are drawn with and
+  rewound for lag compensation. Hit group order, damage (head ×4, stomach ×1.25, legs ×0.75)
+  and armor follow CS:GO. `sv_showhitboxes 1` draws the server's hit boxes
+- [x] Flashed players raise an arm over their eyes and lower it as the flash wears off
+- [x] Inspect like CS:GO: an inspect isn't restarted while it plays, the rare inspects are rare
+  (the Desert Eagle's spin, the knives' own), and holding reload puts the gun back
+- [x] CS:GO's sounds for the HE blast, the smoke pop, the flashbang and grenade bounces
+- [x] Fixed: some bots drawn with a second body inside them, and a body inside you after the
+  round (dead players spectating someone were drawn where that player stands)
+- [x] Fixed: the mouse cursor slipping onto another monitor during a match
+- [x] About 0.85 GB less RAM in a match (9 bots on Invasion: 7.98 → 7.14 GB). The MW2 weapon
+  models CS never draws are dropped, CS sounds and CS:GO animations are no longer kept twice,
+  and on PCs with less than 24 GB of RAM the shared MW2 data isn't kept through the match for
+  the next map (the next map loads about 2 seconds slower)
 - [ ] Blood and hit feedback like CS:GO:
   - [x] A blood spray where a bullet hits a player (MW2's, bigger for a kill or a headshot)
   - [x] Blood splattered on the walls and floor behind a player a bullet hits, as CS:GO does it
@@ -656,6 +671,11 @@ Known issues with CS2 on:
 - Deaths play MW2's death animations, not ragdolls, and bodies stay on the ground until MW2's
   corpse pool reuses them (see Physics in Planned).
 - No blood marks on the player who was hit yet (blood on the walls behind them is in).
+- While you are dead and watch a player in first person, that player's body is drawn around
+  the camera.
+- A match reserves about 7 GB of memory (about 5 GB shows in Task Manager). On a PC with 16 GB
+  of RAM or less, with a browser, Discord and Steam open too, Windows can run out of memory and
+  the game hitches hard. Close what you don't need while playing.
 
 ---
 
