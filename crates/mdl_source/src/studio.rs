@@ -147,6 +147,9 @@ pub struct Sequence {
     pub label: String,
     /// `ACT_VM_…` activity name, empty when none.
     pub activity: String,
+    /// How often it is chosen among the sequences playing its activity (`actweight`; its
+    /// size counts, the sign does not).
+    pub activity_weight: i32,
     /// `STUDIO_*` flags (`SEQ_DELTA`, `SEQ_POST`, looping, …).
     pub flags: i32,
     /// The pose parameters (`StudioModel::pose_params`) choosing a cell of the blend grid, by
@@ -1152,6 +1155,7 @@ fn parse_sequences(
         let label = r.cstr(r.rel(at, 4)?)?;
         let activity = r.cstr(r.rel(at, 8)?)?;
         let flags = r.i32(at + 12)?;
+        let activity_weight = r.i32(at + 20)?;
         let event_count = r.usize(at + 24)?;
         let event_base = r.rel(at, 28)?;
         let anim_slot = r.rel(at, 60)?;
@@ -1228,6 +1232,7 @@ fn parse_sequences(
         sequences.push(Sequence {
             label,
             activity,
+            activity_weight,
             flags,
             params,
             param_range,

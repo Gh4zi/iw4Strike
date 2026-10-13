@@ -414,8 +414,8 @@ fn main() {
     for (i, seq) in model.sequences.iter().enumerate() {
         if seq.label.contains(filter) {
             println!(
-                "  seq {i} {} [{}] frames {} fps {}",
-                seq.label, seq.activity, seq.num_frames, seq.fps
+                "  seq {i} {} [{} weight {}] frames {} fps {}",
+                seq.label, seq.activity, seq.activity_weight, seq.num_frames, seq.fps
             );
         }
     }

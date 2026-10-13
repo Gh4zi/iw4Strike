@@ -204,8 +204,10 @@ struct Roles {
     stab: Option<usize>,
     stab_miss: Option<usize>,
     empty: Option<Empty>,
-    /// CS:GO's inspects (`lookat01`…`lookat03`), played on `+lookatweapon`.
+    /// CS:GO's inspects (`lookat01`…`lookat03`), played on `+lookatweapon`, each with how
+    /// often it is picked (the Deagle's spin 1 in 11).
     inspect: Vec<usize>,
+    inspect_weights: Vec<u32>,
 }
 
 /// A gun's idle, draw, reload and shoot animations.
@@ -404,7 +406,20 @@ pub struct CsViewmodels {
     flash_images: Option<Option<[Handle<Image>; 2]>>,
     /// CS2 textures on the GPU, shared by every gun that draws them (the arms).
     cs2_images: cs2_assets::Cs2Images,
+    /// When `+lookatweapon` was last taken (CS:GO takes it at most every
+    /// [`INSPECT_COMMAND_RATE`]).
+    inspect_taken: Option<f64>,
+    /// Since when `+reload` has been held (none while it is up).
+    reload_held_since: Option<f64>,
 }
+
+/// How long `+reload` is held, with nothing to reload, before an inspect is put away (a tap
+/// leaves it playing). Picked by feel, not a CS:GO number.
+const INSPECT_RELOAD_HOLD: f64 = 0.2;
+
+/// CS:GO's `CS_COMMAND_MAX_RATE`: a rate-limited command (`+lookatweapon` among them) pressed
+/// again sooner than this after the last one taken is dropped.
+const INSPECT_COMMAND_RATE: f64 = 0.3;
 
 static NEXT_MODEL_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -572,6 +587,7 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
     });
     let mut roles = Roles {
         inspect: Vec::new(),
+        inspect_weights: Vec::new(),
         slashes,
         stab,
         stab_miss,
@@ -754,10 +770,27 @@ fn source_model(
         silenced
     });
     let roles = Roles {
-        inspect: ["lookat01", "lookat02", "lookat03"]
-            .iter()
-            .filter_map(|name| label(name))
-            .collect(),
+        // As CS:GO's `LookAtHeldWeapon`: the sequences playing `ACT_VM_IDLE_LOWERED`, else
+        // `lookat01`.
+        inspect: {
+            let lowered: Vec<usize> = studio
+                .sequences_for_activity("ACT_VM_IDLE_LOWERED")
+                .collect();
+            if lowered.is_empty() {
+                label("lookat01").into_iter().collect()
+            } else {
+                lowered
+            }
+        },
+        inspect_weights: {
+            let lowered: Vec<u32> = studio
+                .sequences
+                .iter()
+                .filter(|s| s.activity.eq_ignore_ascii_case("ACT_VM_IDLE_LOWERED"))
+                .map(|s| s.activity_weight.unsigned_abs())
+                .collect();
+            if lowered.is_empty() { vec![1] } else { lowered }
+        },
         slashes,
         stab,
         stab_miss,
@@ -877,6 +910,7 @@ fn cs2_roles(viewmodel: &mdl_source2::viewmodel::Viewmodel) -> Roles {
         stab_miss: viewmodel.find("heavy_miss", |_| true),
         empty,
         inspect: Vec::new(),
+        inspect_weights: Vec::new(),
     }
 }
 
@@ -1754,6 +1788,9 @@ pub fn update_cs_viewmodel(
     let inspect = actions
         .as_mut()
         .is_some_and(|a| std::mem::take(&mut a.client.inspect));
+    let reload_down = actions
+        .as_ref()
+        .is_some_and(|a| a.client.kb.reload.active);
     frame.model = None;
     active.0 = false;
     state.pump(&mut images);
@@ -1796,6 +1833,19 @@ pub fn update_cs_viewmodel(
     }
 
     let now = time.elapsed_secs_f64();
+    let inspect = inspect
+        && state
+            .inspect_taken
+            .is_none_or(|taken| now - taken >= INSPECT_COMMAND_RATE);
+    if inspect {
+        state.inspect_taken = Some(now);
+    }
+    let reload_held = if reload_down {
+        now - *state.reload_held_since.get_or_insert(now) >= INSPECT_RELOAD_HOLD
+    } else {
+        state.reload_held_since = None;
+        false
+    };
     let reloading = weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
         .is_ok_and(weapon_iw4::WeaponState::is_reload_family);
     // Rounds in the clip, read as the HUD's ammo counter reads them: a gun whose clip row is not
@@ -1968,8 +2018,9 @@ pub fn update_cs_viewmodel(
                 start(playing, Some(reload), rate);
             }
             let inspecting = playing.sequence.is_some_and(|s| roles.inspect.contains(&s));
-            if inspecting && ps.cs_zoom != 0 {
-                // Zooming in puts the weapon back up.
+            if inspecting && (ps.cs_zoom != 0 || reload_held) {
+                // Zooming in puts the weapon back up, as does holding reload with nothing to
+                // reload (a reload that starts plays over the inspect anyway).
                 start(playing, idle, 1.0);
             } else if inspect
                 && !roles.inspect.is_empty()
@@ -1977,15 +2028,26 @@ pub fn update_cs_viewmodel(
                 && ps.cs_zoom == 0
                 && !weapon.grenade
                 && !playing.arming
+                // As CS:GO's `LookAtHeldWeapon`: an inspect still playing is not started over.
                 && (playing.sequence == idle
-                    || inspecting
                     || playing.sequence.is_none_or(|s| {
                         (now - playing.started) as f32 * playing.rate
                             >= model.sequences[s].duration
                     }))
             {
-                // CS:GO picks among a knife's inspects (the Butterfly has three).
-                let pick = (now * 1000.0) as usize % roles.inspect.len();
+                // CS:GO's `SelectWeightedSequence`: a draw below the weights' total walks the
+                // inspects, each taking up its weight (one weighted 0 still taking one).
+                let total: u32 = roles.inspect_weights.iter().sum();
+                let mut draw = (now * 1000.0) as u32 % total.max(1);
+                let mut pick = 0;
+                while pick + 1 < roles.inspect.len() {
+                    let weight = roles.inspect_weights.get(pick).copied().unwrap_or(1).max(1);
+                    if draw < weight {
+                        break;
+                    }
+                    draw -= weight;
+                    pick += 1;
+                }
                 start(playing, Some(roles.inspect[pick]), 1.0);
             }
             playing.last_fire_ms = ps.cs_last_fire_ms;
