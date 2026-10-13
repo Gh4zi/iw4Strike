@@ -35,6 +35,8 @@ pub struct MatchLoadRequest {
 struct MatchLoadTask {
     task: Task<Option<PreparedMatchReady>>,
     request_id: u64,
+    load_key: frame::LocalLoadKey,
+    zone: String,
     progress: LoadProgress,
 }
 
@@ -121,6 +123,7 @@ fn start_match_load(
     let load_key = request.load_key;
     let zone = request.zone.clone();
     let zone_accepted = zone.clone();
+    let zone_task = zone.clone();
     let cancel_handle = progress.clone();
     // The process outlives the overlay and every task this spawns: it is what
     // the table reads, what admission finishes, and what the bench still has
@@ -185,6 +188,8 @@ fn start_match_load(
     commands.insert_resource(MatchLoadTask {
         task,
         request_id,
+        load_key,
+        zone: zone_task,
         progress: cancel_handle,
     });
     commands.remove_resource::<MatchLoadRequest>();
@@ -273,6 +278,7 @@ fn poll_match_load(
     mut task: Option<ResMut<MatchLoadTask>>,
     mut inflight: ResMut<MatchLoadBusy>,
     abort: Option<Res<MatchLoadAbort>>,
+    mut failed: MessageWriter<MapLoadFailed>,
 ) {
     let Some(task) = task.as_deref_mut() else {
         return;
@@ -290,13 +296,24 @@ fn poll_match_load(
             task.request_id
         );
     }
-    let Some(outcome) = future::block_on(future::poll_once(&mut task.task)) else {
-        return;
+    let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        future::block_on(future::poll_once(&mut task.task))
+    }));
+    let outcome = match polled {
+        Ok(None) => return,
+        Ok(Some(outcome)) => Some(outcome),
+        Err(panic) => {
+            failed.write(walk_panic_failure(task, panic.as_ref()));
+            None
+        }
     };
     let request_id = task.request_id;
     inflight.0 = false;
     commands.remove_resource::<MatchLoadTask>();
     commands.remove_resource::<MatchLoadAccepted>();
+    let Some(outcome) = outcome else {
+        return;
+    };
     let Some(mut ready) = outcome else {
         diag::info!(
             World,
@@ -326,6 +343,26 @@ fn poll_match_load(
             .unwrap_or_else(|| Err("the map zone never opened".to_owned())),
     });
     commands.insert_resource(ready);
+}
+
+fn walk_panic_failure(task: &MatchLoadTask, panic: &(dyn std::any::Any + Send)) -> MapLoadFailed {
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("no message");
+    diag::error!(
+        World,
+        "match load: walk request #{} (`{}`) panicked: {message} — reported as a failed map load",
+        task.request_id,
+        task.zone
+    );
+    MapLoadFailed {
+        request_id: task.request_id,
+        load_key: task.load_key,
+        zone: task.zone.clone(),
+        error: format!("The load stopped on an internal error: {message}"),
+    }
 }
 
 fn expire_match_load_abort(
