@@ -868,6 +868,7 @@ pub fn update_cs_world_models(
             sun_dir: [0.0; 3],
             sun: [0.0; 3],
             bones: None,
+            lighting_origin: None,
         });
     }
     let Some(weapons) = weapons else {
@@ -908,6 +909,7 @@ pub fn update_cs_world_models(
             sun_dir: [0.0; 3],
             sun: [0.0; 3],
             bones: None,
+            lighting_origin: None,
         });
     }
     // Dropped CS weapons, lying where the item is, turned to its yaw.
@@ -945,6 +947,7 @@ pub fn update_cs_world_models(
             sun_dir: [0.0; 3],
             sun: [0.0; 3],
             bones: None,
+            lighting_origin: None,
         });
     }
 }

@@ -60,6 +60,9 @@ pub struct CsWorldModelInstance {
     /// A skinned model's bones this frame: row-major 3x4 model-space matrices (bone pose times
     /// its bind inverse), indexed by the vertices' `bones`. `None` draws the vertices as they are.
     pub bones: Option<Arc<Vec<[[f32; 4]; 3]>>>,
+    /// Where the map's light is read for it (world): a body's pelvis and what it holds, so the
+    /// grid and the sun are not sampled at its feet. `None` reads it at the model's origin.
+    pub lighting_origin: Option<[f32; 3]>,
 }
 
 /// What the main world wants drawn this frame.

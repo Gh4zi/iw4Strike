@@ -1663,6 +1663,7 @@ pub fn update_csgo_bodies(
                 sun_dir: [0.0; 3],
                 sun: [0.0; 3],
                 bones: Some(Arc::new(skin)),
+                lighting_origin: None,
             });
             hidden.0.insert(entity);
             live.insert(entity);
@@ -1802,6 +1803,14 @@ pub fn update_csgo_bodies(
             Quat::from_rotation_z(state.foot_yaw.to_radians()),
             Vec3::from(runtime.origin),
         );
+        // Lit where its pelvis is (its first bone), as a corpse is: the origin is at the feet,
+        // where the light grid and the sun ray start at (or in) the ground.
+        let lighting_origin = world
+            .first()
+            .map_or(Vec3::from(runtime.origin) + Vec3::Z * 36.0, |m| {
+                (world_from_model * mat4(m)).w_axis.truncate()
+            })
+            .to_array();
         draws.0.push(CsWorldModelInstance {
             model: character.gpu.clone(),
             world_from_model: world_from_model.to_cols_array_2d(),
@@ -1809,6 +1818,7 @@ pub fn update_csgo_bodies(
             sun_dir: [0.0; 3],
             sun: [0.0; 3],
             bones: Some(Arc::new(skin)),
+            lighting_origin: Some(lighting_origin),
         });
         hidden.0.insert(entity);
         // Kept to start a corpse from.
@@ -1874,6 +1884,7 @@ pub fn update_csgo_bodies(
                 sun_dir: [0.0; 3],
                 sun: [0.0; 3],
                 bones: Some(Arc::new(palette)),
+                lighting_origin: Some(lighting_origin),
             });
         }
     }

@@ -82,11 +82,11 @@ fn light_cs_world_models(
     };
     let sun = sun.filter(|s| s.direction.iter().any(|v| *v != 0.0));
     for instance in &mut frame.instances {
-        let origin = [
+        let origin = instance.lighting_origin.unwrap_or([
             instance.world_from_model[3][0],
             instance.world_from_model[3][1],
             instance.world_from_model[3][2],
-        ];
+        ]);
         if let Ok(sample) = asset_model::sample_light_grid(&grid.view(), origin) {
             instance.ambient = sample
                 .compressed
