@@ -1886,15 +1886,25 @@ fn fill_mark_mesh_plan(
 
     let mut admitted: Vec<(u64, u8, u32, GfxMarkSubKey, u32, u32)> =
         Vec::with_capacity(mesh.surfs.len());
+    // Hundreds of marks share a handful of materials; each name lookup is two binary searches.
+    let mut binds: Vec<(u16, Option<(u8, u32)>)> = Vec::new();
     for surf in &mesh.surfs {
         if surf.index_count == 0 {
             continue;
         }
-        let Some(name) = host.marks.material_name(surf.mark_slot) else {
-            skip_why = Some("no_material");
-            continue;
+        let bind = match binds.iter().find(|(slot, _)| *slot == surf.mark_slot) {
+            Some((_, bind)) => *bind,
+            None => {
+                let Some(name) = host.marks.material_name(surf.mark_slot) else {
+                    skip_why = Some("no_material");
+                    continue;
+                };
+                let bind = mark_mesh_bind(name, runtime);
+                binds.push((surf.mark_slot, bind));
+                bind
+            }
         };
-        let Some((sort_key, ordinal)) = mark_mesh_bind(name, runtime) else {
+        let Some((sort_key, ordinal)) = bind else {
             skip_why = Some("no_ordinal");
             continue;
         };
