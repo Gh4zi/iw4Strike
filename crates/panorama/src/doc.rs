@@ -1096,6 +1096,24 @@ impl Doc {
                 }
             }
         }
+        // A picture as big as the panel it is in (100% each way, in a panel that does not flow
+        // its children) covers that panel without sizing it, as in Panorama: left a grid item,
+        // its picture's own size grew a panel its children size (a kill notice's background
+        // gradient made the notice as big as the gradient image).
+        let pictured = p.tag.eq_ignore_ascii_case("image") || s.background_image.is_some();
+        if pictured
+            && parent_flow == Flow::None
+            && s.width == Len::Percent(100.0)
+            && s.height == Len::Percent(100.0)
+        {
+            node.position_type = PositionType::Absolute;
+            node.width = Val::Auto;
+            node.height = Val::Auto;
+            node.left = Val::Px(0.0);
+            node.right = Val::Px(0.0);
+            node.top = Val::Px(0.0);
+            node.bottom = Val::Px(0.0);
+        }
         // One side a share of the other: an aspect ratio (width over height).
         match (s.width, s.height) {
             (Len::OfOther(share), _) => node.aspect_ratio = Some(share),
