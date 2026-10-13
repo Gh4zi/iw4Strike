@@ -18,6 +18,9 @@ use crate::xml::Element;
 
 /// Labels without a size of their own: Panorama's default label text.
 const DEFAULT_FONT_SIZE: f32 = 16.0;
+/// A hidden panel with more panels than this under it keeps no UI nodes for them until it shows
+/// again (the scoreboard, the buy menu, the end of match): Bevy lays out every node every frame.
+const BARE_HIDDEN_PANELS: usize = 24;
 
 #[derive(Clone, Debug, Default)]
 struct Panel {
@@ -768,8 +771,13 @@ impl Doc {
                 self.panels[p].style = self.compute_style(p);
             }
         }
+        // Under a large hidden panel: no node (see `BARE_HIDDEN_PANELS`).
+        let mut bare_under = vec![false; self.panels.len()];
         for p in 0..self.panels.len() {
-            if self.panels[p].removed {
+            bare_under[p] = self.panels[p]
+                .parent
+                .is_some_and(|q| bare_under[q] || self.bare(q));
+            if self.panels[p].removed || bare_under[p] {
                 if let Some(entity) = self.panels[p].entity.take() {
                     commands.entity(entity).try_despawn();
                 }
@@ -821,6 +829,12 @@ impl Doc {
                 if done[p] || self.panels[p].removed {
                     continue;
                 }
+                // Inside a hidden panel's bare subtree: styled and drawn when it shows.
+                if let Some(q) = self.panels[p].parent
+                    && (self.panels[q].entity.is_none() || self.bare(q))
+                {
+                    continue;
+                }
                 done[p] = true;
                 self.panels[p].style = self.compute_style(p);
                 let entity = match self.panels[p].entity {
@@ -836,7 +850,11 @@ impl Doc {
                     }
                 };
                 self.apply(p, entity, commands, files, images, fonts);
-                stack.extend(self.panels[p].children.iter().rev().copied());
+                if self.bare(p) {
+                    self.drop_descendants(p, commands);
+                } else {
+                    stack.extend(self.panels[p].children.iter().rev().copied());
+                }
             }
         }
         for p in std::mem::take(&mut self.reapply) {
@@ -859,6 +877,34 @@ impl Doc {
                     rotation: Rot2::radians(turn),
                 });
             }
+        }
+    }
+
+    /// Whether `panel` is hidden with a large subtree, whose panels then keep no nodes.
+    fn bare(&self, panel: usize) -> bool {
+        if self.panels[panel].style.visible {
+            return false;
+        }
+        let mut n = 0;
+        let mut stack = vec![panel];
+        while let Some(p) = stack.pop() {
+            n += 1;
+            if n > BARE_HIDDEN_PANELS {
+                return true;
+            }
+            stack.extend(self.panels[p].children.iter().copied());
+        }
+        false
+    }
+
+    /// Despawns the nodes of everything under `panel`.
+    fn drop_descendants(&mut self, panel: usize, commands: &mut Commands) {
+        let mut stack: Vec<usize> = self.panels[panel].children.clone();
+        while let Some(p) = stack.pop() {
+            if let Some(entity) = self.panels[p].entity.take() {
+                commands.entity(entity).try_despawn();
+            }
+            stack.extend(self.panels[p].children.iter().copied());
         }
     }
 
