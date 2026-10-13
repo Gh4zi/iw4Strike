@@ -310,6 +310,15 @@ fn sync_snapshot_entities(
         if Some(*client) == seated_viewer {
             continue;
         }
+        // A spectator (or a player at intermission) has no body in the world, as the server
+        // does not link one: following someone, they stand where that player stands, and drawn
+        // they were a second body inside them.
+        if matches!(
+            ps.pm_type,
+            playerstate_iw4::PM_TYPE_SPECTATOR | playerstate_iw4::PM_TYPE_INTERMISSION
+        ) {
+            continue;
+        }
         let Some(number) = player_entity_number(*client) else {
             gaps.raise(NetGapCause::ClientOutOfNumberSpace { client: *client });
             continue;
