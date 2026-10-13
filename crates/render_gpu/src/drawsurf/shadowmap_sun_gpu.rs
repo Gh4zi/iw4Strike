@@ -96,9 +96,12 @@ pub(super) fn ensure_shadowmap_sun_target(
     (Some(color_view), true)
 }
 
+/// Uploads each epoch's indices to its buffer (grown as needed), skipping a buffer that already
+/// holds them (`last`: what each one was given last).
 pub(super) fn upload_shadow_index_epochs(
     buffers: &mut Vec<Buffer>,
     capacities: &mut Vec<u64>,
+    last: &mut Vec<Vec<u32>>,
     device: &RenderDevice,
     queue: &RenderQueue,
     epochs: &[Vec<u32>],
@@ -106,6 +109,7 @@ pub(super) fn upload_shadow_index_epochs(
 ) -> Vec<Buffer> {
     buffers.truncate(buffers.len().min(epochs.len()));
     capacities.truncate(capacities.len().min(epochs.len()));
+    last.truncate(buffers.len());
     let mut uploaded = Vec::with_capacity(epochs.len());
     for (i, indices) in epochs.iter().enumerate() {
         let bytes = (indices.len() * 4) as u64;
@@ -127,7 +131,14 @@ pub(super) fn upload_shadow_index_epochs(
             capacities[i] = bytes;
         }
         let buf = &buffers[i];
-        queue.write_buffer(buf, 0, bytemuck::cast_slice(indices));
+        if last.get(i) != Some(indices) {
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(indices));
+            if let Some(kept) = last.get_mut(i) {
+                kept.clone_from(indices);
+            } else {
+                last.push(indices.clone());
+            }
+        }
         uploaded.push(buf.clone());
     }
     uploaded

@@ -999,6 +999,128 @@ struct ShadowExecScratch {
     executor: MaterialRunExecutor,
     code_sources: RuntimeCodeSources,
     pack_draws: Vec<PackDraw>,
+    /// The spot shadows' prepared world and static-model flushes of the frame before (or why
+    /// one could not be prepared), by slot, and the world generation they belong to: a spot
+    /// light's static casters stay the same from frame to frame.
+    spot_memo: Vec<SpotFlushMemo>,
+    spot_memo_generation: Option<u64>,
+    /// The moving models' prepared flushes, by slot.
+    spot_memo_dyn: Vec<SpotDynMemo>,
+    /// Each slot's static casters as finished draws, and what they were made from.
+    spot_static: Vec<Option<SpotStaticDraws>>,
+}
+
+/// A spot shadow slot's moving models' prepared flushes (or why one could not be prepared) by
+/// what they draw, shared rather than copied, kept while they keep being asked for.
+#[derive(Default)]
+struct SpotDynMemo {
+    entries: HashMap<
+        (u64, u32, u32),
+        Vec<(ShadowFlushKey, Result<Arc<ShadowmapSunFlushGpu>, Arc<str>>, u32)>,
+    >,
+    frame: u32,
+}
+
+/// Frames a moving model's flush is kept without being asked for.
+const SPOT_DYN_MEMO_FRAMES: u32 = 60;
+
+impl SpotDynMemo {
+    fn get(&mut self, key: &ShadowFlushKey) -> Option<Result<Arc<ShadowmapSunFlushGpu>, Arc<str>>> {
+        let frame = self.frame;
+        let (_, result, used) = self
+            .entries
+            .get_mut(&key.bucket())?
+            .iter_mut()
+            .find(|(k, _, _)| k == key)?;
+        *used = frame;
+        Some(result.clone())
+    }
+
+    fn insert(&mut self, key: ShadowFlushKey, result: Result<Arc<ShadowmapSunFlushGpu>, Arc<str>>) {
+        let frame = self.frame;
+        self.entries
+            .entry(key.bucket())
+            .or_default()
+            .push((key, result, frame));
+    }
+
+    fn end_frame(&mut self) {
+        self.frame = self.frame.wrapping_add(1);
+        if self.frame % SPOT_DYN_MEMO_FRAMES == 0 {
+            let frame = self.frame;
+            self.entries.retain(|_, bucket| {
+                bucket.retain(|(_, _, used)| frame.wrapping_sub(*used) <= SPOT_DYN_MEMO_FRAMES);
+                !bucket.is_empty()
+            });
+        }
+    }
+}
+
+/// Counts `cause` in `rows`, allocating its name only the first time.
+fn count_miss_row(rows: &mut BTreeMap<String, u32>, cause: &str) {
+    if let Some(n) = rows.get_mut(cause) {
+        *n += 1;
+    } else {
+        rows.insert(cause.to_owned(), 1);
+    }
+}
+
+/// A spot shadow slot's world and static-model casters as finished draws (constants laid over
+/// for the light), the static models' index stream, and what was refused making them; reused
+/// while [`Self::signature`] (the light and the static lists) holds.
+struct SpotStaticDraws {
+    signature: u64,
+    draws: Vec<PreparedExactDraw>,
+    smodel_epochs: Vec<Vec<u32>>,
+    miss: u32,
+    miss_rows: BTreeMap<String, u32>,
+}
+
+/// FNV-1a over 64-bit words: what a spot slot's static casters were made from.
+struct Signature(u64);
+
+impl Signature {
+    fn new() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+
+    fn add(&mut self, v: u64) {
+        self.0 = (self.0 ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+}
+
+/// A spot shadow slot's flushes from the frame before, by what they draw.
+#[derive(Default)]
+struct SpotFlushMemo(
+    HashMap<(u64, u32, u32), Vec<(ShadowFlushKey, Result<ShadowmapSunFlushGpu, String>)>>,
+);
+
+impl SpotFlushMemo {
+    fn take(&mut self, key: &ShadowFlushKey) -> Option<Result<ShadowmapSunFlushGpu, String>> {
+        let bucket = self.0.get_mut(&key.bucket())?;
+        let at = bucket.iter().position(|(k, _)| k == key)?;
+        Some(bucket.swap_remove(at).1)
+    }
+
+    fn from_kept(kept: Vec<(ShadowFlushKey, Result<ShadowmapSunFlushGpu, String>)>) -> Self {
+        let mut memo = Self::default();
+        for (key, result) in kept {
+            memo.0.entry(key.bucket()).or_default().push((key, result));
+        }
+        memo
+    }
+}
+
+/// Spot shadow flushes reused, prepared and refused again this frame (`IW4L_SHADOW_MEMO_DEBUG`).
+static SPOT_MEMO_STATS: [std::sync::atomic::AtomicU32; 4] = [
+    std::sync::atomic::AtomicU32::new(0),
+    std::sync::atomic::AtomicU32::new(0),
+    std::sync::atomic::AtomicU32::new(0),
+    std::sync::atomic::AtomicU32::new(0),
+];
+
+fn spot_memo_stat(i: usize) {
+    SPOT_MEMO_STATS[i].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[derive(Resource, Default)]
@@ -3414,6 +3536,28 @@ fn issue_indirect<'a>(
     record_n.multi_draw_commands = record_n.multi_draw_commands.saturating_add(batch.count());
 }
 
+/// The key of a static flush drawing `count` indices from `start` for the owner draws
+/// `owners` (into `draws`, the partition's list; `draw_offset` places them in the product).
+fn shadow_flush_key(
+    product: &FrameProduct,
+    draws: &[RetainedDrawItem],
+    owners: &[u32],
+    draw_offset: usize,
+    owner: fn(&RetainedDrawItem) -> Option<ShadowStaticOwner>,
+    start: u32,
+    count: u32,
+) -> Option<ShadowFlushKey> {
+    let &first = owners.first()?;
+    let owner = owner(draws.get(first as usize)?)?;
+    let tech = *product.draw_tech.get((first as usize).saturating_add(draw_offset))?;
+    Some(ShadowFlushKey {
+        owner,
+        tech,
+        start,
+        count,
+    })
+}
+
 fn sun_flush_owner<'a>(
     draws: &'a [RetainedDrawItem],
     techs: &[TechType],
@@ -3547,6 +3691,33 @@ enum ShadowStaticOwner {
         pretess: Option<render_frame::SmodelPretessRange>,
         samplers: super::SurfaceSamplerInputs,
     },
+    /// A model drawn this frame (a player): its surface and material, not its placement.
+    XModel {
+        key: u64,
+        surface: u32,
+        material: u32,
+        object_id: u16,
+        samplers: super::SurfaceSamplerInputs,
+    },
+}
+
+fn xmodel_shadow_owner(item: &RetainedDrawItem) -> Option<ShadowStaticOwner> {
+    let RetainedDrawKind::XModel {
+        surface,
+        material,
+        object_id,
+        ..
+    } = item.kind
+    else {
+        return None;
+    };
+    Some(ShadowStaticOwner::XModel {
+        key: item.key,
+        surface,
+        material,
+        object_id,
+        samplers: item.surface_samplers,
+    })
 }
 
 fn world_shadow_static_owner(item: &RetainedDrawItem) -> Option<ShadowStaticOwner> {
@@ -3631,6 +3802,53 @@ fn replace_static_shadow_owners(
     );
 }
 
+/// What a static sun-shadow flush draws: its owner draw, technique and index span. A flush
+/// prepared for one list serves any later list holding the same.
+#[derive(Clone, Debug, PartialEq)]
+struct ShadowFlushKey {
+    owner: ShadowStaticOwner,
+    tech: TechType,
+    start: u32,
+    count: u32,
+}
+
+impl ShadowFlushKey {
+    fn bucket(&self) -> (u64, u32, u32) {
+        let key = match &self.owner {
+            ShadowStaticOwner::World { key, .. }
+            | ShadowStaticOwner::Smodel { key, .. }
+            | ShadowStaticOwner::XModel { key, .. } => *key,
+        };
+        (key, self.start, self.count)
+    }
+}
+
+/// Prepared static flushes kept from the list before, by what they draw.
+#[derive(Default)]
+struct ShadowFlushMemo(HashMap<(u64, u32, u32), Vec<(ShadowFlushKey, ShadowmapSunFlushGpu)>>);
+
+impl ShadowFlushMemo {
+    /// Keeps the prepared flushes of `slots` (with their `keys`) in place of what it held.
+    fn keep(
+        &mut self,
+        slots: &mut Vec<Option<ShadowmapSunFlushGpu>>,
+        keys: &mut Vec<Option<ShadowFlushKey>>,
+    ) {
+        self.0.clear();
+        for (gpu, key) in slots.drain(..).zip(keys.drain(..)) {
+            if let (Some(gpu), Some(key)) = (gpu, key) {
+                self.0.entry(key.bucket()).or_default().push((key, gpu));
+            }
+        }
+    }
+
+    fn take(&mut self, key: &ShadowFlushKey) -> Option<ShadowmapSunFlushGpu> {
+        let bucket = self.0.get_mut(&key.bucket())?;
+        let at = bucket.iter().position(|(k, _)| k == key)?;
+        Some(bucket.swap_remove(at).1)
+    }
+}
+
 #[derive(Resource, Default)]
 struct ResidentShadowStaticDraws {
     generation: Option<u64>,
@@ -3639,6 +3857,12 @@ struct ResidentShadowStaticDraws {
     world_owners: [Vec<Option<ShadowStaticOwner>>; 2],
     smodel_owners: [Vec<Option<ShadowStaticOwner>>; 2],
     smodel_entries: [Vec<render_frame::GfxSmodelRigidEntry>; 2],
+    /// What each prepared slot draws, and the flushes kept when the list last changed: a
+    /// turning view changes the casters a little every frame, and most flushes stay the same.
+    world_keys: [Vec<Option<ShadowFlushKey>>; 2],
+    smodel_keys: [Vec<Option<ShadowFlushKey>>; 2],
+    world_memo: [ShadowFlushMemo; 2],
+    smodel_memo: [ShadowFlushMemo; 2],
 
     commands: [ResidentSunCommands; 2],
 }
@@ -3662,6 +3886,10 @@ impl ResidentShadowStaticDraws {
             self.world_owners = [Vec::new(), Vec::new()];
             self.smodel_owners = [Vec::new(), Vec::new()];
             self.smodel_entries = [Vec::new(), Vec::new()];
+            self.world_keys = [Vec::new(), Vec::new()];
+            self.smodel_keys = [Vec::new(), Vec::new()];
+            self.world_memo = Default::default();
+            self.smodel_memo = Default::default();
         }
         let world_changed = generation_changed
             || !static_shadow_owners_answer(
@@ -3679,12 +3907,14 @@ impl ResidentShadowStaticDraws {
                 smodel_shadow_static_owner,
             );
         if world_changed || self.world[i].len() != world_n {
-            self.world[i].clear();
+            self.world_memo[i].keep(&mut self.world[i], &mut self.world_keys[i]);
             self.world[i].resize_with(world_n, || None);
+            self.world_keys[i].resize_with(world_n, || None);
         }
         if smodel_changed || self.smodel[i].len() != smodel_n {
-            self.smodel[i].clear();
+            self.smodel_memo[i].keep(&mut self.smodel[i], &mut self.smodel_keys[i]);
             self.smodel[i].resize_with(smodel_n, || None);
+            self.smodel_keys[i].resize_with(smodel_n, || None);
         }
         if world_changed {
             replace_static_shadow_owners(
@@ -4460,12 +4690,38 @@ fn prepare_shadowmap_spot(
 ) -> PreparedSpotWork {
     let ShadowExecScratch {
         executor: shadow_exec_executor,
+        spot_memo,
+        spot_memo_generation,
+        spot_memo_dyn,
+        spot_static,
         ..
     } = shadow_exec;
     shadow_exec_executor.begin_list();
     let shadow_exec_view = exec_tables(extracted).map(|(catalog, prepared_table)| {
         MaterialExecView::camera(catalog, prepared_table, &extracted.frame.exec_frame)
     });
+    if *spot_memo_generation != Some(extracted.world.generation.0) {
+        *spot_memo_generation = Some(extracted.world.generation.0);
+        spot_memo.clear();
+        spot_memo_dyn.clear();
+        spot_static.clear();
+    }
+    if spot_memo.len() < lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP {
+        spot_memo.resize_with(lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP, SpotFlushMemo::default);
+        spot_memo_dyn.resize_with(lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP, SpotDynMemo::default);
+        spot_static.resize_with(lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP, || None);
+    }
+    let frames = SPOT_MEMO_STATS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if frames % 600 == 0 && std::env::var_os("IW4L_SHADOW_MEMO_DEBUG").is_some() {
+        let take = |i: usize| SPOT_MEMO_STATS[i].swap(0, std::sync::atomic::Ordering::Relaxed);
+        diag::info!(
+            World,
+            "spot shadow memo: {} reused, {} prepared, {} refused again over 600 frames",
+            take(0),
+            take(1),
+            take(2)
+        );
+    }
     let spot = products.0.product(FrameProductKind::SpotShadow);
     if spot.ordered_draws.is_empty() || spot.spot_slots.is_empty() {
         return PreparedSpotWork::default();
@@ -4546,47 +4802,295 @@ fn prepare_shadowmap_spot(
             continue;
         };
 
-        let mut flushes = Vec::<ShadowmapSunFlushGpu>::new();
-        for flush in &work.world_flushes {
-            let (start, count) = prim_args_u32_index_span(prim_args_from_world_flush(*flush));
-            let Some((start, count)) =
-                world_shadow_zone_span(start, count, geometry.world_cpu_indices.len())
-            else {
-                miss = miss.saturating_add(1);
-                *miss_rows
-                    .entry("WorldShadowSpanOutsideZoneIb".into())
-                    .or_default() += 1;
-                continue;
-            };
-            let owner_start = flush.entry_start as usize;
-            let owner_end = owner_start.saturating_add(flush.entry_count as usize);
-            let owners = slot
+        // This slot's moving models' flushes kept from the frame before, and the ones kept for
+        // the next; its static casters' flushes likewise, when they have to be made again.
+        let memo_slot = usize::try_from(emitted.slot_index)
+            .ok()
+            .filter(|&slot| slot < spot_memo.len());
+        let mut memo_dyn = memo_slot.map(|slot| &mut spot_memo_dyn[slot]);
+        // The moving models' flushes, shared with the memo: the index span each takes in this
+        // frame's stream (when it differs from the one it was prepared with) and where it stands.
+        let mut flushes: Vec<(Arc<ShadowmapSunFlushGpu>, Option<(u32, u32, u32)>, Mat4)> = Vec::new();
+        // The world and static models this light shadows are reused as finished draws while
+        // they and the light stay as they were.
+        let signature = {
+            let mut sig = Signature::new();
+            sig.add(extracted.world.generation.0);
+            sig.add(u64::from(emitted.slot_index));
+            sig.add(u64::from(envelope.render_target_id));
+            for v in view_parms
+                .view_projection
+                .iter()
+                .chain(&view_parms.view)
+                .chain(&view_parms.origin)
+            {
+                sig.add(u64::from(v.to_bits()));
+            }
+            for flush in &work.world_flushes {
+                let (start, count) = prim_args_u32_index_span(prim_args_from_world_flush(*flush));
+                sig.add((u64::from(start) << 32) | u64::from(count));
+                sig.add((u64::from(flush.entry_start) << 32) | u64::from(flush.entry_count));
+            }
+            sig.add(u64::MAX);
+            for flush in &work.smodel_flushes {
+                sig.add((u64::from(flush.entry_start) << 32) | u64::from(flush.entry_count));
+            }
+            for entry in &slot.packed.smodel {
+                sig.add((u64::from(entry.index_byte_offset) << 16) | u64::from(entry.tri_count));
+            }
+            for &index in slot
                 .packed
                 .world_draw_indices
-                .get(owner_start..owner_end)
-                .unwrap_or(&[]);
-            match prepare.prepare_shadow_flush_draws(
-                shadow_exec_executor,
-                shadow_exec_view,
-                SunFlush {
-                    kind: SunFlushKind::World,
-                    draw_start: start,
-                    draw_count: count,
-                    ring_epoch: 0,
-                },
-                owners,
-                0,
-                spot,
-                target,
-            ) {
-                Ok(gpu) => flushes.push(gpu),
-                Err(cause) => {
-                    miss = miss.saturating_add(1);
-                    *miss_rows.entry(cause).or_default() += 1;
-                }
+                .iter()
+                .chain(&slot.packed.smodel_draw_indices)
+            {
+                // The draw itself, not where it sorts among this frame's moving models.
+                sig.add(spot.ordered_draws.get(index as usize).map_or(0, |item| item.key));
             }
-        }
+            sig.0
+        };
+        let start = all_prepared.len();
+        let cached = memo_slot
+            .and_then(|slot| spot_static[slot].as_ref())
+            .filter(|cached| cached.signature == signature);
+        let smodel_epochs = if let Some(cached) = cached {
+            spot_memo_stat(0);
+            all_prepared.extend(cached.draws.iter().cloned());
+            miss = miss.saturating_add(cached.miss);
+            for (row, n) in &cached.miss_rows {
+                *miss_rows.entry(row.clone()).or_default() += n;
+            }
+            cached.smodel_epochs.clone()
+        } else {
+            let mut memo = memo_slot.map(|slot| std::mem::take(&mut spot_memo[slot]));
+            let mut kept: Vec<(ShadowFlushKey, Result<ShadowmapSunFlushGpu, String>)> = Vec::new();
+            let mut static_flushes = Vec::<ShadowmapSunFlushGpu>::new();
+            let mut static_overlaid = Vec::new();
+            let (static_miss, static_rows, smodel_epochs) = {
+                let mut miss = 0u32;
+                let mut miss_rows = BTreeMap::<String, u32>::new();
+                for flush in &work.world_flushes {
+                    let (start, count) = prim_args_u32_index_span(prim_args_from_world_flush(*flush));
+                    let Some((start, count)) =
+                        world_shadow_zone_span(start, count, geometry.world_cpu_indices.len())
+                    else {
+                        miss = miss.saturating_add(1);
+                        *miss_rows
+                            .entry("WorldShadowSpanOutsideZoneIb".into())
+                            .or_default() += 1;
+                        continue;
+                    };
+                    let owner_start = flush.entry_start as usize;
+                    let owner_end = owner_start.saturating_add(flush.entry_count as usize);
+                    let owners = slot
+                        .packed
+                        .world_draw_indices
+                        .get(owner_start..owner_end)
+                        .unwrap_or(&[]);
+                    let key = shadow_flush_key(
+                        spot,
+                        &spot.ordered_draws,
+                        owners,
+                        0,
+                        world_shadow_static_owner,
+                        start,
+                        count,
+                    );
+                    if let Some((key, result)) = key
+                        .as_ref()
+                        .and_then(|key| Some((key, memo.as_mut()?.take(key)?)))
+                    {
+                        match &result {
+                            Ok(gpu) => {
+                                spot_memo_stat(0);
+                                static_flushes.push(gpu.clone());
+                            }
+                            Err(cause) => {
+                                spot_memo_stat(2);
+                                miss = miss.saturating_add(1);
+                                *miss_rows.entry(cause.clone()).or_default() += 1;
+                            }
+                        }
+                        kept.push((key.clone(), result));
+                        continue;
+                    }
+                    spot_memo_stat(1);
+                    match prepare.prepare_shadow_flush_draws(
+                        shadow_exec_executor,
+                        shadow_exec_view,
+                        SunFlush {
+                            kind: SunFlushKind::World,
+                            draw_start: start,
+                            draw_count: count,
+                            ring_epoch: 0,
+                        },
+                        owners,
+                        0,
+                        spot,
+                        target,
+                    ) {
+                        Ok(gpu) => {
+                            if let Some(key) = key {
+                                kept.push((key, Ok(gpu.clone())));
+                            }
+                            static_flushes.push(gpu);
+                        }
+                        Err(cause) => {
+                            miss = miss.saturating_add(1);
+                            *miss_rows.entry(cause.clone()).or_default() += 1;
+                            if let Some(key) = key {
+                                kept.push((key, Err(cause)));
+                            }
+                        }
+                    }
+                }
 
+                let mut smodel_stream = ModelIndexStream::new();
+                let mut smodel_spans = Vec::new();
+                for flush in &work.smodel_flushes {
+                    let owner_start = flush.entry_start as usize;
+                    let owner_end = owner_start.saturating_add(flush.entry_count as usize);
+                    let Some(entries) = slot.packed.smodel.get(owner_start..owner_end) else {
+                        miss = miss.saturating_add(1);
+                        *miss_rows
+                            .entry("SmodelDynamicProvenanceMissing".into())
+                            .or_default() += 1;
+                        continue;
+                    };
+                    for (entry_offset, entry) in entries.iter().enumerate() {
+                        let hit_start = entry.index_byte_offset / 2;
+                        let hit_count = u32::from(entry.tri_count).saturating_mul(3);
+                        match emit_local_smodel_shadow_flush(
+                            extracted.world.static_geometry.smodel_indices.as_slice(),
+                            hit_start,
+                            hit_count,
+                            &mut smodel_stream,
+                        ) {
+                            Ok((ring_epoch, draw_start, draw_count)) => smodel_spans.push((
+                                ring_epoch,
+                                draw_start,
+                                draw_count,
+                                owner_start.saturating_add(entry_offset),
+                                (hit_start, hit_count),
+                            )),
+                            Err(cause) => {
+                                miss = miss.saturating_add(1);
+                                *miss_rows.entry(cause).or_default() += 1;
+                            }
+                        }
+                    }
+                }
+                let smodel_epochs = smodel_stream.finish();
+                for (ring_epoch, draw_start, draw_count, owner, (hit_start, hit_count)) in smodel_spans {
+                    let owners = slot
+                        .packed
+                        .smodel_draw_indices
+                        .get(owner..owner + 1)
+                        .unwrap_or(&[]);
+                    // Keyed by the model's own index span, not where it lands in this frame's stream.
+                    let key = shadow_flush_key(
+                        spot,
+                        &spot.ordered_draws,
+                        owners,
+                        0,
+                        smodel_shadow_static_owner,
+                        hit_start,
+                        hit_count,
+                    );
+                    if let Some((key, mut result)) = key
+                        .as_ref()
+                        .and_then(|key| Some((key, memo.as_mut()?.take(key)?)))
+                    {
+                        match &mut result {
+                            Ok(gpu) => {
+                                spot_memo_stat(0);
+                                // Its span as a fresh prepare sets it.
+                                for draw in &mut gpu.draws {
+                                    if draw.tess != ExactTessBind::SmodelSkinned {
+                                        draw.start = draw_start;
+                                        draw.count = draw_count;
+                                        draw.ring_epoch = ring_epoch;
+                                    }
+                                }
+                                static_flushes.push(gpu.clone());
+                            }
+                            Err(cause) => {
+                                spot_memo_stat(2);
+                                miss = miss.saturating_add(1);
+                                *miss_rows.entry(cause.clone()).or_default() += 1;
+                            }
+                        }
+                        kept.push((key.clone(), result));
+                        continue;
+                    }
+                    spot_memo_stat(1);
+                    match prepare.prepare_shadow_flush_draws(
+                        shadow_exec_executor,
+                        shadow_exec_view,
+                        SunFlush {
+                            kind: SunFlushKind::Smodel,
+                            draw_start,
+                            draw_count,
+                            ring_epoch,
+                        },
+                        owners,
+                        0,
+                        spot,
+                        target,
+                    ) {
+                        Ok(gpu) => {
+                            if let Some(key) = key {
+                                kept.push((key, Ok(gpu.clone())));
+                            }
+                            static_flushes.push(gpu);
+                        }
+                        Err(cause) => {
+                            miss = miss.saturating_add(1);
+                            *miss_rows.entry(cause.clone()).or_default() += 1;
+                            if let Some(key) = key {
+                                kept.push((key, Err(cause)));
+                            }
+                        }
+                    }
+                }
+
+                for flush in &static_flushes {
+                    for (draw, code) in flush.draws.iter().zip(&flush.pass_code) {
+                        let overlay = shadowmap_spot_overlay(code, view_parms, flush.world_from_local);
+                        match overlay_shadow_draw_constants_with(
+                            draw,
+                            &overlay,
+                            flush.world_from_local,
+                            u8::try_from(emitted.slot_index).unwrap_or(u8::MAX),
+                            &mut overlay_intern,
+                        ) {
+                            Ok(draw) => static_overlaid.push(draw),
+                            Err(()) => {
+                                miss = miss.saturating_add(1);
+                                *miss_rows.entry("SpotOverlayRefused".into()).or_default() += 1;
+                            }
+                        }
+                    }
+                }
+                (miss, miss_rows, smodel_epochs)
+            };
+            if let Some(slot) = memo_slot {
+                spot_memo[slot] = SpotFlushMemo::from_kept(kept);
+                spot_static[slot] = Some(SpotStaticDraws {
+                    signature,
+                    draws: static_overlaid.clone(),
+                    smodel_epochs: smodel_epochs.clone(),
+                    miss: static_miss,
+                    miss_rows: static_rows.clone(),
+                });
+            }
+            all_prepared.extend(static_overlaid);
+            miss = miss.saturating_add(static_miss);
+            for (row, n) in static_rows {
+                *miss_rows.entry(row).or_default() += n;
+            }
+            smodel_epochs
+        };
         let mut xmodel_stream = ModelIndexStream::new();
         let mut xmodel_spans = Vec::new();
         for flush in &work.xmodel_flushes {
@@ -4613,6 +5117,7 @@ fn prepare_shadowmap_spot(
                         draw_start,
                         draw_count,
                         owner_start.saturating_add(entry_offset),
+                        (hit_start, hit_count),
                     )),
                     Err(cause) => {
                         miss = miss.saturating_add(1);
@@ -4622,12 +5127,47 @@ fn prepare_shadowmap_spot(
             }
         }
         let xmodel_epochs = xmodel_stream.finish();
-        for (ring_epoch, draw_start, draw_count, owner) in xmodel_spans {
+        for (ring_epoch, draw_start, draw_count, owner, (hit_start, hit_count)) in xmodel_spans {
             let owners = slot
                 .packed
                 .xmodel_draw_indices
                 .get(owner..owner + 1)
                 .unwrap_or(&[]);
+            // Keyed by the model's own index span; where it lands in this frame's index stream
+            // and where the model stands are set again.
+            let key = shadow_flush_key(
+                spot,
+                &spot.ordered_draws,
+                owners,
+                0,
+                xmodel_shadow_owner,
+                hit_start,
+                hit_count,
+            );
+            if let Some(result) = key
+                .as_ref()
+                .and_then(|key| memo_dyn.as_mut()?.get(key))
+            {
+                match result {
+                    Ok(gpu) => {
+                        spot_memo_stat(0);
+                        let world = owners
+                            .first()
+                            .and_then(|&first| spot.ordered_draws.get(first as usize))
+                            .map_or(gpu.world_from_local, |item| {
+                                sun_flush_world_from_local(&item.kind)
+                            });
+                        flushes.push((gpu, Some((draw_start, draw_count, ring_epoch)), world));
+                    }
+                    Err(cause) => {
+                        spot_memo_stat(2);
+                        miss = miss.saturating_add(1);
+                        count_miss_row(&mut miss_rows, &cause);
+                    }
+                }
+                continue;
+            }
+            spot_memo_stat(1);
             match prepare.prepare_shadow_flush_draws(
                 shadow_exec_executor,
                 shadow_exec_view,
@@ -4642,73 +5182,20 @@ fn prepare_shadowmap_spot(
                 spot,
                 target,
             ) {
-                Ok(gpu) => flushes.push(gpu),
-                Err(cause) => {
-                    miss = miss.saturating_add(1);
-                    *miss_rows.entry(cause).or_default() += 1;
-                }
-            }
-        }
-
-        let mut smodel_stream = ModelIndexStream::new();
-        let mut smodel_spans = Vec::new();
-        for flush in &work.smodel_flushes {
-            let owner_start = flush.entry_start as usize;
-            let owner_end = owner_start.saturating_add(flush.entry_count as usize);
-            let Some(entries) = slot.packed.smodel.get(owner_start..owner_end) else {
-                miss = miss.saturating_add(1);
-                *miss_rows
-                    .entry("SmodelDynamicProvenanceMissing".into())
-                    .or_default() += 1;
-                continue;
-            };
-            for (entry_offset, entry) in entries.iter().enumerate() {
-                let hit_start = entry.index_byte_offset / 2;
-                let hit_count = u32::from(entry.tri_count).saturating_mul(3);
-                match emit_local_smodel_shadow_flush(
-                    extracted.world.static_geometry.smodel_indices.as_slice(),
-                    hit_start,
-                    hit_count,
-                    &mut smodel_stream,
-                ) {
-                    Ok((ring_epoch, draw_start, draw_count)) => smodel_spans.push((
-                        ring_epoch,
-                        draw_start,
-                        draw_count,
-                        owner_start.saturating_add(entry_offset),
-                    )),
-                    Err(cause) => {
-                        miss = miss.saturating_add(1);
-                        *miss_rows.entry(cause).or_default() += 1;
+                Ok(gpu) => {
+                    let gpu = Arc::new(gpu);
+                    let world = gpu.world_from_local;
+                    if let (Some(key), Some(memo)) = (key, memo_dyn.as_mut()) {
+                        memo.insert(key, Ok(gpu.clone()));
                     }
+                    flushes.push((gpu, None, world));
                 }
-            }
-        }
-        let smodel_epochs = smodel_stream.finish();
-        for (ring_epoch, draw_start, draw_count, owner) in smodel_spans {
-            let owners = slot
-                .packed
-                .smodel_draw_indices
-                .get(owner..owner + 1)
-                .unwrap_or(&[]);
-            match prepare.prepare_shadow_flush_draws(
-                shadow_exec_executor,
-                shadow_exec_view,
-                SunFlush {
-                    kind: SunFlushKind::Smodel,
-                    draw_start,
-                    draw_count,
-                    ring_epoch,
-                },
-                owners,
-                0,
-                spot,
-                target,
-            ) {
-                Ok(gpu) => flushes.push(gpu),
                 Err(cause) => {
                     miss = miss.saturating_add(1);
-                    *miss_rows.entry(cause).or_default() += 1;
+                    count_miss_row(&mut miss_rows, &cause);
+                    if let (Some(key), Some(memo)) = (key, memo_dyn.as_mut()) {
+                        memo.insert(key, Err(Arc::from(cause)));
+                    }
                 }
             }
         }
@@ -4725,20 +5212,34 @@ fn prepare_shadowmap_spot(
             &mut miss,
             &mut miss_rows,
         );
-        flushes.extend(skinned_gpu);
+        flushes.extend(skinned_gpu.into_iter().map(|gpu| {
+            let world = gpu.world_from_local;
+            (Arc::new(gpu), None, world)
+        }));
 
-        let start = all_prepared.len();
-        for flush in &flushes {
+        if let Some(memo) = memo_dyn {
+            memo.end_frame();
+        }
+        for (flush, span, world) in &flushes {
             for (draw, code) in flush.draws.iter().zip(&flush.pass_code) {
-                let overlay = shadowmap_spot_overlay(code, view_parms, flush.world_from_local);
+                let overlay = shadowmap_spot_overlay(code, view_parms, *world);
                 match overlay_shadow_draw_constants_with(
                     draw,
                     &overlay,
-                    flush.world_from_local,
+                    *world,
                     u8::try_from(emitted.slot_index).unwrap_or(u8::MAX),
                     &mut overlay_intern,
                 ) {
-                    Ok(draw) => all_prepared.push(draw),
+                    Ok(mut draw) => {
+                        if let Some((start, count, ring_epoch)) = *span
+                            && draw.tess != ExactTessBind::SmodelSkinned
+                        {
+                            draw.start = start;
+                            draw.count = count;
+                            draw.ring_epoch = ring_epoch;
+                        }
+                        all_prepared.push(draw);
+                    }
                     Err(()) => {
                         miss = miss.saturating_add(1);
                         *miss_rows.entry("SpotOverlayRefused".into()).or_default() += 1;
@@ -4928,6 +5429,7 @@ fn prepare_shadowmap_sun(
         executor: shadow_exec_executor,
         code_sources: shadow_code_sources,
         pack_draws,
+        ..
     } = shadow_exec;
     shadow_exec_executor.begin_list();
     shadow_code_sources.clone_from(&extracted.frame.exec_frame.code_sources);
@@ -5174,6 +5676,21 @@ fn prepare_shadowmap_sun(
                 .get(owner_start..owner_end)
                 .unwrap_or(&[]);
             retry_n = retry_n.saturating_add(1);
+            let key = shadow_flush_key(
+                sun,
+                draws,
+                owners,
+                if pi == 0 { 0 } else { near_n },
+                world_shadow_static_owner,
+                src_start,
+                count,
+            );
+            if let Some(gpu) = key.as_ref().and_then(|key| static_draws.world_memo[pi].take(key)) {
+                static_draws.world[pi][slot_i] = Some(gpu);
+                static_draws.world_keys[pi][slot_i] = key;
+                continue;
+            }
+            static_draws.world_keys[pi][slot_i] = key;
             match prepare.prepare_shadow_flush_draws(
                 shadow_exec_executor,
                 shadow_exec_view,
@@ -5215,6 +5732,29 @@ fn prepare_shadowmap_sun(
                 .get(owner_start..owner_end)
                 .unwrap_or(&[]);
             retry_n = retry_n.saturating_add(1);
+            let key = shadow_flush_key(
+                sun,
+                draws,
+                owners,
+                if pi == 0 { 0 } else { near_n },
+                smodel_shadow_static_owner,
+                span.draw_start,
+                span.draw_count,
+            );
+            if let Some(mut gpu) = key.as_ref().and_then(|key| static_draws.smodel_memo[pi].take(key)) {
+                // Its span as a fresh prepare sets it (the index ring may have moved on).
+                for draw in &mut gpu.draws {
+                    if draw.tess != ExactTessBind::SmodelSkinned {
+                        draw.start = span.draw_start;
+                        draw.count = span.draw_count;
+                        draw.ring_epoch = span.ring_epoch;
+                    }
+                }
+                static_draws.smodel[pi][slot_i] = Some(gpu);
+                static_draws.smodel_keys[pi][slot_i] = key;
+                continue;
+            }
+            static_draws.smodel_keys[pi][slot_i] = key;
             match prepare.prepare_shadow_flush_draws(
                 shadow_exec_executor,
                 shadow_exec_view,

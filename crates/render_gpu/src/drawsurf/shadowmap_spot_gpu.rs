@@ -33,6 +33,9 @@ pub(super) struct ShadowmapSpotGpu {
     smodel_index_epoch_bytes: [Vec<u64>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
     xmodel_index_epochs: [Vec<Buffer>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
     xmodel_index_epoch_bytes: [Vec<u64>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
+    /// What each index buffer was last given (a static model's indices rarely change).
+    smodel_index_epoch_last: [Vec<Vec<u32>>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
+    xmodel_index_epoch_last: [Vec<Vec<u32>>; lighting_iw4::SPOT_SHADOW_SM_LIGHT_CAP],
 }
 
 impl ShadowmapSpotGpu {
@@ -67,6 +70,7 @@ impl ShadowmapSpotGpu {
         upload_shadow_index_epochs(
             &mut self.smodel_index_epochs[slot],
             &mut self.smodel_index_epoch_bytes[slot],
+            &mut self.smodel_index_epoch_last[slot],
             device,
             queue,
             epochs,
@@ -88,6 +92,7 @@ impl ShadowmapSpotGpu {
         upload_shadow_index_epochs(
             &mut self.xmodel_index_epochs[slot],
             &mut self.xmodel_index_epoch_bytes[slot],
+            &mut self.xmodel_index_epoch_last[slot],
             device,
             queue,
             epochs,
