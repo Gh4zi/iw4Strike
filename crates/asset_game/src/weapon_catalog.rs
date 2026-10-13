@@ -5578,6 +5578,31 @@ impl WeaponBuild {
         (linked, inline)
     }
 
+    /// The first-person and world model names the weapons `keep` picks use: gun, hands,
+    /// rocket, second gun and attachments; world model and attachments.
+    pub fn model_names_for(
+        &self,
+        keep: impl Fn(&str) -> bool,
+    ) -> (HashSet<String>, HashSet<String>) {
+        let (mut view, mut world) = (HashSet::new(), HashSet::new());
+        for row in self.registry.rows.iter().filter(|row| keep(&row.name)) {
+            view.extend(
+                [&row.gun_xmodel, &row.hand_xmodel, &row.rocket_model, &row.secondary_gun_xmodel]
+                    .into_iter()
+                    .flatten()
+                    .chain(&row.attachment_view_models)
+                    .cloned(),
+            );
+            world.extend(
+                row.world_model
+                    .iter()
+                    .chain(&row.attachment_world_models)
+                    .cloned(),
+            );
+        }
+        (view, world)
+    }
+
     pub fn resolve_fpv_mesh_edges(&mut self, fpv: &crate::FpvMeshCatalog) {
         for row in &mut self.registry.rows {
             row.gun_xmodel_edge = fpv_model_edge(row.gun_xmodel.as_deref(), row.namespace, fpv);

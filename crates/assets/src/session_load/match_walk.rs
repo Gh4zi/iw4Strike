@@ -309,6 +309,27 @@ pub(super) async fn walk_prepared_match(
     let map_fpv_n = map_fpv.len();
     let map_fpv_added = fpv_meshes.absorb(map_fpv);
     fpv_meshes.set_map_namespace(map_namespace);
+    if movement_iw4::rules::CS_RULES {
+        // Counter-Strike plays only its own guns, each worn by one MW2 weapon, so the other MW2
+        // weapons' first-person and world models (hundreds of them, ~1 GB) are never drawn.
+        // The registry names weapons without their `_mp` (`ak47`, `ak47_acog`).
+        let (view, world) = weapons.model_names_for(|name| {
+            let mp = format!("{name}_mp");
+            weapon_iw4::cs::cs_weapon_index_for(&mp).is_some()
+                || matches!(mp.as_str(), "briefcase_bomb_defuse_mp" | "defaultweapon_mp")
+        });
+        let fpv_before = fpv_meshes.len();
+        let world_before = world_weapons.len();
+        // The bodies' first-person hands are found by name, not through a weapon.
+        let fpv_dropped = fpv_meshes
+            .retain_names(|name| view.contains(name) || name.contains("viewhands"));
+        let world_dropped = world_weapons.retain_names(|name| world.contains(name));
+        report.push(format!(
+            "CS weapon models: first-person {fpv_before}→{} ({fpv_dropped} MW2-only dropped), world {world_before}→{} ({world_dropped} dropped)",
+            fpv_meshes.len(),
+            world_weapons.len(),
+        ));
+    }
     weapons.resolve_fpv_mesh_edges(&fpv_meshes);
     weapons.resolve_fpv_hands(&fpv_meshes, &bodies);
     let assembly_started = std::time::Instant::now();

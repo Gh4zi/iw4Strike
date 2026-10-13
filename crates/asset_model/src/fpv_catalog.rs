@@ -394,6 +394,35 @@ impl FpvMeshBuild {
             entry.resolve_materials(materials);
         }
     }
+
+    /// Drops every model `keep` turns down, in every namespace, before anything holds an index
+    /// into the catalog. Returns how many went.
+    pub fn retain_names(&mut self, keep: impl Fn(&str) -> bool) -> usize {
+        let FpvMeshCatalog {
+            identity,
+            entries,
+            order,
+            zones,
+            map_namespace,
+            ..
+        } = std::mem::take(&mut self.catalog);
+        let before = entries.len();
+        let mut kept = FpvMeshCatalog {
+            identity,
+            map_namespace,
+            ..FpvMeshCatalog::default()
+        };
+        for ((key, entry), zone) in order.into_iter().zip(entries).zip(zones) {
+            if keep(&key.name) {
+                kept.indices.insert(key.clone(), kept.entries.len());
+                kept.order.push(key);
+                kept.zones.push(zone);
+                kept.entries.push(entry);
+            }
+        }
+        self.catalog = kept;
+        before - self.catalog.entries.len()
+    }
 }
 
 impl FpvMeshCatalog {

@@ -177,6 +177,19 @@ impl Drop for FlightGuard {
     }
 }
 
+/// Forgets the landed common set for `key`: it is freed once the last load holding it is done,
+/// and the next load walks common_mp again. Whether there was one to forget.
+pub(super) fn release_common(key: &CommonKey) -> bool {
+    let mut slot = COMMON.lock().unwrap_or_else(|poison| poison.into_inner());
+    let landed = slot
+        .as_ref()
+        .is_some_and(|flight| flight.key == *key && flight.set.get().is_some());
+    if landed {
+        *slot = None;
+    }
+    landed
+}
+
 pub(super) fn landed_common(key: &CommonKey) -> Option<Arc<CommonSet>> {
     let slot = COMMON.lock().unwrap_or_else(|poison| poison.into_inner());
     let flight = slot.as_ref().filter(|flight| flight.key == *key)?;

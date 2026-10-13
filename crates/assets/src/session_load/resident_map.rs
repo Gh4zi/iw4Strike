@@ -85,6 +85,16 @@ pub async fn load_prepared_match(
         prepared.report.push(format!(
             "resident map: not kept for a same-map load (under {KEEP_FOR_NEXT_LOAD_MIN_RAM_GIB} GiB of RAM; {KEEP_FOR_NEXT_LOAD_ENV}=1 keeps it)"
         ));
+        // Nor the common set: kept, it holds every common_mp model the match did not take (the
+        // MW2 weapons Counter-Strike never draws, scene and effect models nothing names) through
+        // the whole match. The next map walks common_mp again (~2 s).
+        if let Some(common) = &common
+            && release_common(&common.key)
+        {
+            prepared
+                .report
+                .push("common set: released for the match (the next map walks common_mp again)".into());
+        }
     } else if let (Some(zone), Some(common)) = (stamp, common) {
         let keeping = std::time::Instant::now();
         let resident = prepared.clone();

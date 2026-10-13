@@ -118,6 +118,33 @@ impl WorldWeaponBuild {
         self.catalog
     }
 
+    /// Drops every model `keep` turns down, in every namespace, before anything holds an index
+    /// into the catalog. Returns how many went.
+    pub fn retain_names(&mut self, keep: impl Fn(&str) -> bool) -> usize {
+        let WorldWeaponCatalog {
+            identity,
+            entries,
+            order,
+            zones,
+            ..
+        } = std::mem::take(&mut self.catalog);
+        let before = entries.len();
+        let mut kept = WorldWeaponCatalog {
+            identity,
+            ..WorldWeaponCatalog::default()
+        };
+        for ((key, entry), zone) in order.into_iter().zip(entries).zip(zones) {
+            if keep(&key.name) {
+                kept.indices.insert(key.clone(), kept.entries.len());
+                kept.order.push(key);
+                kept.zones.push(zone);
+                kept.entries.push(entry);
+            }
+        }
+        self.catalog = kept;
+        before - self.catalog.entries.len()
+    }
+
     pub fn set_strings(&mut self, strings: ScriptStrings) {
         self.strings = strings;
     }
