@@ -331,18 +331,32 @@ pub(super) async fn walk_prepared_match(
     // The registry names weapons without their `_mp` (`ak47`, `ak47_acog`).
     let cs_weapon_models =
         movement_iw4::rules::CS_RULES.then(|| weapons.model_names_for(super::cs_keeps_weapon));
+    // The materials only the dropped models wear; their textures are not decoded below.
+    let mut cs_dropped_materials = std::collections::BTreeSet::new();
     if let Some((view, world)) = &cs_weapon_models {
         let fpv_before = fpv_meshes.len();
         let world_before = world_weapons.len();
         // The bodies' first-person hands are found by name, not through a weapon.
-        let fpv_dropped = fpv_meshes
-            .retain_names(|name| view.contains(name) || name.contains("viewhands"));
-        let world_dropped = world_weapons.retain_names(|name| world.contains(name));
+        let fpv_keep = |name: &str| view.contains(name) || name.contains("viewhands");
+        let world_keep = |name: &str| world.contains(name);
+        cs_dropped_materials = fpv_meshes.material_names(|name| !fpv_keep(name));
+        cs_dropped_materials.extend(world_weapons.material_names(|name| !world_keep(name)));
+        let fpv_dropped = fpv_meshes.retain_names(fpv_keep);
+        let world_dropped = world_weapons.retain_names(world_keep);
         report.push(format!(
             "CS weapon models: first-person {fpv_before}→{} ({fpv_dropped} MW2-only dropped), world {world_before}→{} ({world_dropped} dropped)",
             fpv_meshes.len(),
             world_weapons.len(),
         ));
+        // A material a kept model also wears keeps its textures.
+        for kept in [
+            fpv_meshes.material_names(|_| true),
+            world_weapons.material_names(|_| true),
+            bodies.material_names(),
+            projectile_meshes.material_names(),
+        ] {
+            cs_dropped_materials.retain(|name| !kept.contains(name));
+        }
     }
     weapons.resolve_fpv_mesh_edges(&fpv_meshes);
     weapons.resolve_fpv_hands(&fpv_meshes, &bodies);
@@ -548,6 +562,16 @@ pub(super) async fn walk_prepared_match(
             .map(|n| n.to_string())
             .unwrap_or_else(|| "missing".into()),
     ));
+
+    if !cs_dropped_materials.is_empty() {
+        // Their textures would only take video memory, which Windows also holds against the
+        // commit limit. Most are shared with a kept material, so this frees only a few dozen MB.
+        let (materials, rows) =
+            global.unbind_images_of(|name| cs_dropped_materials.contains(name));
+        report.push(format!(
+            "CS weapon materials: {materials} MW2-only unbound from their images, {rows} image rows released"
+        ));
+    }
 
     // The donors first, and only then the plan that claims the same names
     // they do. Its claims are resolved against the catalog they leave behind

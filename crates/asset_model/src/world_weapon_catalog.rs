@@ -283,6 +283,20 @@ impl WorldWeaponBuild {
 }
 
 impl WorldWeaponCatalog {
+    /// The lower-case names of the materials the models `pick` takes are drawn with.
+    pub fn material_names(
+        &self,
+        pick: impl Fn(&str) -> bool,
+    ) -> std::collections::BTreeSet<String> {
+        self.order
+            .iter()
+            .zip(&self.entries)
+            .filter(|(key, _)| pick(&key.name))
+            .flat_map(|(_, entry)| entry.material_keys.iter().flatten())
+            .map(|key| asset_core::AssetRef::bare_name(&key.name).to_ascii_lowercase())
+            .collect()
+    }
+
     pub fn identity(&self) -> u64 {
         self.identity
     }

@@ -3010,6 +3010,45 @@ impl MaterialCatalog {
 /// Read-only questions about a finished population. They are here and not on
 /// the build catalog because the answers do not change any more.
 impl MaterialDefinitions {
+    /// Unbinds the images of the materials `drop` picks (by lower-case bare name) and hands
+    /// back the claims on the rows no other material binds, so no image plan decodes them and
+    /// nothing uploads them. Returns the materials and the rows.
+    pub fn unbind_images_of(&mut self, drop: impl Fn(&str) -> bool) -> (usize, usize) {
+        let mut materials = 0;
+        let mut unbound = Vec::new();
+        for material in &mut self.materials {
+            let name = AssetRef::bare_name(material.name.as_str()).to_ascii_lowercase();
+            if !drop(&name) {
+                continue;
+            }
+            materials += 1;
+            unbound.extend(material.textures.iter_mut().filter_map(|binding| binding.image.take()));
+        }
+        let mut bound = vec![false; self.images.len()];
+        for row in self
+            .materials
+            .iter()
+            .flat_map(|material| material.textures.iter().filter_map(|binding| binding.image))
+        {
+            if let Some(slot) = bound.get_mut(row) {
+                *slot = true;
+            }
+        }
+        unbound.sort_unstable();
+        unbound.dedup();
+        let mut rows = 0;
+        for row in unbound {
+            if bound.get(row) == Some(&false)
+                && let Some(image) = self.images.get_mut(row)
+                && image.decoded.is_none()
+            {
+                image.pending_decode = None;
+                rows += 1;
+            }
+        }
+        (materials, rows)
+    }
+
     pub fn leftover_iw5_arg_top(&self) -> Option<String> {
         self.leftover_iw5_arg_ranked(0)
     }

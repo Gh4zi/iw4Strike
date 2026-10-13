@@ -180,6 +180,15 @@ impl BodyMeshBuild {
 }
 
 impl BodyMeshCatalog {
+    /// The lower-case names of the materials the bodies are drawn with.
+    pub fn material_names(&self) -> std::collections::BTreeSet<String> {
+        self.entries
+            .values()
+            .flat_map(|entry| entry.material_keys.iter().flatten())
+            .map(|key| asset_core::AssetRef::bare_name(&key.name).to_ascii_lowercase())
+            .collect()
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
