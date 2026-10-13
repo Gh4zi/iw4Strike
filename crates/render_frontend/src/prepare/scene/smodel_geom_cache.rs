@@ -365,15 +365,17 @@ pub(crate) fn cache_visible_smodel_surfaces(
     let cull_dists = cull
         .map(|c| c.static_model_cull_dists.as_slice())
         .unwrap_or(&[]);
-    for (_placement_i, placement) in plan.placements.iter().enumerate() {
-        let Some(authored) = placement.lighting_slot else {
+    // By authored slot, which is placement order (a placement is made per slot, in order): the
+    // visibility byte first, the placement only when it is seen.
+    let smodel_vis = cull.map(|c| c.smodel_vis.as_slice()).unwrap_or(&[]);
+    for (authored, placement_i) in plan.authored_placement_indices.iter().enumerate() {
+        if smodel_vis.get(authored).copied().unwrap_or(0) == 0 {
+            continue;
+        }
+        let Some(placement) = placement_i.and_then(|i| plan.placements.get(i)) else {
             continue;
         };
-        let vis = cull
-            .and_then(|c| c.smodel_vis.get(authored).copied())
-            .unwrap_or(0)
-            != 0;
-        if !vis {
+        if placement.lighting_slot != Some(authored) {
             continue;
         }
         if smodel_cull_dist_skips_slot(
