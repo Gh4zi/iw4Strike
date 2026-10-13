@@ -389,6 +389,7 @@ fn stage(
             host.marks
                 .set_material_name(handle, Some(&request.material));
             host.note_models_go_fire();
+            state.attached.retain(|a| a.handle != handle);
             state.attached.push(EntityMarkAttachment {
                 entity: request.entity,
                 model: model.to_string(),
