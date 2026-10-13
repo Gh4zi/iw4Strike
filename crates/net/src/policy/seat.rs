@@ -346,6 +346,15 @@ fn rebase_archived_world(out: &mut Snapshot, viewer: ClientId, delta_ms: i32) {
         p.detonate_at_ms = p.detonate_at_ms.map(|t| t.wrapping_add(delta_ms));
         p.cleanup_at_ms = p.cleanup_at_ms.wrapping_add(delta_ms);
     }
+    let bodies = out.meta.corpses.slots.iter_mut();
+    for body in bodies.filter(|body| body.occupied) {
+        if body.tr_time != 0 {
+            body.tr_time = body.tr_time.wrapping_add(delta_ms);
+        }
+        if body.spawn_time_ms != 0 {
+            body.spawn_time_ms = body.spawn_time_ms.wrapping_add(delta_ms);
+        }
+    }
     for (id, ps) in &mut out.players {
         if *id != viewer {
             rebase_archived_timers(ps, delta_ms);
