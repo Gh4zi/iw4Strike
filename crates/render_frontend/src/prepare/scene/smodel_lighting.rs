@@ -202,14 +202,15 @@ pub(crate) fn update_smodel_lighting(
     let mut visible: Vec<usize> = Vec::new();
     let eye = prepared.ready.then_some(lock_pvs.dpvs_eye(&prepared));
     for slot in 0..lighting.tiles.len() {
+        // Visibility first: a byte per model, where a tile is a whole lighting block.
+        let seen = cull.smodel_vis.get(slot).copied().unwrap_or(0) != 0;
+        if !seen {
+            continue;
+        }
         if lighting.tiles.get(slot).is_none_or(|t| t.is_none()) {
             continue;
         }
         if lighting.parents.get(slot).copied().flatten().is_none() {
-            continue;
-        }
-        let seen = cull.smodel_vis.get(slot).copied().unwrap_or(0) != 0;
-        if !seen {
             continue;
         }
         let origin = scene
