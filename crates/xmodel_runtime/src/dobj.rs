@@ -59,8 +59,9 @@ pub struct DObj {
     pub models: Vec<ModelSlot>,
     pub duplicates: Vec<(usize, usize)>,
     /// Each bone name's first index, built once: `tracks_for` runs for every clip of every
-    /// posed model every frame, and rebuilt this map each time.
-    first_by_name: std::collections::HashMap<String, usize>,
+    /// posed model every frame, and rebuilt this map each time. foldhash, not SipHash: that
+    /// lookup per clip track was most of the authority's per-tick hitbox posing.
+    first_by_name: std::collections::HashMap<String, usize, foldhash::fast::FixedState>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -279,7 +280,8 @@ impl DObj {
             }
         }
 
-        let mut first_by_name = std::collections::HashMap::with_capacity(bones.len());
+        let mut first_by_name =
+            std::collections::HashMap::with_capacity_and_hasher(bones.len(), Default::default());
         for (index, bone) in bones.iter().enumerate() {
             first_by_name.entry(bone.name.clone()).or_insert(index);
         }

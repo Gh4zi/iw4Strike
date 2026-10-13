@@ -7899,6 +7899,7 @@ name = "xmodel_runtime"
 version = "0.1.0"
 dependencies = [
  "anim_iw4",
+ "foldhash 0.2.0",
  "glam",
 ]
 
