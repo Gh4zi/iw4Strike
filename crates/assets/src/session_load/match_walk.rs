@@ -309,15 +309,17 @@ pub(super) async fn walk_prepared_match(
     let map_fpv_n = map_fpv.len();
     let map_fpv_added = fpv_meshes.absorb(map_fpv);
     fpv_meshes.set_map_namespace(map_namespace);
-    if movement_iw4::rules::CS_RULES {
-        // Counter-Strike plays only its own guns, each worn by one MW2 weapon, so the other MW2
-        // weapons' first-person and world models (hundreds of them, ~1 GB) are never drawn.
-        // The registry names weapons without their `_mp` (`ak47`, `ak47_acog`).
-        let (view, world) = weapons.model_names_for(|name| {
+    // Counter-Strike plays only its own guns, each worn by one MW2 weapon, so the other MW2
+    // weapons' first-person and world models (hundreds of them, ~1 GB) are never drawn.
+    // The registry names weapons without their `_mp` (`ak47`, `ak47_acog`).
+    let cs_weapon_models = movement_iw4::rules::CS_RULES.then(|| {
+        weapons.model_names_for(|name| {
             let mp = format!("{name}_mp");
             weapon_iw4::cs::cs_weapon_index_for(&mp).is_some()
                 || matches!(mp.as_str(), "briefcase_bomb_defuse_mp" | "defaultweapon_mp")
-        });
+        })
+    });
+    if let Some((view, world)) = &cs_weapon_models {
         let fpv_before = fpv_meshes.len();
         let world_before = world_weapons.len();
         // The bodies' first-person hands are found by name, not through a weapon.
@@ -421,6 +423,27 @@ pub(super) async fn walk_prepared_match(
     let mut scene_names = scripts.asset_names();
     scene_names.extend(facts.objective_visuals.model_names().map(str::to_owned));
     common_scene_models.retain_names(&scene_names);
+    if let Some((_, world)) = &cs_weapon_models {
+        // The MW2 scripts precache every weapon, which kept every MW2 world gun in the scene
+        // catalog too (~300 MB of meshes); the CS guns' own stay.
+        let before = common_scene_models.len();
+        let dropped: std::collections::BTreeSet<String> = common_scene_models
+            .iter()
+            .map(|(key, _)| key.0.as_str())
+            .filter(|name| {
+                asset_model::model_kind(name) == Some(asset_model::ModelKind::WorldWeapon)
+                    && !world.contains(*name)
+            })
+            .map(str::to_owned)
+            .collect();
+        scene_names.retain(|name| !dropped.contains(name));
+        common_scene_models.retain_names(&scene_names);
+        report.push(format!(
+            "CS scene models: {before}→{} ({} MW2 world guns dropped)",
+            common_scene_models.len(),
+            dropped.len()
+        ));
+    }
     t5_scene_models.retain_names(&scene_names);
     iw5_scene_models.retain_names(&scene_names);
     match map_namespace {

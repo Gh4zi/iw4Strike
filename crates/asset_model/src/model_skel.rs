@@ -105,6 +105,18 @@ pub struct ModelSkel {
 }
 
 impl ModelSkel {
+    /// Roughly what the model's vertex, index and skinning arrays take on the heap.
+    pub fn approx_bytes(&self) -> usize {
+        use std::mem::size_of_val;
+        size_of_val(self.positions.as_slice())
+            + size_of_val(self.normals.as_slice())
+            + size_of_val(self.colors.as_slice())
+            + size_of_val(self.uvs.as_slice())
+            + size_of_val(self.indices.as_slice())
+            + size_of_val(self.vert_skin.as_slice())
+            + size_of_val(self.packed_vertices.as_slice())
+    }
+
     pub fn retained_capability(&self) -> Option<xmodel_runtime::RetainedModelCapability> {
         Some(xmodel_runtime::RetainedModelCapability {
             key: self.name.clone(),
