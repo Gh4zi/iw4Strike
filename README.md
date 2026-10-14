@@ -536,6 +536,16 @@ Known issues with CS2 on:
   models CS never draws are dropped, CS sounds and CS:GO animations are no longer kept twice,
   and on PCs with less than 24 GB of RAM the shared MW2 data isn't kept through the match for
   the next map (the next map loads about 2 seconds slower)
+- [x] More FPS and fewer hitches in firefights: about 8–10% more FPS with 9 bots fighting
+  nonstop on Invasion and Karachi, and the server's slowest ticks are a third shorter
+  - Fixed: a short freeze (up to 23 ms) the first time the kill feed, a headshot icon, the C4
+    icon or a scoreboard icon showed up. The HUD's images now load in the background with the
+    map
+  - Fixed: stutters on Sub Base when several players fired at once (each bullet tested
+    thousands of terrain triangles)
+  - Fixed: FPS slowly dropping over a match as bullet holes piled up on props
+  - The server no longer poses MW2's hit volumes for players shot with CS:GO's hit boxes, and
+    muzzle flashes and impacts are built on every CPU core
 - [ ] Blood and hit feedback like CS:GO:
   - [x] A blood spray where a bullet hits a player (MW2's, bigger for a kill or a headshot)
   - [x] Blood splattered on the walls and floor behind a player a bullet hits, as CS:GO does it
