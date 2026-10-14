@@ -341,7 +341,11 @@ fn publish_client_action_input(
     binds: Res<KeyBinds>,
     mut scripted: ResMut<ConsoleInputState>,
     console: Res<ConsoleState>,
-    (script_menus, buy_menu): (Option<Res<hud::ScriptMenus>>, Option<Res<hud::CsBuyMenu>>),
+    (script_menus, buy_menu, chat): (
+        Option<Res<hud::ScriptMenus>>,
+        Option<Res<hud::CsBuyMenu>>,
+        Option<Res<hud::CsChat>>,
+    ),
     mut hud_input: ResMut<frame::HudInputView>,
     settings: Res<frame::GameSettings>,
     mut out: ResMut<ClientActionInput>,
@@ -400,6 +404,7 @@ fn publish_client_action_input(
     let buy_captures = buy_menu.is_some_and(|menu| menu.captures_input());
     let modal_captured = console.open
         || buy_captures
+        || chat.is_some_and(|chat| chat.captures_input())
         || script_menus.is_some_and(|menus| menus.captures_input())
         || keys.just_pressed(KeyCode::Escape)
         || pad.is_some_and(|pad| pad.just_pressed(bevy::input::gamepad::GamepadButton::Start));

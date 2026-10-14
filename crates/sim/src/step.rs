@@ -835,6 +835,7 @@ fn action_needs_player_row(action: &ClientAction) -> bool {
             | ClientAction::ActionSlot { .. }
             | ClientAction::ChooseDefaultClass { .. }
             | ClientAction::MenuResponse { .. }
+            | ClientAction::Say { .. }
     )
 }
 
@@ -1020,6 +1021,37 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                 world.begin_script_movers_rotate_velocity_supplied(
                     speed,
                     crate::corpse::level_time_ms(tick),
+                );
+            }
+            ClientAction::Say { text, .. } => {
+                crate::cs_chat::say(world, *id, crate::chat_text(&text));
+            }
+            ClientAction::ToggleNoclip { .. } => {
+                // MW2's `noclip` without its cheat check: any living player, on or off.
+                if !world
+                    .client_meta(*id)
+                    .is_some_and(|m| m.lifecycle == ClientLifecycle::Alive)
+                {
+                    continue;
+                }
+                let Some(ps) = world.player_mut(*id) else {
+                    continue;
+                };
+                let on = match ps.pm_type {
+                    playerstate_iw4::PM_TYPE_NOCLIP => false,
+                    0 => true,
+                    _ => continue,
+                };
+                ps.pm_type = if on {
+                    playerstate_iw4::PM_TYPE_NOCLIP
+                } else {
+                    0
+                };
+                diag::info!(
+                    Sim,
+                    "noclip: client={} {}",
+                    id.0,
+                    if on { "on" } else { "off" }
                 );
             }
             ClientAction::ToggleGod { .. } => {

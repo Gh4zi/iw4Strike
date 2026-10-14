@@ -112,6 +112,17 @@ pub enum ClientAction {
         request_id: ActionRequestId,
     },
 
+    /// `noclip`: anyone may, cheats or not.
+    ToggleNoclip {
+        request_id: ActionRequestId,
+    },
+
+    /// A chat line to everyone (`say`, both teams).
+    Say {
+        request_id: ActionRequestId,
+        text: [u8; CHAT_BYTES],
+    },
+
     DebugDamage {
         request_id: ActionRequestId,
         amount: i32,
@@ -165,6 +176,27 @@ pub struct PlayerProfile {
 }
 
 pub const MENU_RESPONSE_BYTES: usize = 48;
+
+/// A chat line's longest, in bytes (CS's `say` takes 127 characters).
+pub const CHAT_BYTES: usize = 120;
+
+/// `text` as a chat line's field, cut at a character when longer than [`CHAT_BYTES`].
+#[must_use]
+pub fn chat_field(text: &str) -> [u8; CHAT_BYTES] {
+    let mut end = text.len().min(CHAT_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut field = [0u8; CHAT_BYTES];
+    field[..end].copy_from_slice(&text.as_bytes()[..end]);
+    field
+}
+
+#[must_use]
+pub fn chat_text(field: &[u8; CHAT_BYTES]) -> &str {
+    let len = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+    std::str::from_utf8(&field[..len]).unwrap_or("")
+}
 
 pub fn menu_response_field(text: &str) -> Option<[u8; MENU_RESPONSE_BYTES]> {
     let bytes = text.as_bytes();
@@ -231,6 +263,8 @@ pub fn action_request_id(action: &ClientAction) -> ActionRequestId {
         | ClientAction::Move { request_id, .. }
         | ClientAction::BeginScriptMoverRotateVelocity { request_id, .. }
         | ClientAction::ToggleGod { request_id }
+        | ClientAction::ToggleNoclip { request_id }
+        | ClientAction::Say { request_id, .. }
         | ClientAction::DebugDamage { request_id, .. }
         | ClientAction::SetName { request_id, .. }
         | ClientAction::SetProfile { request_id, .. }

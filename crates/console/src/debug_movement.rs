@@ -31,6 +31,13 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "always_pixelsurf [0|1] — server cheat, off by default and at every launch: hold a key into any wall while falling and moving along it to pixelsurf: your height holds until you let go or something stops you (not in mv_mode cs16). The host's applies to everyone on the server",
         ));
     }
+    for name in ["sv_autobunnyhop", "sv_autobunnyhopping"] {
+        if registry.resolve(name).is_none() {
+            registry.register(crate::CommandSpec::new(name).usage(
+                "sv_autobunnyhop [0|1] — server setting (CS:GO's sv_autobunnyhopping), off by default and at every launch: hold jump to jump again the moment you land (not in mv_mode cs16; surf and mmod always do). The host's applies to everyone on the server",
+            ));
+        }
+    }
     if registry.resolve("shooting_mode").is_none() {
         registry.register(crate::CommandSpec::new("shooting_mode").usage(
             "shooting_mode [csgo|cs16] — how CS guns shoot on the server you host: CS:GO's spray, inaccuracy and recoil (default) or CS 1.6's",
@@ -201,7 +208,7 @@ pub(crate) fn sync_movement_mode(game: Res<frame::GameSettings>) {
     }
 }
 
-/// The movement cheats in play (`always_edgebug`, `always_pixelsurf`): server settings, off
+/// The movement cheats in play (`always_edgebug`, `always_pixelsurf`, `sv_autobunnyhop`): server settings, off
 /// unless the host turns them on. Hosting, they are this player's own; on another's server, the
 /// server's, which it tells its clients in the server info, so their prediction moves as it does
 /// and none turns them on for themselves.
@@ -219,10 +226,18 @@ pub(crate) fn follow_server_movement_cheats(
                 .any(|(key, value)| key == name && value == "1")
         })
     };
-    let (edgebug, pixelsurf) = if authority.is_some() {
-        (game.always_edgebug, game.always_pixelsurf)
+    let (edgebug, pixelsurf, autohop) = if authority.is_some() {
+        (
+            game.always_edgebug,
+            game.always_pixelsurf,
+            game.auto_bunnyhop,
+        )
     } else {
-        (server("always_edgebug"), server("always_pixelsurf"))
+        (
+            server("always_edgebug"),
+            server("always_pixelsurf"),
+            server("sv_autobunnyhop"),
+        )
     };
     if movement_iw4::rules::always_edgebug() != edgebug {
         movement_iw4::rules::set_always_edgebug(edgebug);
@@ -231,6 +246,10 @@ pub(crate) fn follow_server_movement_cheats(
     if movement_iw4::rules::always_pixelsurf() != pixelsurf {
         movement_iw4::rules::set_always_pixelsurf(pixelsurf);
         diag::info!(Console, "always_pixelsurf = {}", u8::from(pixelsurf));
+    }
+    if movement_iw4::rules::auto_bunnyhop() != autohop {
+        movement_iw4::rules::set_auto_bunnyhop(autohop);
+        diag::info!(Console, "sv_autobunnyhop = {}", u8::from(autohop));
     }
 }
 
@@ -429,6 +448,19 @@ pub(crate) fn route_movement_commands(
                     format!("always_pixelsurf = {arg}")
                 }
                 _ => "usage: always_pixelsurf [0|1]".to_owned(),
+            },
+            "sv_autobunnyhop" | "sv_autobunnyhopping" => match cmd.args.as_slice() {
+                [] => format!(
+                    "sv_autobunnyhop = {}",
+                    u8::from(movement_iw4::rules::auto_bunnyhop())
+                ),
+                [arg] if arg == "0" || arg == "1" => {
+                    movement_iw4::rules::set_auto_bunnyhop(arg == "1");
+                    game.auto_bunnyhop = arg == "1";
+                    game.touch();
+                    format!("sv_autobunnyhop = {arg}")
+                }
+                _ => "usage: sv_autobunnyhop [0|1]".to_owned(),
             },
             "sv_destructibles" => match cmd.args.as_slice() {
                 [] => format!(

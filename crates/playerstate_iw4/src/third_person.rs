@@ -14,6 +14,9 @@ pub const PM_TYPE_DEAD_LINKED: i32 = 9;
 
 pub const PM_TYPE_NORMAL_LINKED: i32 = 1;
 
+/// Flying through everything (`noclip`).
+pub const PM_TYPE_NOCLIP: i32 = 2;
+
 pub const MAX_CLIENT_CORPSES: i32 = 8;
 
 pub const PLAYER_CORPSE_ENTITY_BASE: i32 = 18;

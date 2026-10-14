@@ -639,7 +639,7 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             "snd_hrtf" => settings.hrtf = value.trim() == "1",
             "sv_destructibles" => settings.destructibles = value.trim() == "1",
             // Server cheats, off at every launch: not kept (older settings files have them).
-            "always_edgebug" | "always_pixelsurf" => {}
+            "always_edgebug" | "always_pixelsurf" | "sv_autobunnyhop" => {}
             "_vgui_menus" => settings.vgui_menus = value.trim() != "0",
             "cl_roundbanner" => {
                 if hud::RoundBanner::parse(value).is_some() {

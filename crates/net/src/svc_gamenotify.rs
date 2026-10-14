@@ -9,6 +9,9 @@ pub const SVC_PRINT: u8 = 0x66;
 
 pub const SVC_PRINT_BOLD: u8 = 0x67;
 
+/// A chat line: a print the CS HUD shows in its chat box.
+pub const SVC_CHAT: u8 = 0x68;
+
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct SvcGameNotify {
     pub id: u32,
@@ -49,7 +52,9 @@ impl PendingGameNotify {
 
     pub fn adopt_from_world(&mut self, world: &mut sim::SimWorld) {
         for print in world.take_pending_prints() {
-            let tag = if print.bold {
+            let tag = if print.chat {
+                SVC_CHAT
+            } else if print.bold {
                 SVC_PRINT_BOLD
             } else {
                 SVC_PRINT
@@ -116,7 +121,10 @@ pub fn decode_svc_game_notifies(
     for _ in 0..count {
         let id = input.get_u32()?;
         let tag = input.get_u8()?;
-        if !matches!(tag, SVC_DISCONNECT_NOTIFY | SVC_PRINT | SVC_PRINT_BOLD) {
+        if !matches!(
+            tag,
+            SVC_DISCONNECT_NOTIFY | SVC_PRINT | SVC_PRINT_BOLD | SVC_CHAT
+        ) {
             return Err(WireError::Malformed(
                 "gamenotify tag is not 'e', 'f' or 'g'",
             ));

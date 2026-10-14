@@ -114,6 +114,8 @@ pub struct PendingPlayerCardEvent {
 pub struct PendingPrint {
     pub recipient: Option<ClientId>,
     pub bold: bool,
+    /// A chat line (`say`, the scripts' `sayAll`/`sayTeam`): the CS HUD's chat box shows it.
+    pub chat: bool,
     pub template: String,
     pub arg: String,
 }

@@ -26,6 +26,7 @@ pub mod jump;
 mod ladder;
 pub mod mantle;
 mod melee_charge;
+mod noclip;
 mod pml;
 mod pmove;
 mod single;

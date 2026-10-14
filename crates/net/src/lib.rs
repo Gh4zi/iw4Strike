@@ -117,7 +117,7 @@ pub use signon::{
     phase_from_udp_link,
 };
 pub use svc_gamenotify::{
-    PendingGameNotify, SVC_DISCONNECT_NOTIFY, SVC_PRINT, SVC_PRINT_BOLD, SvcGameNotify,
+    PendingGameNotify, SVC_CHAT, SVC_DISCONNECT_NOTIFY, SVC_PRINT, SVC_PRINT_BOLD, SvcGameNotify,
     client_name_string,
 };
 pub use svc_playercard::{

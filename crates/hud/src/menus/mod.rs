@@ -116,6 +116,7 @@ pub(crate) struct MenuInputs<'w, 's> {
     party: Res<'w, frame::UiPartyState>,
     frontend_strings: Option<Res<'w, asset_game::LocalizeCatalog>>,
     cs_buy: Option<Res<'w, crate::cs_buymenu::CsBuyMenu>>,
+    cs_chat: Option<Res<'w, crate::cs_chat::CsChat>>,
     clipboard: Option<ResMut<'w, Clipboard>>,
 }
 
@@ -318,7 +319,11 @@ pub(crate) fn update_script_menus(
         let keys = &input.keys;
         // Escape over the CS buy menu only closes the buy menu.
         pressed.escape |= keys.just_pressed(KeyCode::Escape)
-            && !input.cs_buy.as_ref().is_some_and(|menu| menu.eats_escape());
+            && !input.cs_buy.as_ref().is_some_and(|menu| menu.eats_escape())
+            && !input
+                .cs_chat
+                .as_ref()
+                .is_some_and(|chat| chat.eats_escape());
         pressed.enter |=
             keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter);
         pressed.up |= keys.just_pressed(KeyCode::ArrowUp);

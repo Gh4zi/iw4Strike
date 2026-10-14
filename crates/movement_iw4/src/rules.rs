@@ -130,6 +130,7 @@ pub fn set_mode(mode: MovementMode) {
 
 static ALWAYS_EDGEBUG: AtomicBool = AtomicBool::new(false);
 static ALWAYS_PIXELSURF: AtomicBool = AtomicBool::new(false);
+static AUTO_BUNNYHOP: AtomicBool = AtomicBool::new(false);
 
 /// `always_edgebug`: every landing at an edge, a step's travel from going off it, is an edgebug
 /// (Source movement only).
@@ -153,6 +154,17 @@ pub fn set_always_pixelsurf(on: bool) {
     ALWAYS_PIXELSURF.store(on, Ordering::Relaxed);
 }
 
+/// `sv_autobunnyhop` (CS:GO's `sv_autobunnyhopping`): holding jump jumps again on landing, in
+/// every movement mode (Source movement only; surf and Momentum bhop always do).
+#[must_use]
+pub fn auto_bunnyhop() -> bool {
+    AUTO_BUNNYHOP.load(Ordering::Relaxed)
+}
+
+pub fn set_auto_bunnyhop(on: bool) {
+    AUTO_BUNNYHOP.store(on, Ordering::Relaxed);
+}
+
 /// The ruleset normal players move with. `None` keeps retail IW4 movement.
 #[must_use]
 pub fn active() -> Option<Ruleset> {
@@ -160,6 +172,7 @@ pub fn active() -> Option<Ruleset> {
         Ruleset::Source(profile) => Ruleset::Source(source::SourceProfile {
             always_edgebug: always_edgebug(),
             always_pixelsurf: always_pixelsurf(),
+            autohop: profile.autohop || auto_bunnyhop(),
             ..profile
         }),
         goldsrc @ Ruleset::GoldSrc(_) => goldsrc,

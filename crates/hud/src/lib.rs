@@ -4,6 +4,7 @@ mod breath_hint;
 mod chrome;
 mod compass;
 mod cs_buymenu;
+mod cs_chat;
 mod cs_crosshair;
 mod cs16_hud;
 mod cs_hud;
@@ -52,6 +53,7 @@ pub use gpu_list::{
 };
 pub use hudelem::HudElemSoundLatch;
 pub use cs_buymenu::CsBuyMenu;
+pub use cs_chat::CsChat;
 pub use cs_round_banner::RoundBanner;
 pub use menus::ScriptMenus;
 pub use overhead_names::{

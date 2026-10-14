@@ -17,6 +17,7 @@ mod gentity;
 pub mod hudelem;
 pub mod identities;
 pub mod input;
+mod cs_chat;
 mod cs_economy;
 mod cs_mapvote;
 pub use cs_mapvote::mapvote_next_map;
@@ -105,8 +106,8 @@ pub use identities::{
     ProjectileId, RNG_DOMAIN_SCHEME, RngDomain, ScriptModelId, ShotId,
 };
 pub use input::{
-    ActionRequestId, ClassId, ClientAction, MENU_RESPONSE_BYTES, SpawnPick, TickInput,
-    action_request_id, menu_response_field, menu_response_text,
+    ActionRequestId, CHAT_BYTES, ClassId, ClientAction, MENU_RESPONSE_BYTES, SpawnPick, TickInput,
+    action_request_id, chat_field, chat_text, menu_response_field, menu_response_text,
 };
 pub use mantle_xanim::MantleXAnimBind;
 

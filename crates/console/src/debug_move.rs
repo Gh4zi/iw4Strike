@@ -57,6 +57,16 @@ pub(crate) fn register_debug_move_commands(registry: &mut ConsoleRegistry) {
             crate::CommandSpec::new("god").usage("god — toggle invincibility (needs cheats)"),
         );
     }
+    if registry.resolve("noclip").is_none() {
+        registry.register(crate::CommandSpec::new("noclip").usage(
+            "noclip — fly through walls where you look (jump up, crouch down, walk key slower); again to stop. Anyone can, on any server",
+        ));
+    }
+    if registry.resolve("say").is_none() {
+        registry.register(crate::CommandSpec::new("say").usage(
+            "say <text> — chat to everyone on the server (both teams); T types one in game",
+        ));
+    }
     if registry.resolve("kill").is_none() {
         registry
             .register(crate::CommandSpec::new("kill").usage(
@@ -296,6 +306,45 @@ pub(crate) fn route_debug_move_commands(
                     &mut console,
                     &mut line,
                 );
+            }
+            "say" => {
+                let text = cmd.args.join(" ");
+                if text.trim().is_empty() {
+                    echo("usage: say <text>".into(), &mut console, &mut line);
+                    continue;
+                }
+                let Some(inbox) = inbox.as_deref_mut() else {
+                    echo("say: no action inbox".into(), &mut console, &mut line);
+                    continue;
+                };
+                let request_id = seq.allocate();
+                let action = ClientAction::Say {
+                    request_id,
+                    text: sim::chat_field(text.trim()),
+                };
+                if let Err(error) = inbox.push(local.0, action) {
+                    echo(format!("say: {error}"), &mut console, &mut line);
+                }
+            }
+            "noclip" => {
+                if !cmd.args.is_empty() {
+                    echo("usage: noclip".into(), &mut console, &mut line);
+                    continue;
+                }
+                if !alive(&presented, local.0) {
+                    echo("noclip: not alive".into(), &mut console, &mut line);
+                    continue;
+                }
+                let Some(inbox) = inbox.as_deref_mut() else {
+                    echo("noclip: no action inbox".into(), &mut console, &mut line);
+                    continue;
+                };
+                let request_id = seq.allocate();
+                if let Err(error) = inbox.push(local.0, ClientAction::ToggleNoclip { request_id }) {
+                    echo(format!("noclip: {error}"), &mut console, &mut line);
+                    continue;
+                }
+                echo("noclip: toggled".into(), &mut console, &mut line);
             }
             "kill" => {
                 if !alive(&presented, local.0) {

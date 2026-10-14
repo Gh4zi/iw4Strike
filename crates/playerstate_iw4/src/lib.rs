@@ -28,9 +28,9 @@ pub use third_person::{
     CG_THIRD_PERSON_FOCUS_Z, CG_THIRD_PERSON_PITCH_CLAMP, CG_THIRD_PERSON_PITCH_SCALE,
     CG_THIRD_PERSON_RANGE_DEFAULT, GENTITY_SPAWN_BASE, LINK_FLAGS_WEAPON_VIEW_ONLY,
     MAX_CLIENT_CORPSES, OffsetThirdPersonViewInputs, PLAYER_CORPSE_ENTITY_BASE, PM_TYPE_DEAD,
-    PM_TYPE_DEAD_LINKED, PM_TYPE_INTERMISSION, PM_TYPE_LAST_STAND, PM_TYPE_NORMAL_LINKED,
-    PM_TYPE_SPECTATOR, ThirdPersonView, ThirdPersonViewInputs, is_third_person_view,
-    look_at_killer_yaw, offset_third_person_view, pull_back_camera_through_brush,
-    viewweapon_frame_runs,
+    PM_TYPE_DEAD_LINKED, PM_TYPE_INTERMISSION, PM_TYPE_LAST_STAND, PM_TYPE_NOCLIP,
+    PM_TYPE_NORMAL_LINKED, PM_TYPE_SPECTATOR, ThirdPersonView, ThirdPersonViewInputs,
+    is_third_person_view, look_at_killer_yaw, offset_third_person_view,
+    pull_back_camera_through_brush, viewweapon_frame_runs,
 };
 pub use usercmd::{UserCmd, buttons};

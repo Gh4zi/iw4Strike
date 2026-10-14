@@ -42,6 +42,7 @@ pub(crate) fn publish_movement_cheats(world: &mut crate::frame::FrameWorld) {
     for (name, on) in [
         ("always_edgebug", movement_iw4::rules::always_edgebug()),
         ("always_pixelsurf", movement_iw4::rules::always_pixelsurf()),
+        ("sv_autobunnyhop", movement_iw4::rules::auto_bunnyhop()),
     ] {
         let value = if on { "1" } else { "0" };
         if runtime.dvars.get(name).map(String::as_str) != Some(value)

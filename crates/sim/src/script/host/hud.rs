@@ -398,6 +398,7 @@ fn print(
     FrameWorld::from_world(world).push_print(crate::PendingPrint {
         recipient: recipient.map(crate::ClientId),
         bold,
+        chat: false,
         template,
         arg,
     });
@@ -455,6 +456,7 @@ pub(crate) fn chat(
         frame.push_print(crate::PendingPrint {
             recipient,
             bold: false,
+            chat: true,
             template: template.clone(),
             arg: text.clone(),
         });

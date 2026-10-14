@@ -113,6 +113,22 @@ pub fn pmove_with_rules<C: CollisionBackend, L: MantleXAnimLength, R: MantleRoot
         landing_animation: false,
     };
 
+    if ps.pm_type == playerstate_iw4::PM_TYPE_NOCLIP {
+        update_view_angles(ps, cmd, context.view_angles);
+        let (forward, right, up) = math_iw4::angle_vectors(ps.viewangles);
+        pml.forward = forward;
+        pml.right = right;
+        pml.up = up;
+        crate::noclip::pmove(ps, cmd, &pml);
+        return PmoveResult {
+            pml,
+            bounds: context.bounds,
+            stance_event: None,
+            reset_torso: false,
+            landing_speed: 0.0,
+            unstuck: false,
+        };
+    }
     match rules.filter(|_| ps.pm_type == 0) {
         Some(crate::rules::Ruleset::GoldSrc(profile)) => {
             return crate::cs::pmove(ps, cmd, context, collision, profile, pml);

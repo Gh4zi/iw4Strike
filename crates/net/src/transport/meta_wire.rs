@@ -460,6 +460,15 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u8(22);
             out.put_u32(request_id);
         }
+        ClientAction::ToggleNoclip { request_id } => {
+            out.put_u8(30);
+            out.put_u32(request_id);
+        }
+        ClientAction::Say { request_id, text } => {
+            out.put_u8(31);
+            out.put_u32(request_id);
+            out.put_bytes(&text);
+        }
         ClientAction::DebugDamage { request_id, amount } => {
             out.put_u8(10);
             out.put_u32(request_id);
@@ -708,6 +717,15 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
         22 => Ok(ClientAction::ToggleGod {
             request_id: input.get_u32()?,
         }),
+        30 => Ok(ClientAction::ToggleNoclip {
+            request_id: input.get_u32()?,
+        }),
+        31 => {
+            let request_id = input.get_u32()?;
+            let mut text = [0u8; sim::CHAT_BYTES];
+            input.get_bytes(&mut text)?;
+            Ok(ClientAction::Say { request_id, text })
+        }
         20 => Ok(ClientAction::ResupplyAmmo {
             request_id: input.get_u32()?,
         }),

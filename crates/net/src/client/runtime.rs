@@ -1861,7 +1861,7 @@ pub fn publish_presented(
         if let Some(seat) = remote_poses.remove(&local.0) {
             predicted = seat;
         }
-    } else if armed && predicted.pm_type == 0 {
+    } else if armed && matches!(predicted.pm_type, 0 | playerstate_iw4::PM_TYPE_NOCLIP) {
         // Commands leave once per tick; the camera turns with the mouse every frame.
         let look_cmd = playerstate_iw4::UserCmd {
             angles: look.angles,
@@ -1918,7 +1918,7 @@ pub fn publish_presented(
         } else if runtime.pose_e_type as i32 == entity_iw4::ET_PLAYER
             && !archived
             && armed
-            && predicted.pm_type == 0
+            && matches!(predicted.pm_type, 0 | playerstate_iw4::PM_TYPE_NOCLIP)
             && runtime.next_state.client_num == local.0.0 as i32
         {
             // Your own body (third person) moves with the predicted camera, not with the

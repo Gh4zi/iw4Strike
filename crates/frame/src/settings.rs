@@ -72,6 +72,8 @@ pub struct GameSettings {
     pub always_edgebug: bool,
     /// Falling while pushing into any wall and moving along it pixelsurfs (`always_pixelsurf`).
     pub always_pixelsurf: bool,
+    /// Holding jump jumps again on landing (`sv_autobunnyhop`).
+    pub auto_bunnyhop: bool,
     pub third_person: bool,
     /// The console's look: 0 the original panel, 1 the CS2-style window.
     pub console_style: u8,
@@ -178,6 +180,7 @@ impl Default for GameSettings {
             destructibles: false,
             always_edgebug: false,
             always_pixelsurf: false,
+            auto_bunnyhop: false,
             third_person: false,
             console_style: 0,
             fsr_mode: 0,
