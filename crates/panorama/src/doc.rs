@@ -1183,6 +1183,22 @@ impl Doc {
                 }
             }
         }
+        // A middled panel moves half as far as its margin grows, so there its `x`/`y` count
+        // twice: Panorama moves it the whole offset (the buy wheel's key numbers sat halfway out
+        // on the weapon pictures).
+        if parent_flow == Flow::None {
+            let twice = |by: Len| match by {
+                Len::Px(o) => Len::Px(o * 2.0),
+                Len::Percent(o) => Len::Percent(o * 2.0),
+                by => by,
+            };
+            if node.justify_self == JustifySelf::Center {
+                node.margin.left = offset(s.margin[0], twice(s.x));
+            }
+            if node.align_self == AlignSelf::Center {
+                node.margin.top = offset(s.margin[1], twice(s.y));
+            }
+        }
 
         let mut e = commands.entity(entity);
         // Background: a colour, or a gradient over nothing.
