@@ -47,7 +47,18 @@ pub(crate) fn generate(
     models: &asset_world::MapXModelSceneCatalog,
 ) {
     let mut state = marks.lock();
+    // An attachment whose mark the pool has released goes. They were kept for the whole match,
+    // every mark ever stuck to a model scanned for every model every frame, and once its handle
+    // was re-used the attachment drew that other mark on the model too.
+    state
+        .attached
+        .retain(|attached| host.marks.constructed(attached.handle) == Some(&attached.mark));
     let pending = std::mem::take(&mut state.pending);
+    let marked: std::collections::HashSet<u16> = pending
+        .iter()
+        .map(|request| request.entity)
+        .chain(state.attached.iter().map(|attached| attached.entity))
+        .collect();
     let before = state.unsupported_triangles;
     let before_receivers = state.unsupported_receivers;
     let mut mesh = host
@@ -61,9 +72,7 @@ pub(crate) fn generate(
         if *visibility == Visibility::Hidden {
             continue;
         }
-        if !pending.iter().any(|r| r.entity == entity)
-            && !state.attached.iter().any(|a| a.entity == entity)
-        {
+        if !marked.contains(&entity) {
             continue;
         }
         let requested = pending.iter().filter(|r| r.entity == entity).count() as u64;
@@ -374,7 +383,9 @@ fn stage(
                 context[..4].try_into().expect("four context bytes"),
             ),
         };
-        if let Some(handle) = host.marks.alloc_mark_from_go_callback(req, &tris, &points) {
+        if let Some(handle) = host.marks.alloc_mark_from_go_callback(req, &tris, &points)
+            && let Some(&mark) = host.marks.constructed(handle)
+        {
             host.marks
                 .set_material_name(handle, Some(&request.material));
             host.note_models_go_fire();
@@ -384,6 +395,7 @@ fn stage(
                 revision,
                 bone,
                 handle,
+                mark,
             });
         }
     }

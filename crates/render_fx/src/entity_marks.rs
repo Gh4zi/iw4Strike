@@ -30,6 +30,8 @@ pub struct EntityMarkAttachment {
     pub revision: u32,
     pub bone: usize,
     pub handle: u16,
+    /// The mark as made: the pool recycles handles, so a handle alone may name another mark now.
+    pub mark: marks_iw4::FxMarkConstructed,
 }
 
 impl EntityMarks {
