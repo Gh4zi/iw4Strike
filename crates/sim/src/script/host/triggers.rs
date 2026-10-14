@@ -916,9 +916,11 @@ pub(crate) fn script_use_available(world: &mut World, client: u32) -> bool {
             let triggers: Vec<u64> = runtime
                 .entities
                 .iter()
+                // The classname first: a few length compares reject nearly every entity, where the
+                // fired-once set lookup ran for all of them, per player, per tick.
                 .filter(|(object, entity)| {
-                    !runtime.fired_once.contains(object)
-                        && fires(&entity.classname) == Some(Fires::Use)
+                    fires(&entity.classname) == Some(Fires::Use)
+                        && !runtime.fired_once.contains(object)
                 })
                 .map(|(object, _)| *object)
                 .collect();
@@ -994,8 +996,8 @@ pub(crate) fn dispatch_triggers(world: &mut World) {
         let triggers: Vec<(u64, Fires)> = runtime
             .entities
             .iter()
-            .filter(|(object, _)| !runtime.fired_once.contains(object))
             .filter_map(|(object, e)| Some((*object, fires(&e.classname)?)))
+            .filter(|(object, _)| !runtime.fired_once.contains(object))
             .collect();
         for (trigger, kind) in triggers {
             let Some(volume) = volume(&mut runtime, &frame, trigger) else {
