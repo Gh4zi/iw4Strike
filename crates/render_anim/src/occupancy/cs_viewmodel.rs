@@ -677,6 +677,9 @@ struct LoadedModel {
 
 struct Playing {
     weapon: u32,
+    /// The model `sequence` and `fading` index into: a new knife or side swaps it under the
+    /// same weapon.
+    model: Arc<LoadedModel>,
     sequence: Option<usize>,
     started: f64,
     /// Playback speed (reloads are stretched to the gun's reload time).
@@ -2390,7 +2393,7 @@ pub fn update_cs_viewmodel(
         playing.events_through = None;
     };
     let playing = match state.playing.as_mut() {
-        Some(playing) if playing.weapon == weapon_index => {
+        Some(playing) if playing.weapon == weapon_index && Arc::ptr_eq(&playing.model, &model) => {
             // Planting holds the player in place (the site links them to it): the C4's keypad
             // plays over the 3 s it takes, and stops if they let go.
             let arming = weapon.c4 && ps.pm_type == playerstate_iw4::PM_TYPE_NORMAL_LINKED;
@@ -2577,6 +2580,7 @@ pub fn update_cs_viewmodel(
             }
             Playing {
                 weapon: weapon_index,
+                model: Arc::clone(&model),
                 sequence: drawn,
                 started: now,
                 rate: 1.0,
