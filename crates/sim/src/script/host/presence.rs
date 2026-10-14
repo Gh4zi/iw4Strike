@@ -122,7 +122,9 @@ pub(crate) fn settle_collision(world: &mut World) {
     }
     let [origin_field, angles_field] = [runtime.symbol("origin"), runtime.symbol("angles")];
     let runtime = &*runtime;
-    let wanted: BTreeMap<ScriptModelId, ([f32; 3], [f32; 3], bool, bool)> = runtime
+    // Sorted rather than a BTreeMap: this runs several times a tick, and building the map was
+    // most of it. A stable sort keeps a repeated id's last row the one found, as the map did.
+    let mut wanted: Vec<(ScriptModelId, ([f32; 3], [f32; 3], bool, bool))> = runtime
         .entities
         .iter()
         .filter_map(|(object, e)| {
@@ -133,10 +135,19 @@ pub(crate) fn settle_collision(world: &mut World) {
             Some((presence, (origin, angles, e.hidden, e.solid)))
         })
         .collect();
+    wanted.sort_by_key(|(id, _)| *id);
+    let wanted_for = |id: ScriptModelId| {
+        let after = wanted.partition_point(|(have, _)| *have <= id);
+        after
+            .checked_sub(1)
+            .map(|at| &wanted[at])
+            .filter(|(have, _)| *have == id)
+            .map(|(_, row)| row)
+    };
     let mut frame = FrameWorld::from_world(world);
     for row in frame.entity_collision_capabilities_mut() {
         let Some(&(origin, angles, hidden, solid)) =
-            row.owner.script_model().and_then(|id| wanted.get(&id))
+            row.owner.script_model().and_then(wanted_for)
         else {
             continue;
         };
