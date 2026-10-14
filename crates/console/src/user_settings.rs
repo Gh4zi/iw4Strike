@@ -909,6 +909,11 @@ pub(crate) fn native_menu_settings(
                     settings.radar = value.trim().to_owned();
                 }
             }
+            "ui_playermodels" => {
+                if matches!(value.trim(), "csgo" | "mw2") {
+                    settings.player_models = value.trim().to_owned();
+                }
+            }
             "ui_loadout_pistol" => {
                 if matches!(value.trim(), "usp" | "p2000") {
                     settings.loadout_pistol = value.trim().to_owned();
@@ -1099,6 +1104,7 @@ pub(crate) fn native_menu_settings(
     dvars.set("ui_round_banner", settings.round_banner.clone());
     dvars.set("ui_knife", settings.knife.clone());
     dvars.set("ui_radar", settings.radar.clone());
+    dvars.set("ui_playermodels", settings.player_models.clone());
     dvars.set("ui_player_ping_mute", settings.ping_mute.to_string());
     dvars.set("ui_loadout_pistol", settings.loadout_pistol.clone());
     dvars.set("ui_loadout_m4", settings.loadout_m4.clone());

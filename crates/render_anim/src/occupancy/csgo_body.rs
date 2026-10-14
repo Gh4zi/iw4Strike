@@ -106,6 +106,34 @@ struct AliveRecord {
     mw2: [Option<Mat4>; RETARGET.len()],
 }
 
+/// The agent standing as `seen` shows (its idle and aim poses), placed there, with the MW2 joints
+/// `mw2` of the same moment: a last pose for a body never posed alive.
+fn standing_record(
+    character: &Arc<Character>,
+    animset: &Animset,
+    seen: &Observation<'_>,
+    mw2: [Option<Mat4>; RETARGET.len()],
+    entity: u32,
+    locals: &mut Vec<BoneFrame>,
+) -> AliveRecord {
+    let mut state = AnimState::new(animset, character.ct, entity);
+    // A few frames, for the idle and aim layers to come in.
+    for _ in 0..4 {
+        state.observe(animset, seen, 0.1);
+    }
+    state.pose(animset, locals);
+    let agent_locals =
+        csgo_anim::agent::agent_locals(&character.from_animset, &character.studio.rest, locals);
+    let world = character.studio.world_from_locals(&agent_locals);
+    let world_from_model = csgo_anim::placement(&state, seen.position);
+    AliveRecord {
+        character: character.clone(),
+        world: world.iter().map(|m| world_from_model * mat4(m)).collect(),
+        locals: agent_locals,
+        mw2,
+    }
+}
+
 /// A CS:GO corpse: the agent's last living pose and, for each bone a MW2 joint drives, which
 /// joint and the turn between them.
 struct Corpse {
@@ -415,7 +443,27 @@ pub struct CsgoBodies {
     locals: Vec<BoneFrame>,
 }
 
+/// Hides the local player's own living MW2 body (seen in third person) this frame.
+fn hide_own_body(
+    roots: &Query<(&CEntity, &CEntityRuntime, &RemotePlayer, &mut RemoteFxBolts)>,
+    local: sim::ClientId,
+    hidden: &mut CsgoBodyHidden,
+) {
+    for (identity, runtime, ..) in roots {
+        let corpse = runtime.next_state.e_type == ET_PLAYER_CORPSE
+            || runtime.pose_e_type == ET_PLAYER_CORPSE as u8;
+        if !corpse && identity.client() == Some(local) {
+            hidden.0.insert(u32::from(identity.number()));
+        }
+    }
+}
+
 impl CsgoBodies {
+    /// Agent `name` is still being read.
+    fn loading(&self, name: &str) -> bool {
+        matches!(self.characters.get(name), Some(Some(Slot::Loading(_))))
+    }
+
     /// Agent `name`, read off the main thread on first use.
     fn character(
         &mut self,
@@ -567,9 +615,23 @@ pub fn update_csgo_bodies(
         return;
     }
     let Some(pack) = csgo_anim::pack() else {
+        // Your own body waits for its agent hidden rather than showing as MW2's for a moment
+        // (the others stay MW2's until theirs is read: they must be seen).
+        hide_own_body(&roots, local.0, &mut hidden);
         return;
     };
-    let (allies, axis) = cs_factions(snapshot).unwrap_or_default();
+    let factions = cs_factions(snapshot);
+    let factions_known = factions.is_some();
+    let (allies, axis) = factions.unwrap_or_default();
+    // Both sides' agents are read as soon as the match's factions are known, not when a body
+    // first needs one: until then that body (your own in third person, or the first player of a
+    // side you saw) was MW2's.
+    if factions_known {
+        for terrorist in [false, true] {
+            let name = agent_model(weapon_iw4::cs::csgo_side_voice(&allies, &axis, terrorist));
+            let _ = bodies.character(&pack, name, &mut images);
+        }
+    }
     let dt = time.delta_secs().min(0.1);
     let mut live = HashSet::new();
     for (identity, runtime, remote, mut bolts) in &mut roots {
@@ -585,6 +647,37 @@ pub fn update_csgo_bodies(
                 continue;
             };
             if !bodies.corpses.contains_key(&entity) {
+                // Your own body isn't posed while you see through its eyes, so it has no last
+                // pose: its corpse starts from the agent standing where it fell, against the MW2
+                // corpse's first frame (MW2's death animations start standing too).
+                if client == local.0
+                    && !bodies.alive.contains_key(&client)
+                    && let Some(ps) = presented.player(client)
+                {
+                    let terrorist = terrorist_team(snapshot, remote.client_state_team);
+                    let name =
+                        agent_model(weapon_iw4::cs::csgo_side_voice(&allies, &axis, terrorist));
+                    if let Some(character) = bodies.character(&pack, name, &mut images)
+                        && let Some(animset) = pack.animsets[usize::from(!character.ct)].clone()
+                    {
+                        let weapon_name = weapons.0.script_name_of(ps.weapon);
+                        let record = standing_record(
+                            &character,
+                            &animset,
+                            &Observation {
+                                ps,
+                                position: Vec3::from(runtime.origin),
+                                eye_yaw: runtime.angles[1],
+                                eye_pitch: 0.0,
+                                weapon_name: &weapon_name,
+                            },
+                            *mw2,
+                            entity,
+                            &mut bodies.locals,
+                        );
+                        bodies.alive.insert(client, record);
+                    }
+                }
                 let Some(alive) = bodies.alive.get(&client) else {
                     continue;
                 };
@@ -622,6 +715,9 @@ pub fn update_csgo_bodies(
         let terrorist = terrorist_team(snapshot, remote.client_state_team);
         let name = agent_model(weapon_iw4::cs::csgo_side_voice(&allies, &axis, terrorist));
         let Some(character) = bodies.character(&pack, name, &mut images) else {
+            if client == local.0 && bodies.loading(name) {
+                hidden.0.insert(u32::from(identity.number()));
+            }
             continue;
         };
         let Some(animset) = pack.animsets[usize::from(!character.ct)].clone() else {
