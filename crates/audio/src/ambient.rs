@@ -305,6 +305,9 @@ pub(crate) fn install_sound_bank(
                             asset_audio::append_csgo_weapon_sounds(&mut catalog);
                             asset_audio::append_csgo_radio_calls(&mut catalog);
                             asset_audio::append_css_weapon_sounds(&mut catalog);
+                            // CS:GO's bomb, announcer, death and ladder sounds win over CS:S's
+                            // and CS 1.6's when it is on.
+                            asset_audio::append_csgo_round_sounds(&mut catalog);
                             (Arc::new(catalog), gaps)
                         }),
                         namespace,

@@ -38,7 +38,7 @@ const MATCH_CLOCK: &[&str] = &["ui_mp_timer_countdown"];
 /// The aliases `asset_audio::append_cs_weapon_sounds` / `append_csgo_weapon_sounds` /
 /// `append_css_weapon_sounds` add: guns, grenades, the bomb, player and radio sounds of CS 1.6 /
 /// Condition Zero, CS:GO and CS:S.
-const CS_PREPARE_PREFIXES: [&str; 8] = [
+const CS_PREPARE_PREFIXES: [&str; 10] = [
     asset_audio::CS_SOUND_PREFIX,
     asset_audio::CSGO_SOUND_PREFIX,
     asset_audio::CSS_SOUND_PREFIX,
@@ -47,6 +47,8 @@ const CS_PREPARE_PREFIXES: [&str; 8] = [
     asset_audio::CS_EVENT_PREFIX,
     asset_audio::CS_C4_PREFIX,
     asset_audio::CS_DEATH_CRY,
+    asset_audio::CS_LADDER_STEP,
+    asset_audio::CS_LADDER_STEP_PLR,
 ];
 
 #[derive(Default)]

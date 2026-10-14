@@ -47,11 +47,10 @@ pub(crate) fn register_debug_move_commands(registry: &mut ConsoleRegistry) {
         );
     }
     if registry.resolve("move").is_none() {
-        registry.register(
-            crate::CommandSpec::new("move")
-                .alias("tp")
-                .usage("move <x> <y> <z> [yaw] [pitch] — write player origin (needs cheats)"),
-        );
+        registry.register(crate::CommandSpec::new("move").alias("tp").usage(
+            "move <x> <y> <z> [yaw] [pitch] | move site <a|b|bomb> — write player origin, or go \
+             to a bomb site or the bomb (needs cheats)",
+        ));
     }
     if registry.resolve("god").is_none() {
         registry.register(
@@ -709,8 +708,13 @@ fn parse_move(
     presented: &PresentedSnapshot,
     id: sim::ClientId,
 ) -> Result<([f32; 3], [f32; 3]), String> {
+    if let [word, site] = args
+        && word.eq_ignore_ascii_case("site")
+    {
+        return site_origin(site, presented, id);
+    }
     if args.len() < 3 || args.len() > 5 {
-        return Err("usage: move <x> <y> <z> [yaw] [pitch]".into());
+        return Err("usage: move <x> <y> <z> [yaw] [pitch] | move site <a|b|bomb>".into());
     }
     let parse = |s: &str| {
         s.parse::<f32>()
@@ -731,6 +735,28 @@ fn parse_move(
         angles[0] = parse(&args[4])?;
     }
     Ok((origin, angles))
+}
+
+/// A bomb site's objective (the radar's `waypoint_*_a` / `_b`), a little above it, at the
+/// player's current view.
+fn site_origin(
+    site: &str,
+    presented: &PresentedSnapshot,
+    id: sim::ClientId,
+) -> Result<([f32; 3], [f32; 3]), String> {
+    let suffix = format!("_{}", site.to_ascii_lowercase());
+    let objective = presented
+        .snapshot()
+        .into_iter()
+        .flat_map(|snap| &snap.meta.objectives.compass)
+        .find(|o| o.icon.contains("waypoint_") && o.icon.ends_with(&suffix))
+        .ok_or_else(|| format!("move: no bomb site `{site}` on this map's objectives"))?;
+    let [x, y, z] = objective.origin;
+    let angles = presented
+        .alive_player(id)
+        .map(|ps| ps.viewangles)
+        .unwrap_or([0.0, 0.0, 0.0]);
+    Ok(([x, y, z + 16.0], angles))
 }
 
 fn parse_look(

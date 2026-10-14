@@ -38,6 +38,9 @@ const WEAPONS: &str = "maps/mp/gametypes/_weapons";
 /// - `csBombCarrierThink` (the carrier): attack with the C4 outside a site says where to plant.
 /// - `csBombDropThink` (the carrier): `drop` with the C4 in hand (the engine's `cs_drop_bomb`)
 ///   drops the bomb at the carrier's feet, for a teammate to take (the dropper only once away).
+/// - `csPlantStartSound` (the planter): everyone else hears the plant start where it happens
+///   (CS:GO's `C4.Initiate`, played whole even when the plant is cut short); the planter hears it
+///   from their own C4's keypad.
 const CS_BOMB_FUNCTIONS: &str = r#"csPlantThink()
 {
     self endon ( "deleted" );
@@ -101,6 +104,13 @@ csBombDropThink( bomb )
     }
 }
 
+csPlantStartSound()
+{
+    self playSoundToTeam( "cs_c4_initiate", "allies", self );
+    self playSoundToTeam( "cs_c4_initiate", "axis", self );
+    self playSoundToTeam( "cs_c4_initiate", "spectator", self );
+}
+
 initGametypeAwards()
 {"#;
 
@@ -130,6 +140,19 @@ const PATCHES: &[Patch] = &[
         "self PlaySound( \"generic_death_american_\"+ rand );",
         "self PlaySound( \"cs_death\" );",
         "death cry: CS's, not MW2's American soldier",
+    ),
+    // CS's `DeathSound` on every death, knife kills too: a headshot kill's own sound
+    // (`Player.DeathHeadShot`) when the last hit was on the head, else the cry. MW2 is silent on
+    // headshot and melee kills.
+    once(
+        "maps/mp/gametypes/_damage",
+        "\t\tsMeansOfDeath = \"MOD_HEAD_SHOT\";\n\
+         \telse if ( sMeansOfDeath != \"MOD_MELEE\" && !isDefined( victim.nuked ) )\n\
+         \t\tvictim playDeathSound();",
+        "\t\t{ sMeansOfDeath = \"MOD_HEAD_SHOT\"; victim playSound( \"cs_death_headshot\" ); }\n\
+         \telse if ( !isDefined( victim.nuked ) )\n\
+         \t\tvictim playDeathSound();",
+        "death sound: CS's on headshot and knife kills too",
     ),
     // Defusal (Search and Destroy) in CS2's competitive format: first to 13 rounds, sides switch
     // after 12, 1:55 rounds, 3 s plant, 10 s defuse, 40 s bomb. MW2 caps the limits at 12 and 9.
@@ -523,8 +546,8 @@ const PATCHES: &[Patch] = &[
     once(
         SD,
         "player.isPlanting = true;",
-        "player.isPlanting = true;\n\t\tplayer.objectiveScaler = 1;",
-        "CS C4: planting takes 3 s",
+        "player.isPlanting = true;\n\t\tplayer.objectiveScaler = 1; player csPlantStartSound();",
+        "CS C4: planting takes 3 s, and the others hear it start",
     ),
     once(
         SD,

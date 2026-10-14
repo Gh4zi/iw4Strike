@@ -480,7 +480,12 @@ pub(crate) fn pmove<C: CollisionBackend>(
     crate::crash::cs_landing_pain(ps, &pml, fall_damage(&profile, landing_speed));
 
     if ps.pm_flags & pm_flags::LADDER != 0 {
-        ladder_footsteps(ps, pml.msec, cmd.server_time);
+        // CS:GO's ladder steps: its own rate, and none walking or crouching up.
+        if profile.csgo.is_some() {
+            crate::footstep::cs_ladder_footsteps(ps, pml.msec, walk_key);
+        } else {
+            ladder_footsteps(ps, pml.msec, cmd.server_time);
+        }
     } else {
         let old_bob = ps.bob_cycle as u8;
         footsteps_bob_cycle(
@@ -606,7 +611,7 @@ fn move_step<C: CollisionBackend>(
     }
 
     if ps.pm_flags & pm_flags::LADDER != 0 {
-        mv.ladder_move(ps, pml, cmd);
+        mv.ladder_move(ps, pml, cmd, walk_key);
         mv.categorize(ps, pml);
     } else {
         mv.full_walk_move(ps, pml, cmd, old_buttons, wish);
@@ -1315,10 +1320,12 @@ impl<C: CollisionBackend> Move<'_, C> {
     /// Source / GoldSrc `LadderMove` on the ladder IW4 attached the player to (`v_ladder_vec` is
     /// its outward normal). Forward climbs where the view points: into the ladder goes up, and
     /// looking down while pressing forward goes down. Jump pushes straight off. No gravity.
-    fn ladder_move(&mut self, ps: &mut PlayerState, pml: &mut Pml, cmd: &UserCmd) {
+    fn ladder_move(&mut self, ps: &mut PlayerState, pml: &mut Pml, cmd: &UserCmd, walk_key: bool) {
         let normal = ps.v_ladder_vec;
         let mut climb = LADDER_CLIMB_SPEED * self.profile.ladder_scale;
-        if cmd.buttons & buttons::CROUCH != 0 {
+        // CS:GO's `ClimbSpeed`: walking climbs as slowly as crouching (0.34).
+        let walking = walk_key && self.profile.csgo.is_some();
+        if cmd.buttons & buttons::CROUCH != 0 || walking {
             climb *= self.profile.duck_scale;
         }
         let forward_speed = climb * f32::from(cmd.forwardmove) / 127.0;

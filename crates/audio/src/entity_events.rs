@@ -308,8 +308,8 @@ fn play_cs_sound_alias(
     }));
 }
 
-/// The CS sound of a hurting landing (the landing step is its own event): CS:S
-/// `Player.FallDamage` (`Player.FallGib` when it splats); else CS 1.6's — no cry, one of
+/// The CS sound of a hurting landing (the landing step is its own event): CS:GO's or CS:S's
+/// `Player.FallDamage` (`Player.FallGib` when it splats, silent in CS:GO); else CS 1.6's — no cry, one of
 /// `bhit_flesh-1-3` at random (`Pain`, never armoured for a fall), or `common/bodysplat.wav` when
 /// the fall does more damage than the player has (whose death cry the death script plays).
 /// `None` when neither install is in the bank.
@@ -334,6 +334,7 @@ fn cs_fall_alias(
         asset_audio::CS_FALL_BODY_HIT
     };
     [
+        format!("{}{css}{suffix}", asset_audio::CSGO_SOUND_PREFIX),
         format!("{}{css}{suffix}", asset_audio::CSS_SOUND_PREFIX),
         format!("{cs16}{suffix}"),
     ]
@@ -385,6 +386,13 @@ fn movement_sound(
             cs_fall_alias(&bank.0, splat, player_view)
         })
     {
+        diag::event!(
+            Audio,
+            Debug,
+            "cs_fall",
+            "audio: cs fall `{alias}` damage={} local={player_view}",
+            sound.event.payload.event_parm
+        );
         play.write(crate::AliasCommand::Play(PlayAlias {
             event: Some(crate::AudioEvent::from_entity(
                 *generation,

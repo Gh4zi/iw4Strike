@@ -127,6 +127,8 @@ pub fn load_model_with(vpk: &Vpk, path: &str, includes: bool) -> Result<LoadedMo
 #[derive(Clone, Debug, Default)]
 pub struct SoundScripts {
     entries: std::collections::HashMap<String, Vec<String>>,
+    /// Each entry's `volume` (the middle of a `low, high` range; `VOL_NORM` is 1).
+    volumes: std::collections::HashMap<String, f32>,
 }
 
 impl SoundScripts {
@@ -170,9 +172,18 @@ impl SoundScripts {
                 .filter(|w| !w.is_empty())
                 .collect();
             if !waves.is_empty() {
+                if let Some(volume) = entry.text("volume").and_then(parse_volume) {
+                    self.volumes.insert(name.to_ascii_lowercase(), volume);
+                }
                 self.entries.insert(name.to_ascii_lowercase(), waves);
             }
         }
+    }
+
+    /// The `volume` of `entry`, when its script gives one.
+    #[must_use]
+    pub fn volume(&self, entry: &str) -> Option<f32> {
+        self.volumes.get(&entry.to_ascii_lowercase()).copied()
     }
 
     /// Wave paths (relative to `sound/`) of `entry`.
@@ -188,9 +199,39 @@ impl SoundScripts {
     }
 }
 
+/// A sound script volume: a number, `VOL_NORM`, or a `low, high` range (its middle).
+fn parse_volume(text: &str) -> Option<f32> {
+    let parts = text
+        .split(',')
+        .map(|part| {
+            let part = part.trim();
+            if part.eq_ignore_ascii_case("VOL_NORM") {
+                Some(1.0)
+            } else {
+                part.parse::<f32>().ok()
+            }
+        })
+        .collect::<Option<Vec<f32>>>()?;
+    (!parts.is_empty()).then(|| parts.iter().sum::<f32>() / parts.len() as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sound_script_volumes_read_as_valve_writes_them() {
+        let mut scripts = SoundScripts::default();
+        scripts.add(
+            "\"C4.PlantSound\" { \"volume\" \"0.3\" \"wave\" \"~weapons/c4/c4_beep2.wav\" }\n\
+             \"Event.CTWin\" { \"volume\" \"VOL_NORM\" \"wave\" \"+radio/ctwin.wav\" }\n\
+             \"Step\" { \"volume\" \"0.4, 0.6\" \"wave\" \"a.wav\" }",
+        );
+        assert_eq!(scripts.volume("c4.plantsound"), Some(0.3));
+        assert_eq!(scripts.volume("Event.CTWin"), Some(1.0));
+        assert_eq!(scripts.volume("step"), Some(0.5));
+        assert_eq!(scripts.waves("c4.plantsound"), ["weapons/c4/c4_beep2.wav"]);
+    }
 
     /// Loads the CS:S viewmodels from a local install when `IW4L_CSS` names its
     /// `cstrike_pak_dir.vpk`; skipped otherwise.

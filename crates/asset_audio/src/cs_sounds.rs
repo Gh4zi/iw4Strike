@@ -16,7 +16,7 @@ pub const CSGO_SOUND_PREFIX: &str = "csgo/";
 
 /// The CS:GO sound script groups our guns, knife, grenades and bomb play from (`weapon_ak47.`
 /// …): their shots and the sounds their animations call. CS:GO's other weapon sounds stay unread.
-const CSGO_SOUND_GROUPS: [&str; 55] = [
+const CSGO_SOUND_GROUPS: [&str; 57] = [
     // A head hit: on a helmet, on a bare head (each with the shooter's feedback version).
     "player.damagehelmet",
     "player.damageheadshot",
@@ -78,6 +78,10 @@ const CSGO_SOUND_GROUPS: [&str; 55] = [
     "weapon_flashbang.",
     "weapon_smokegrenade.",
     "weapon_c4.",
+    // The C4's keypad and draw (its viewmodel calls these), and the bomb's own sounds.
+    "c4.",
+    // A hurting landing (`Player.FallDamage`) and a deadly one (`Player.FallGib`, silent).
+    "player.fall",
 ];
 
 /// Alias prefix every CS sound is registered under.
@@ -99,15 +103,28 @@ pub const CS_EVENT_PREFIX: &str = "cs_event_";
 pub const CS_LADDER_STEP: &str = "cs_ladder_step";
 pub const CS_LADDER_STEP_PLR: &str = "cs_ladder_plr_step";
 
-/// Register the ladder step waves (`rate, channels, pcm16`) under both ladder step names.
-fn add_ladder_steps(catalog: &mut SoundCatalog, waves: &[(u32, i32, Vec<u8>)]) -> bool {
+/// Register the ladder step waves (`rate, channels, pcm16`) under both ladder step names, `tune`
+/// adjusting the step template's mixing (`own` for your own steps).
+fn add_ladder_steps(
+    catalog: &mut SoundCatalog,
+    waves: &[(u32, i32, Vec<u8>)],
+    tune: impl Fn(&mut crate::CapturedAlias, bool),
+) -> bool {
     if waves.is_empty() {
         return false;
     }
     let mut added = true;
-    for (name, templates) in [
-        (CS_LADDER_STEP, ["step_run_ladder", "step_run_default"]),
-        (CS_LADDER_STEP_PLR, ["step_run_plr_ladder", "step_run_plr_default"]),
+    for (name, templates, own) in [
+        (
+            CS_LADDER_STEP,
+            ["step_run_ladder", "step_run_default"],
+            false,
+        ),
+        (
+            CS_LADDER_STEP_PLR,
+            ["step_run_plr_ladder", "step_run_plr_default"],
+            true,
+        ),
     ] {
         let Some(template) = templates
             .into_iter()
@@ -125,7 +142,7 @@ fn add_ladder_steps(catalog: &mut SoundCatalog, waves: &[(u32, i32, Vec<u8>)]) -
                 pcm16: pcm.clone().into(),
             })
             .collect();
-        added &= catalog.add_loose_alias(name, &template, clips);
+        added &= catalog.add_loose_alias_tuned(name, &template, clips, |row| tune(row, own));
     }
     added
 }
@@ -139,9 +156,11 @@ pub const CS_C4_PREFIX: &str = "cs_c4_";
 /// The CS sounds the scripts play by name (the bomb mode's, and every death's cry). The server
 /// checks every script sound against the zones' aliases; these come from the local CS install on
 /// each client instead, so they are added to that list.
-pub const CS_SCRIPT_SOUNDS: [&str; 16] = [
+pub const CS_SCRIPT_SOUNDS: [&str; 18] = [
     CS_DEATH_CRY,
+    CS_DEATH_HEADSHOT,
     "cs_c4_plant",
+    "cs_c4_initiate",
     "cs_c4_disarm",
     "cs_c4_disarmed",
     "cs_c4_explode",
@@ -208,6 +227,10 @@ pub const CS_FALL_SPLAT: &str = "cs/player/bodysplat";
 /// Every death's cry, under the install-free name the death script plays: CS 1.6's
 /// `DeathSound` (one of `die1-3` and `death6`), else CS:S's `Player.Death`.
 pub const CS_DEATH_CRY: &str = "cs_death";
+/// A headshot kill's sound, played instead of the death cry: CS:GO's and CS:S's
+/// `Player.DeathHeadShot` (`DeathSound` with the last hit on the head); CS 1.6 cries as on any
+/// death.
+pub const CS_DEATH_HEADSHOT: &str = "cs_death_headshot";
 
 /// Which random-variant alias a CS 1.6 player wave belongs to.
 fn player_wave_group(stem: &str) -> Option<&'static str> {
@@ -253,16 +276,18 @@ fn beep_reach(event: &str, css: bool) -> f32 {
 }
 
 /// Register one bomb sound (`event` of [`CS_C4_PREFIX`]) with its waves, mixed like MW2's
-/// bomb sound for the same moment; the beeps are positional, from the bomb, and fade out at
-/// CS's distance.
+/// bomb sound for the same moment at `volume` of its level; the beeps are positional, from the
+/// bomb, and fade out at CS's distance; `reach` (from, to) sets another sound's falloff.
 fn add_c4_sound(
     catalog: &mut SoundCatalog,
     event: &str,
     waves: &[(u32, i32, Vec<u8>)],
     css: bool,
+    volume: f32,
+    reach: Option<(f32, f32)>,
 ) -> bool {
     let preferred: &[&str] = match event {
-        "plant" => &["mp_bomb_plant"],
+        "plant" | "initiate" => &["mp_bomb_plant"],
         "disarm" | "disarmed" => &["mp_bomb_defuse"],
         "explode" => &["exp_suitcase_bomb_main"],
         // A world sound (MW2's bomb timer is a flat UI sound heard everywhere).
@@ -286,12 +311,17 @@ fn add_c4_sound(
             pcm16: pcm.clone().into(),
         })
         .collect();
-    let beep = event.starts_with("beep").then(|| beep_reach(event, css));
+    let reach = event
+        .starts_with("beep")
+        .then(|| (60.0, beep_reach(event, css)))
+        .or(reach);
     catalog.add_loose_alias_tuned(&name, template, clips, |row| {
         steady_pitch(row);
-        if let Some(reach) = beep {
-            row.dist_min = 60.0;
-            row.dist_max = reach;
+        row.vol_min *= volume;
+        row.vol_max *= volume;
+        if let Some((from, to)) = reach {
+            row.dist_min = from;
+            row.dist_max = to;
         }
     })
 }
@@ -541,6 +571,15 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         };
         catalog.add_loose_alias_tuned(alias, &others, named(alias), steady_pitch);
         catalog.add_loose_alias_tuned(&own, &player, named(&own), steady_pitch);
+        // CS 1.6 cries on a headshot kill too (`DeathSound` ignores where the hit landed).
+        if alias == CS_DEATH_CRY {
+            catalog.add_loose_alias_tuned(
+                CS_DEATH_HEADSHOT,
+                &others,
+                named(CS_DEATH_HEADSHOT),
+                steady_pitch,
+            );
+        }
     }
     // The bomb's sounds.
     for (event, wave) in CS16_C4 {
@@ -548,7 +587,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             .read(&format!("sound/weapons/{wave}.wav"))
             .and_then(|b| decode_wav(&b));
         if let Some(decoded) = decoded {
-            add_c4_sound(catalog, event, &[decoded], false);
+            add_c4_sound(catalog, event, &[decoded], false, 1.0, None);
         }
     }
     // Ladder steps: the GoldSrc game's own, else Half-Life's (the same waves).
@@ -567,7 +606,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 .and_then(|bytes| decode_wav(&bytes))
         })
         .collect();
-    add_ladder_steps(catalog, &ladder);
+    add_ladder_steps(catalog, &ladder, |_, _| {});
     diag::info!(
         Audio,
         "cs sounds: {added} weapon sounds from {:?} (modelled on `{player}` vol {} / `{world}` vol {})",
@@ -671,18 +710,29 @@ pub fn append_csgo_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 ..c.clone()
             })
             .collect();
-        // The bomb and the ping keep their pitch; guns vary theirs as MW2's do. The ping plays
-        // at a fifth of a shot's volume (`UI.PlayerPing`'s 0.2).
+        // The bomb, the ping and a hurting landing keep their pitch and play at their script's
+        // volume against a shot's (`UI.PlayerPing` 0.2, the C4's keypad 0.22, `Player.FallDamage`
+        // 0.3); guns vary their pitch as MW2's do. Another player's landing fades out over
+        // 100-900 units, as its script's falloff.
+        let steady = ["weapon_c4.", "c4.", "player.fall", "ui.playerping"]
+            .iter()
+            .any(|group| name.starts_with(group));
+        let volume = scripts.volume(&name).filter(|_| steady).unwrap_or(1.0);
         let tune = |row: &mut crate::CapturedAlias| {
-            if name.starts_with("weapon_c4.") || name == "ui.playerping" {
+            if steady {
                 steady_pitch(row);
-            }
-            if name == "ui.playerping" {
-                row.vol_min *= 0.2;
-                row.vol_max *= 0.2;
+                row.vol_min *= volume;
+                row.vol_max *= volume;
             }
         };
-        if catalog.add_loose_alias_tuned(&alias, &world, clips, tune)
+        let tune_world = |row: &mut crate::CapturedAlias| {
+            tune(row);
+            if name.starts_with("player.fall") {
+                row.dist_min = 100.0;
+                row.dist_max = 900.0;
+            }
+        };
+        if catalog.add_loose_alias_tuned(&alias, &world, clips, tune_world)
             && catalog.add_loose_alias_tuned(
                 &format!("{alias}{CS_SOUND_PLAYER_SUFFIX}"),
                 &player,
@@ -762,6 +812,144 @@ pub fn append_csgo_radio_calls(catalog: &mut SoundCatalog) -> usize {
         Audio,
         "csgo radio: {added} grenade calls ({:.1} MB PCM, {skipped} lines missing)",
         bytes as f64 / 1_048_576.0
+    );
+    added
+}
+
+/// CS:GO's sound script entries behind the bomb's install-free sounds ([`CS_C4_PREFIX`]), and how
+/// far each carries (from, to; units) by its sound level, a Source sound fading out at
+/// `1000 / attenuation` with attenuation `20 / (dB - 50)`: 80 dB 1500 units, 85 dB 1750
+/// (`C4.DisarmStart` cut at its script's 2000). The beep is `C4.PlantSound` at every step,
+/// carrying farther as the timer runs down as CS:S's does ([`beep_reach`]); `initiate` is the plant
+/// starting, heard by the others (the planter hears it from the C4's keypad); `warning` and `trip`
+/// sound in the bomb's last second across the map (their scripts fall to 0.7 at 3000 units).
+const CSGO_C4: [(&str, &str, Option<(f32, f32)>); 13] = [
+    ("plant", "c4.plant", Some((60.0, 1500.0))),
+    ("initiate", "c4.initiate", Some((60.0, 1500.0))),
+    ("disarm", "c4.disarmstart", Some((60.0, 2000.0))),
+    ("disarmed", "c4.disarmfinish", Some((60.0, 1750.0))),
+    ("explode", "c4.explode", None),
+    ("click", "c4.click", Some((60.0, 1500.0))),
+    ("beep1", "c4.plantsound", None),
+    ("beep2", "c4.plantsound", None),
+    ("beep3", "c4.plantsound", None),
+    ("beep4", "c4.plantsound", None),
+    ("beep5", "c4.plantsound", None),
+    ("warning", "c4.explodewarning", Some((30.0, 10_000.0))),
+    ("trip", "c4.explodetriggertrip", Some((30.0, 10_000.0))),
+];
+
+/// The round and bomb announcements CS:GO's radio script has (`Event.<name>`), each also under
+/// [`CS_EVENT_PREFIX`].
+const CSGO_EVENTS: [&str; 5] = ["bombplanted", "bombdefused", "terwin", "ctwin", "rounddraw"];
+
+/// Fill the install-free sounds the bomb mode's script and the client play by name with CS:GO's
+/// own: the bomb ([`CS_C4_PREFIX`], at each entry's script volume), the round and bomb
+/// announcements ([`CS_EVENT_PREFIX`]), the death cry and a headshot kill's sound, and ladder
+/// steps. Added after CS:S's and CS 1.6's, so with CS:GO on these are its sounds. Returns how many
+/// were added; 0 without CS:GO.
+pub fn append_csgo_round_sounds(catalog: &mut SoundCatalog) -> usize {
+    let Some(pak) = asset_transport::find_csgo_pak() else {
+        return 0;
+    };
+    let vpk = match mdl_source::Vpk::open(&pak) {
+        Ok(vpk) => vpk,
+        Err(error) => {
+            diag::warn!(Audio, "csgo round sounds: {error}");
+            return 0;
+        }
+    };
+    let (Some(player), Some(world)) = (
+        template(catalog, PLAYER_TEMPLATES, "fire_plr"),
+        template(catalog, WORLD_TEMPLATES, "fire_npc"),
+    ) else {
+        return 0;
+    };
+    let scripts = mdl_source::SoundScripts::load(&vpk);
+    let read = |entry: &str| -> Vec<(u32, i32, Vec<u8>)> {
+        scripts
+            .waves(entry)
+            .iter()
+            .filter_map(|wave| vpk.read(&format!("sound/{wave}")))
+            .filter_map(|bytes| decode_wav(&bytes))
+            .collect()
+    };
+    let clips = |name: &str, waves: &[(u32, i32, Vec<u8>)]| -> Vec<LooseClip> {
+        waves
+            .iter()
+            .enumerate()
+            .map(|(i, (rate, channels, pcm))| LooseClip {
+                name: format!("{name}#csgo{i}"),
+                rate: *rate,
+                channels: *channels,
+                pcm16: pcm.clone().into(),
+            })
+            .collect()
+    };
+    let mut added = 0usize;
+    let mut missing: Vec<&str> = Vec::new();
+    for (event, entry, reach) in CSGO_C4 {
+        let waves = read(entry);
+        let volume = scripts.volume(entry).unwrap_or(1.0);
+        if !waves.is_empty() && add_c4_sound(catalog, event, &waves, true, volume, reach) {
+            added += 1;
+        } else {
+            missing.push(entry);
+        }
+    }
+    for event in CSGO_EVENTS {
+        let name = format!("{CS_EVENT_PREFIX}{event}");
+        let waves = read(&format!("event.{event}"));
+        if catalog.add_loose_alias_tuned(&name, &player, clips(&name, &waves), steady_pitch) {
+            added += 1;
+        } else {
+            missing.push(event);
+        }
+    }
+    // The death cry fades out over 32-900 units (`Player.Death`'s falloff); a headshot kill's
+    // crunch is 64 dB (700 units).
+    let death = death_template(catalog, &world);
+    for (name, entry, reach) in [
+        (CS_DEATH_CRY, "player.death", (32.0, 900.0)),
+        (CS_DEATH_HEADSHOT, "player.deathheadshot", (32.0, 700.0)),
+    ] {
+        let waves = read(entry);
+        let tune = |row: &mut crate::CapturedAlias| {
+            steady_pitch(row);
+            (row.dist_min, row.dist_max) = reach;
+        };
+        if catalog.add_loose_alias_tuned(name, &death, clips(name, &waves), tune) {
+            added += 1;
+        } else {
+            missing.push(entry);
+        }
+    }
+    // Ladder steps: CS:GO's left and right foot (`CT_Ladder.StepLeft/Right`; the Terrorists' are
+    // the same waves 5% higher), 75 dB (1250 units).
+    let ladder: Vec<_> = ["ct_ladder.stepleft", "ct_ladder.stepright"]
+        .into_iter()
+        .flat_map(|entry| read(entry))
+        .collect();
+    let ladder_tune = |row: &mut crate::CapturedAlias, own: bool| {
+        row.pitch_min = 0.92;
+        row.pitch_max = 1.02;
+        if !own {
+            row.dist_max = 1250.0;
+        }
+    };
+    if add_ladder_steps(catalog, &ladder, ladder_tune) {
+        added += 1;
+    } else {
+        missing.push("ct_ladder.step");
+    }
+    diag::info!(
+        Audio,
+        "csgo round sounds: {added} added (bomb, announcer, death, ladder){}",
+        if missing.is_empty() {
+            String::new()
+        } else {
+            format!("; not found: {}", missing.join(" "))
+        }
     );
     added
 }
@@ -859,16 +1047,23 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 .collect();
             (event, clips)
         });
-        // Every death's cry also goes under the name the death script plays.
-        let death_cry = (name == "player.death").then(|| {
-            clips
+        // Every death's cry, and a headshot kill's sound, also go under the names the death
+        // script plays.
+        let death_cry = match name.as_str() {
+            "player.death" => Some(CS_DEATH_CRY),
+            "player.deathheadshot" => Some(CS_DEATH_HEADSHOT),
+            _ => None,
+        }
+        .map(|death| {
+            let clips = clips
                 .iter()
                 .enumerate()
                 .map(|(i, c)| LooseClip {
-                    name: format!("{CS_DEATH_CRY}#{i}"),
+                    name: format!("{death}#{i}"),
                     ..c.clone()
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (death, clips)
         });
         let player_clips = clips
             .iter()
@@ -907,9 +1102,9 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         if let Some((event, clips)) = event {
             catalog.add_loose_alias_tuned(&event, &player, clips, steady_pitch);
         }
-        if let Some(clips) = death_cry {
+        if let Some((death, clips)) = death_cry {
             let template = death_template(catalog, &world);
-            catalog.add_loose_alias_tuned(CS_DEATH_CRY, &template, clips, steady_pitch);
+            catalog.add_loose_alias_tuned(death, &template, clips, steady_pitch);
         }
     }
     // The bomb's sounds.
@@ -920,7 +1115,7 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             .filter_map(|wave| vpk.read(&format!("sound/{wave}")))
             .filter_map(|bytes| decode_wav(&bytes))
             .collect();
-        add_c4_sound(catalog, event, &waves, true);
+        add_c4_sound(catalog, event, &waves, true, 1.0, None);
     }
     // Ladder steps: Half-Life 2's, in CS:S's own pack or the `hl2` sound pack beside it.
     let hl2 = pak
@@ -936,7 +1131,7 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 .and_then(|bytes| decode_wav(&bytes))
         })
         .collect();
-    if !add_ladder_steps(catalog, &ladder) {
+    if !add_ladder_steps(catalog, &ladder, |_, _| {}) {
         diag::info!(Audio, "css sounds: no ladder steps found, CS 1.6's or MW2's are used");
     }
     diag::info!(
