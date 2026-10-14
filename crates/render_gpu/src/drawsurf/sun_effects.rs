@@ -4,7 +4,7 @@ use bevy::core_pipeline::{Core3d, Core3dSystems};
 use bevy::prelude::*;
 use bevy::render::RenderStartup;
 use bevy::render::render_resource::binding_types::{
-    sampler, texture_2d, texture_depth_2d, uniform_buffer_sized,
+    sampler, texture_2d, texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer_sized,
 };
 use bevy::render::render_resource::{
     BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendComponent,
@@ -58,6 +58,8 @@ struct SunPipelineKey {
     target: TextureFormat,
     samples: u32,
     pass: SunPass,
+    /// The scene depth is multisampled (MSAA on).
+    multisampled_depth: bool,
 }
 
 struct HistoryTarget {
@@ -73,20 +75,22 @@ struct WhiteTarget {
 #[derive(Resource)]
 struct SunEffectsGpu {
     shader: Handle<Shader>,
-    layout: BindGroupLayoutDescriptor,
+    /// By whether the scene depth is multisampled.
+    layouts: [BindGroupLayoutDescriptor; 2],
     params: Buffer,
     sampler: Sampler,
     white: WhiteTarget,
     history: [HistoryTarget; 2],
     slot: u32,
-    pipelines: [Option<CachedRenderPipelineId>; 4],
+    /// Each pass's, by whether the scene depth is multisampled.
+    pipelines: [[Option<CachedRenderPipelineId>; 4]; 2],
 }
 
 impl SpecializedRenderPipeline for SunEffectsGpu {
     type Key = SunPipelineKey;
 
     fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
-        let (vertex, fragment, blend, label, defs) = match key.pass {
+        let (vertex, fragment, blend, label, mut defs) = match key.pass {
             SunPass::History => (
                 "vs_history",
                 "fs_history",
@@ -132,9 +136,12 @@ impl SpecializedRenderPipeline for SunEffectsGpu {
             ),
             SunPass::Blind => ("vs_blind", "fs_blind", None, "iw4_sun_blind", Vec::new()),
         };
+        if key.multisampled_depth {
+            defs.push("MULTISAMPLED_DEPTH".into());
+        }
         RenderPipelineDescriptor {
             label: Some(label.into()),
-            layout: vec![self.layout.clone()],
+            layout: vec![self.layouts[usize::from(key.multisampled_depth)].clone()],
             immediate_size: 0,
             vertex: VertexState {
                 shader: self.shader.clone(),
@@ -244,23 +251,32 @@ fn init_sun_effects(
         min_filter: FilterMode::Linear,
         ..default()
     });
-    let layout = BindGroupLayoutDescriptor::new(
-        "iw4_sun_effects",
-        &BindGroupLayoutEntries::sequential(
-            ShaderStages::VERTEX_FRAGMENT,
-            (
-                uniform_buffer_sized(false, NonZeroU64::new(PARAMS_SIZE)),
-                texture_depth_2d(),
-                texture_2d(TextureSampleType::Float { filterable: true }),
-                texture_2d(TextureSampleType::Float { filterable: true }),
-                sampler(SamplerBindingType::Filtering),
-                texture_2d(TextureSampleType::Float { filterable: true }),
+    let layout = |label: &'static str, multisampled: bool| {
+        BindGroupLayoutDescriptor::new(
+            label,
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::VERTEX_FRAGMENT,
+                (
+                    uniform_buffer_sized(false, NonZeroU64::new(PARAMS_SIZE)),
+                    if multisampled {
+                        texture_depth_2d_multisampled()
+                    } else {
+                        texture_depth_2d()
+                    },
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                ),
             ),
-        ),
-    );
+        )
+    };
     commands.insert_resource(SunEffectsGpu {
         shader: asset_server.load(SHADER_PATH),
-        layout,
+        layouts: [
+            layout("iw4_sun_effects", false),
+            layout("iw4_sun_effects_msaa", true),
+        ],
         params,
         sampler: sun_sampler,
         white: white_target(&device, &queue),
@@ -269,7 +285,7 @@ fn init_sun_effects(
             history_target(&device, "iw4_sun_history_b"),
         ],
         slot: 0,
-        pipelines: [None; 4],
+        pipelines: [[None; 4]; 2],
     });
 }
 
@@ -281,7 +297,7 @@ fn prepare_sun_effects(
     let Some(mut gpu) = gpu else {
         return;
     };
-    if gpu.pipelines.iter().all(Option::is_some) {
+    if gpu.pipelines.iter().flatten().all(Option::is_some) {
         return;
     }
     let keys = [
@@ -290,22 +306,25 @@ fn prepare_sun_effects(
         SunPass::Flare,
         SunPass::Blind,
     ];
-    let mut ids = [None; 4];
-    for (i, pass) in keys.into_iter().enumerate() {
-        let format = if pass == SunPass::History {
-            TextureFormat::Rgba16Float
-        } else {
-            TextureFormat::Rgba8Unorm
-        };
-        ids[i] = Some(specialized.specialize(
-            &cache,
-            &gpu,
-            SunPipelineKey {
-                target: format,
-                samples: 1,
-                pass,
-            },
-        ));
+    let mut ids = [[None; 4]; 2];
+    for (multisampled, ids) in ids.iter_mut().enumerate() {
+        for (i, pass) in keys.into_iter().enumerate() {
+            let format = if pass == SunPass::History {
+                TextureFormat::Rgba16Float
+            } else {
+                TextureFormat::Rgba8Unorm
+            };
+            ids[i] = Some(specialized.specialize(
+                &cache,
+                &gpu,
+                SunPipelineKey {
+                    target: format,
+                    samples: 1,
+                    pass,
+                    multisampled_depth: multisampled == 1,
+                },
+            ));
+        }
     }
     gpu.pipelines = ids;
 }
@@ -359,17 +378,19 @@ fn bind_sun<'a>(
     gpu: &'a SunEffectsGpu,
     cache: &PipelineCache,
     device: &RenderDevice,
-    depth: &TextureView,
+    depth: &SceneDepthTexture,
     history: &TextureView,
     color: &TextureView,
     scene: &TextureView,
 ) -> bevy::render::render_resource::BindGroup {
     device.create_bind_group(
         Some("iw4_sun_effects"),
-        &cache.get_bind_group_layout(&gpu.layout),
+        &cache.get_bind_group_layout(
+            &gpu.layouts[usize::from(depth.texture.sample_count() > 1)],
+        ),
         &BindGroupEntries::sequential((
             gpu.params.as_entire_buffer_binding(),
-            depth,
+            depth.view(),
             history,
             color,
             &gpu.sampler,
@@ -398,7 +419,8 @@ fn draw_sun_effects(
     let Some(sun) = frame.sun_effects else {
         return;
     };
-    let pipelines = gpu.pipelines;
+    let (target, extracted, depth) = view.into_inner();
+    let pipelines = gpu.pipelines[usize::from(depth.texture.sample_count() > 1)];
     let ready = |pass: usize| {
         pipelines[pass].and_then(|id| cache.get_render_pipeline(id).map(|pipe| (id, pipe)))
     };
@@ -408,7 +430,6 @@ fn draw_sun_effects(
     let sprite_pipe = ready(1);
     let flare_pipe = ready(2);
     let blind_pipe = ready(3);
-    let (target, extracted, depth) = view.into_inner();
     if extracted.viewport.z == 0 || extracted.viewport.w == 0 {
         return;
     }
@@ -426,7 +447,7 @@ fn draw_sun_effects(
         &gpu,
         &cache,
         &device,
-        depth.view(),
+        depth,
         &gpu.history[read].view,
         &gpu.white.view,
         &gpu.white.view,
@@ -465,7 +486,7 @@ fn draw_sun_effects(
             &gpu,
             &cache,
             &device,
-            depth.view(),
+            depth,
             &gpu.history[write].view,
             color,
             &gpu.white.view,
@@ -495,7 +516,7 @@ fn draw_sun_effects(
             &gpu,
             &cache,
             &device,
-            depth.view(),
+            depth,
             &gpu.history[write].view,
             color,
             &gpu.white.view,
@@ -521,7 +542,7 @@ fn draw_sun_effects(
             &gpu,
             &cache,
             &device,
-            depth.view(),
+            depth,
             &gpu.history[write].view,
             &gpu.white.view,
             post.source,

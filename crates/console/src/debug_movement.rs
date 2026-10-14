@@ -68,6 +68,21 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "r_fsr_sharpness [0-1] — FSR 3's sharpening (default 0.8)",
         ));
     }
+    if registry.resolve("r_texture_filter").is_none() {
+        registry.register(crate::CommandSpec::new("r_texture_filter").usage(
+            "r_texture_filter [0-6] — texture filtering: 0 automatic (MW2's), 1 bilinear, 2 trilinear, 3 anisotropic 2x, 4 4x, 5 8x, 6 16x",
+        ));
+    }
+    if registry.resolve("r_msaa").is_none() {
+        registry.register(crate::CommandSpec::new("r_msaa").usage(
+            "r_msaa [1|2|4|8] — multisample anti-aliasing samples (1 off); not used while AMD FSR 3 is on",
+        ));
+    }
+    if registry.resolve("cl_nametags").is_none() {
+        registry.register(crate::CommandSpec::new("cl_nametags").usage(
+            "cl_nametags [0-2] — names over players' heads: 0 none, 1 teammates only (CS:GO), 2 teammates and the enemy aimed at (MW2)",
+        ));
+    }
     if registry.resolve("console_style").is_none() {
         registry.register(crate::CommandSpec::new("console_style").usage(
             "console_style [0|1] — the console's look: 0 the original panel, 1 the CS2-style window",
@@ -378,6 +393,46 @@ pub(crate) fn route_movement_commands(
                     format!("r_fsr_sharpness = {:.2}", game.fsr_sharpness)
                 }
                 _ => "usage: r_fsr_sharpness [0-1]".to_owned(),
+            },
+            "r_texture_filter" => match cmd.args.as_slice() {
+                [] => format!(
+                    "r_texture_filter = {} (0 automatic, 1 bilinear, 2 trilinear, 3 anisotropic                      2x, 4 4x, 5 8x, 6 16x)",
+                    game.texture_filter
+                ),
+                [arg] if matches!(arg.parse::<u8>(), Ok(0..=6)) => {
+                    game.texture_filter = arg.parse().unwrap_or(0);
+                    game.touch();
+                    format!("r_texture_filter = {}", game.texture_filter)
+                }
+                _ => "usage: r_texture_filter [0-6]".to_owned(),
+            },
+            "r_msaa" => match cmd.args.as_slice() {
+                [] => format!(
+                    "r_msaa = {} (1 off, 2, 4 or 8 samples; not used while r_fsr is on)",
+                    game.msaa
+                ),
+                [arg] if matches!(arg.parse::<u8>(), Ok(1 | 2 | 4 | 8)) => {
+                    game.msaa = arg.parse().unwrap_or(1);
+                    game.touch();
+                    if game.fsr_mode == 0 {
+                        format!("r_msaa = {}", game.msaa)
+                    } else {
+                        format!("r_msaa = {} — applies once r_fsr is 0", game.msaa)
+                    }
+                }
+                _ => "usage: r_msaa [1|2|4|8]".to_owned(),
+            },
+            "cl_nametags" => match cmd.args.as_slice() {
+                [] => format!(
+                    "cl_nametags = {} (0 none, 1 teammates only, 2 teammates and the enemy aimed                      at)",
+                    game.name_tags
+                ),
+                [arg] if matches!(arg.parse::<u8>(), Ok(0..=2)) => {
+                    game.name_tags = arg.parse().unwrap_or(0);
+                    game.touch();
+                    format!("cl_nametags = {}", game.name_tags)
+                }
+                _ => "usage: cl_nametags [0-2]".to_owned(),
             },
             "console_style" => match cmd.args.as_slice() {
                 [] => format!(

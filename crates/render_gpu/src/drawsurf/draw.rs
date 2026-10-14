@@ -19,7 +19,11 @@ pub(crate) fn register_drawsurf_render(app: &mut App) {
         .init_resource::<super::gpu_resources::RuntimeUploadedImageRegistry>()
         .add_systems(
             Render,
-            super::gpu_resources::prepare_uploaded_image_registry
+            (
+                super::gpu_resources::note_sampler_table_change,
+                super::gpu_resources::prepare_uploaded_image_registry,
+            )
+                .chain()
                 .in_set(RenderSystems::PrepareResources),
         );
     render_app.add_systems(

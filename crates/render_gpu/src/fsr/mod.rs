@@ -108,9 +108,68 @@ const PRESENT_Z: i32 = i32::MIN + 1;
 pub(crate) fn register(app: &mut App) {
     app.init_resource::<FsrTarget>()
         .init_resource::<FsrFrame>()
-        .add_systems(Update, apply_fsr_target);
+        .add_systems(Update, (apply_fsr_target, apply_msaa));
     gpu::register(app);
     alpha::register(app);
+}
+
+/// `r_msaa`: the world camera's multisampling, at most what the GPU offers for the colour and
+/// depth formats. Off while FSR is on: FSR reads single-sampled depth and is the anti-aliasing
+/// then.
+#[allow(clippy::type_complexity)]
+fn apply_msaa(
+    settings: Res<frame::GameSettings>,
+    adapter: Option<Res<bevy::render::renderer::RenderAdapter>>,
+    mut cameras: Query<
+        &mut bevy::render::view::Msaa,
+        (
+            With<Camera3d>,
+            Without<frame::UiCamera>,
+            Without<frame::MenuSceneCamera>,
+        ),
+    >,
+    mut reported: Local<Option<u32>>,
+) {
+    let wanted = if FsrMode::from_setting(settings.fsr_mode) == FsrMode::Off {
+        u32::from(settings.msaa)
+    } else {
+        1
+    };
+    let supported = |samples: u32| {
+        adapter.as_ref().is_some_and(|adapter| {
+            [
+                TextureFormat::Rgba8Unorm,
+                TextureFormat::Rgba8UnormSrgb,
+                crate::drawsurf::scene_depth::SCENE_DEPTH_FORMAT,
+            ]
+            .into_iter()
+            .all(|format| {
+                adapter
+                    .get_texture_format_features(format)
+                    .flags
+                    .sample_count_supported(samples)
+            })
+        })
+    };
+    let samples = [8, 4, 2]
+        .into_iter()
+        .find(|&samples| samples <= wanted && supported(samples))
+        .unwrap_or(1);
+    if *reported != Some(samples) {
+        *reported = Some(samples);
+        diag::info!(World, "msaa: {samples} samples (asked {wanted})");
+    }
+    let msaa = match samples {
+        8 => bevy::render::view::Msaa::Sample8,
+        4 => bevy::render::view::Msaa::Sample4,
+        2 => bevy::render::view::Msaa::Sample2,
+        _ => bevy::render::view::Msaa::Off,
+    };
+    for mut camera in &mut cameras {
+        if *camera != msaa {
+            *camera = msaa;
+        }
+    }
 }
 
 /// The camera already renders into our image.

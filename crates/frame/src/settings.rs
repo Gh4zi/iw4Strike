@@ -82,6 +82,13 @@ pub struct GameSettings {
     pub fsr_mode: u8,
     /// FSR 3's sharpening, 0 (none) to 1 (most).
     pub fsr_sharpness: f32,
+    /// `r_texture_filter`: how textures are filtered, see [`TextureFilter`].
+    pub texture_filter: u8,
+    /// `r_msaa`: multisample anti-aliasing samples, 1 (off), 2, 4 or 8. Not used while FSR is
+    /// on (FSR is the anti-aliasing then).
+    pub msaa: u8,
+    /// `cl_nametags`: names over players' heads, see [`NameTags`].
+    pub name_tags: u8,
     pub master_volume: f32,
     /// The output device to play through, by name (`audio_device`, Audio > Output device);
     /// empty follows the system default.
@@ -185,6 +192,9 @@ impl Default for GameSettings {
             console_style: 0,
             fsr_mode: 0,
             fsr_sharpness: 0.8,
+            texture_filter: TextureFilter::Automatic as u8,
+            msaa: 1,
+            name_tags: NameTags::Off as u8,
             master_volume: 1.0,
             audio_device: String::new(),
             ambient_volume: Self::AMBIENT_VOLUME_DEFAULT,
@@ -284,6 +294,12 @@ impl GameSettings {
         };
         self.max_frames_ahead = self.max_frames_ahead.clamp(1, 2);
         self.shadows = self.shadows.min(Self::SHADOWS_ALL);
+        self.texture_filter = self.texture_filter.min(TextureFilter::Aniso16x as u8);
+        self.msaa = match self.msaa {
+            2 | 4 | 8 => self.msaa,
+            _ => 1,
+        };
+        self.name_tags = self.name_tags.min(NameTags::All as u8);
         self.crosshair.sanitize();
         if self.pad_layout != Self::PAD_LAYOUT_CUSTOM {
             self.pad_layout = self.pad_layout.min(4);
@@ -332,5 +348,76 @@ impl SmokeQuality {
             .into_iter()
             .find(|(n, _)| name.eq_ignore_ascii_case(n))
             .map(|(_, quality)| quality)
+    }
+}
+
+/// `r_texture_filter`: how the world's textures are filtered (`GameSettings::texture_filter`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TextureFilter {
+    /// MW2's own choice per material: up to 4x anisotropic where it asks for it, plain
+    /// filtering elsewhere.
+    #[default]
+    Automatic = 0,
+    Bilinear = 1,
+    Trilinear = 2,
+    Aniso2x = 3,
+    Aniso4x = 4,
+    Aniso8x = 5,
+    Aniso16x = 6,
+}
+
+impl TextureFilter {
+    #[must_use]
+    pub fn from_setting(value: u8) -> Self {
+        [
+            Self::Automatic,
+            Self::Bilinear,
+            Self::Trilinear,
+            Self::Aniso2x,
+            Self::Aniso4x,
+            Self::Aniso8x,
+            Self::Aniso16x,
+        ]
+        .get(usize::from(value))
+        .copied()
+        .unwrap_or_default()
+    }
+
+    /// The anisotropy every filtered texture gets (1 for none); `None` for MW2's own choice.
+    #[must_use]
+    pub fn forced_anisotropy(self) -> Option<u32> {
+        match self {
+            Self::Automatic => None,
+            Self::Bilinear | Self::Trilinear => Some(1),
+            Self::Aniso2x => Some(2),
+            Self::Aniso4x => Some(4),
+            Self::Aniso8x => Some(8),
+            Self::Aniso16x => Some(16),
+        }
+    }
+}
+
+/// `cl_nametags`: names over players' heads (`GameSettings::name_tags`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NameTags {
+    /// None at all.
+    #[default]
+    Off = 0,
+    /// Teammates' only, as in CS:GO.
+    Teammates = 1,
+    /// MW2's: teammates', and an enemy's while aimed at.
+    All = 2,
+}
+
+impl NameTags {
+    #[must_use]
+    pub fn from_setting(value: u8) -> Self {
+        match value {
+            1 => Self::Teammates,
+            2 => Self::All,
+            _ => Self::Off,
+        }
     }
 }

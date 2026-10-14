@@ -268,6 +268,25 @@ struct UploadedRefreshSlots {
     model_lighting: bool,
 }
 
+/// A new sampler table (`r_texture_filter`) reads as every view replaced: the texture tables and
+/// bind caches start over, so each texture is bound with the new table's samplers.
+pub(crate) fn note_sampler_table_change(
+    world: Option<Res<crate::InstalledRenderWorld>>,
+    mut registry: ResMut<RuntimeUploadedImageRegistry>,
+    mut last: Local<Option<SamplerTable>>,
+) {
+    let Some(table) = world.as_ref().and_then(|world| world.sampler_table.as_ref()) else {
+        return;
+    };
+    if last.as_ref() == Some(table) {
+        return;
+    }
+    if last.is_some() {
+        registry.note(ViewChange::Replaced);
+    }
+    *last = Some(table.clone());
+}
+
 pub(crate) fn prepare_uploaded_image_registry(
     handles: Option<Res<ExtractedRuntimeImageHandles>>,
     gpu_images: Res<RenderAssets<GpuImage>>,

@@ -182,8 +182,11 @@ fn update_overhead_names(
     catalog: Option<Res<MenuCatalog>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     prediction: Option<Res<net::ClientPredictionState>>,
-    view: Res<frame::ViewSubject>,
-    effects: Res<frame::ScreenEffectsView>,
+    (view, effects, settings): (
+        Res<frame::ViewSubject>,
+        Res<frame::ScreenEffectsView>,
+        Res<frame::GameSettings>,
+    ),
     mut pass: ResMut<HudTessPass>,
     mut memory: Local<NameMemory>,
     mut target_settings: Local<TargetBoxSettings>,
@@ -246,7 +249,12 @@ fn update_overhead_names(
         }
         return;
     }
-    if view.in_killcam() || presented.alive_player(local.0).is_none() {
+    // `cl_nametags`: none, teammates' only, or MW2's (teammates', and the enemy aimed at).
+    let name_tags = frame::settings::NameTags::from_setting(settings.name_tags);
+    if view.in_killcam()
+        || presented.alive_player(local.0).is_none()
+        || name_tags == frame::settings::NameTags::Off
+    {
         memory.seen.clear();
         return;
     }
@@ -377,6 +385,9 @@ fn update_overhead_names(
     let mut list = Draw2dList::default();
     for (ent, team, name, anchor, pixel, visible, _, (rank, prestige, client)) in candidates {
         let friendly = local_meta.client_state_team != 0 && local_meta.client_state_team == team;
+        if !friendly && name_tags == frame::settings::NameTags::Teammates {
+            continue;
+        }
         let active = visible && (friendly || aimed == Some(ent));
         if active {
             let seen = memory.seen.entry(ent).or_insert((now, now, friendly));

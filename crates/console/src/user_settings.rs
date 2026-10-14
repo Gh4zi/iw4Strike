@@ -465,6 +465,9 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("console_style={}", settings.console_style),
         format!("fsr_mode={}", settings.fsr_mode),
         format!("fsr_sharpness={:.2}", settings.fsr_sharpness),
+        format!("texture_filter={}", settings.texture_filter),
+        format!("msaa={}", settings.msaa),
+        format!("cl_nametags={}", settings.name_tags),
         format!("shadows={}", settings.shadows),
         format!("depth_of_field={}", settings.depth_of_field),
         format!("bloom={}", settings.bloom),
@@ -678,6 +681,9 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
                     settings.fsr_sharpness = sharpness.clamp(0.0, 1.0);
                 }
             }
+            "texture_filter" => parse_into(value, &mut settings.texture_filter),
+            "msaa" => parse_into(value, &mut settings.msaa),
+            "cl_nametags" => parse_into(value, &mut settings.name_tags),
             "smoke_quality" => {
                 if frame::settings::SmokeQuality::from_name(value).is_some() {
                     settings.smoke_quality = value.trim().to_ascii_lowercase();
@@ -952,6 +958,9 @@ pub(crate) fn native_menu_settings(
                 }
             }
             "ui_bloom" => settings.bloom = value == "1",
+            "ui_texture_filter" => parse_into(value, &mut settings.texture_filter),
+            "ui_msaa" => parse_into(value, &mut settings.msaa),
+            "ui_name_tags" => parse_into(value, &mut settings.name_tags),
             "ui_max_frames_ahead" => parse_into(value, &mut settings.max_frames_ahead),
             "ui_pad_layout" => parse_into(value, &mut settings.pad_layout),
             "ui_pad_stick_layout" => parse_into(value, &mut settings.pad_stick_layout),
@@ -1098,6 +1107,9 @@ pub(crate) fn native_menu_settings(
     dvars.set("ui_fsr", settings.fsr_mode.to_string());
     dvars.set("ui_fsr_sharpness", format!("{:.1}", settings.fsr_sharpness));
     dvars.set("ui_bloom", if settings.bloom { "1" } else { "0" });
+    dvars.set("ui_texture_filter", settings.texture_filter.to_string());
+    dvars.set("ui_msaa", settings.msaa.to_string());
+    dvars.set("ui_name_tags", settings.name_tags.to_string());
     dvars.set("ui_max_frames_ahead", settings.max_frames_ahead.to_string());
     dvars.set("ui_r_mode", settings.resolution.to_string());
     dvars.set(
