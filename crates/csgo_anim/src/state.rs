@@ -4,7 +4,7 @@
 
 use glam::Vec3;
 use mdl_source::{BoneFrame, StudioModel};
-use playerstate_iw4::{ENTITYNUM_NONE, PlayerState, cs_grenade};
+use playerstate_iw4::{ENTITYNUM_NONE, PM_TYPE_NORMAL_LINKED, PlayerState, cs_grenade};
 
 // CS:GO's movement numbers the animations follow (`cs_shareddefs.cpp`).
 const SPEED_RUN: f32 = 260.0;
@@ -297,6 +297,9 @@ pub enum Event {
     ReloadEnd,
     Deploy,
     Jump,
+    /// Planting the C4 or defusing the bomb started: its activity (`ACT_CSGO_PLANT_BOMB`,
+    /// `ACT_CSGO_DEFUSE`, `ACT_CSGO_DEFUSE_WITH_KIT`).
+    Use(&'static str),
 }
 
 /// One player's CS:GO animation state (`CCSGOPlayerAnimState`).
@@ -352,6 +355,8 @@ pub struct AnimState {
     pub seen_weaponstate: i32,
     pub seen_grenade: u32,
     pub seen_silencers: u32,
+    /// The plant or defuse under way: its activity.
+    pub seen_use: Option<&'static str>,
     /// The weapon class the idle loop was chosen for.
     pub alive_class: &'static str,
     /// The flashed reaction is up (`m_bFlashed`).
@@ -410,6 +415,7 @@ impl AnimState {
             seen_weaponstate: 0,
             seen_grenade: 0,
             seen_silencers: 0,
+            seen_use: None,
             alive_class: "",
             flashed: false,
         }
@@ -550,6 +556,7 @@ impl AnimState {
                 self.jumping = true;
                 (JUMP_OR_FALL, "ACT_CSGO_JUMP")
             }
+            Event::Use(activity) => (WEAPON_ACTION, activity),
         };
         let sequence = self.select(animset, activity);
         self.set_sequence(animset, layer, sequence);
@@ -1031,6 +1038,19 @@ impl AnimState {
     pub fn observe(&mut self, animset: &Animset, seen: &Observation<'_>, dt: f32) {
         let ps = seen.ps;
         let weapon = ps.weapon;
+        // Planting and defusing: MW2's use code holds the player linked to the site or the bomb
+        // (`playerLinkTo`), with no ground under them; they stand (or crouch) there as in
+        // CS:GO, planting with the C4 in hand, else defusing, quicker with a kit.
+        let linked = ps.pm_type == PM_TYPE_NORMAL_LINKED;
+        let using = linked.then(|| {
+            if seen.weapon_name == weapon_iw4::cs::CS_C4.mw2_name {
+                "ACT_CSGO_PLANT_BOMB"
+            } else if ps.cs_defuser != 0 {
+                "ACT_CSGO_DEFUSE_WITH_KIT"
+            } else {
+                "ACT_CSGO_DEFUSE"
+            }
+        });
         let cs_index = weapon_iw4::cs::cs_weapon_index_for(seen.weapon_name);
         let class = cs_index.map_or("knife", weapon_iw4::cs::csgo_anim_class);
         let max_speed = cs_index
@@ -1042,7 +1062,7 @@ impl AnimState {
             eye_pitch: seen.eye_pitch,
             velocity: Vec3::from(ps.velocity),
             duck: ps.cs_duck_amount.clamp(0.0, 1.0),
-            on_ground: ps.ground_entity_num != ENTITYNUM_NONE,
+            on_ground: ps.ground_entity_num != ENTITYNUM_NONE || linked,
             walking: ps.cs_move_buttons & 0x2 != 0,
             scoped: ps.cs_zoom != 0,
             max_speed,
@@ -1055,7 +1075,8 @@ impl AnimState {
         if !self.first_run {
             if weapon != self.seen_weapon {
                 events.push(Event::Deploy);
-            } else if ps.cs_last_fire_ms != self.seen_fire_ms && ps.cs_last_fire_ms != 0 {
+            } else if ps.cs_last_fire_ms != self.seen_fire_ms && ps.cs_last_fire_ms != 0 && !linked
+            {
                 events.push(Event::Fire);
             }
             let reloading = |s: i32| s == weapon_iw4::WeaponState::Reloading as i32;
@@ -1089,12 +1110,25 @@ impl AnimState {
             {
                 events.push(Event::Jump);
             }
+            if using != self.seen_use {
+                // A plant or defuse let go of stops its animation; a new one starts its own.
+                if let Some(stopped) = self.seen_use
+                    && animset.activity(self.layers[WEAPON_ACTION].sequence) == stopped
+                {
+                    self.layers[WEAPON_ACTION].sequence = None;
+                    self.layers[WEAPON_ACTION].weight = 0.0;
+                }
+                if let Some(activity) = using {
+                    events.push(Event::Use(activity));
+                }
+            }
         }
         self.seen_weapon = weapon;
         self.seen_fire_ms = ps.cs_last_fire_ms;
         self.seen_weaponstate = ps.weaponstate_primary;
         self.seen_grenade = ps.cs_grenade;
         self.seen_silencers = ps.cs_silencers;
+        self.seen_use = using;
         self.class = class;
         for event in events {
             self.event(animset, event);
