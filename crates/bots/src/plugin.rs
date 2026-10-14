@@ -251,6 +251,8 @@ fn evict_bots_claiming_local_client(mut roster: ResMut<BotRoster>, local: Res<Lo
 /// connect and one class pick each, not one tick running the scripts' connect and menu
 /// callbacks nine times over (~25 ms of script on that tick). Past this, the next goes anyway.
 const BOOT_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long a bot may stay without a team in a team mode before it asks to join again.
+const REJOIN_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn boot_bots(
     mut roster: ResMut<BotRoster>,
@@ -274,6 +276,22 @@ fn boot_bots(
         Some(entity_iw4::TEAM_ALLIES) => Some(("allies", "axis")),
         _ => None,
     };
+    // A bot that joined while the scripts took no team picks (a round's end) is left on no
+    // team, and nothing answers the team menu for it again: in a team mode it asks again.
+    if team_based {
+        for bot in &mut roster.bots {
+            if bot.joined
+                && bot.joined_at.is_some_and(|at| at.elapsed() >= REJOIN_AFTER)
+                && !matches!(
+                    world.0.client_state_team(bot.id),
+                    Some(entity_iw4::TEAM_AXIS | entity_iw4::TEAM_ALLIES)
+                )
+            {
+                diag::info!(Sim, "bots: client {} has no team; joining again", bot.id.0);
+                bot.joined = false;
+            }
+        }
+    }
     if let Some((last, at)) = *last_boot
         && at.elapsed() < BOOT_WAIT_CAP
         && actions.pending_for(last).next().is_some()
@@ -363,6 +381,7 @@ fn boot_bots(
             continue;
         }
         bot.joined = true;
+        bot.joined_at = Some(std::time::Instant::now());
         bot.class_picks += 1;
         diag::info!(
             Sim,

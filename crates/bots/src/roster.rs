@@ -150,6 +150,8 @@ pub struct BotSlot {
     pub account: sim::AccountId,
     pub brain: Option<HostController>,
     pub joined: bool,
+    /// When it last asked to join (its team and class).
+    pub joined_at: Option<std::time::Instant>,
     pub class_picked_in: Option<LifeSequence>,
     pub class_picks: u32,
     /// The command the brain last produced, resent on the ticks between thinks.
@@ -217,6 +219,7 @@ impl BotRoster {
                 account: sim::AccountId(account),
                 brain,
                 joined: false,
+                joined_at: None,
                 class_picked_in: None,
                 class_picks: 0,
                 last_cmd: None,
