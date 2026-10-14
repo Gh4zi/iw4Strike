@@ -27,7 +27,10 @@ use crate::transport::wire::WireReader;
 
 use super::account_wire::{AccountMessage, profile_payload};
 
-const RELAY_MAIL_CAP: usize = 64;
+// Packets waiting each way between the master relay and the game: several seconds of a 128 tick
+// match's traffic, so a hitch on either side delays a player's commands instead of dropping a run
+// of them (the server then waited for a command that never came and dropped the player).
+const RELAY_MAIL_CAP: usize = 1024;
 pub(crate) const CMDS_PER_PACKET: usize = 16;
 
 #[derive(Clone, Debug)]
