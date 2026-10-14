@@ -128,7 +128,10 @@ pub struct AutoLayer {
     pub end: f32,
 }
 
-/// `Sequence::flags`: the sequence adds to the pose under it (`STUDIO_DELTA`).
+/// `Sequence::flags`: changing to the sequence cuts to it at once, with no fade from the one
+/// before (`STUDIO_SNAP`).
+pub const SEQ_SNAP: i32 = 0x0002;
+/// The sequence adds to the pose under it (`STUDIO_DELTA`).
 pub const SEQ_DELTA: i32 = 0x0004;
 /// A delta sequence applied after (in the frame of) the pose under it (`STUDIO_POST`).
 pub const SEQ_POST: i32 = 0x0010;
@@ -588,34 +591,38 @@ impl StudioModel {
     /// Skinning matrices (bone pose × pose-to-bone) for `sequence` at `seconds`: a bind-space
     /// vertex times its bone's matrix lands in model space.
     pub fn pose(&self, sequence: usize, seconds: f32, out: &mut Vec<Mat3x4>) {
+        self.pose_fading(sequence, seconds, &[], out);
+    }
+
+    /// [`pose`](Self::pose) with the sequences played before it still fading out over it, as
+    /// Source's sequence transitions do: each of `fading` (sequence, seconds into it, weight) is
+    /// blended over the pose by its weight in turn, bone by bone.
+    pub fn pose_fading(
+        &self,
+        sequence: usize,
+        seconds: f32,
+        fading: &[(usize, f32, f32)],
+        out: &mut Vec<Mat3x4>,
+    ) {
         out.clear();
         let bones = self.bones.len();
         let mut world: Vec<Mat3x4> = Vec::with_capacity(bones);
         let seq = self.sequences.get(sequence).filter(|s| s.num_frames > 0);
         for (b, bone) in self.bones.iter().enumerate() {
-            let local = match seq {
-                Some(seq) => {
-                    let last = seq.num_frames - 1;
-                    let mut frame = (seconds.max(0.0) * seq.fps).max(0.0);
-                    if seq.looping && last > 0 {
-                        frame %= last as f32;
-                    } else {
-                        frame = frame.min(last as f32);
-                    }
-                    let first = (frame as usize).min(last);
-                    let next = (first + 1).min(last);
-                    let t = frame - first as f32;
-                    let a = seq.frames[first * bones + b];
-                    let c = seq.frames[next * bones + b];
-                    matrix(
-                        slerp(a.rotation, c.rotation, t),
-                        core::array::from_fn(|i| {
-                            a.position[i] + (c.position[i] - a.position[i]) * t
-                        }),
-                    )
+            let mut frame = seq.map(|seq| self.sequence_frame(seq, seconds, b));
+            for &(old, at, weight) in fading {
+                if let (Some(current), Some(old)) = (
+                    frame.as_mut(),
+                    self.sequences.get(old).filter(|s| s.num_frames > 0),
+                ) {
+                    let old = self.sequence_frame(old, at, b);
+                    current.rotation = slerp(current.rotation, old.rotation, weight);
+                    current.position = core::array::from_fn(|i| {
+                        current.position[i] + (old.position[i] - current.position[i]) * weight
+                    });
                 }
-                None => mdl_goldsrc::IDENTITY,
-            };
+            }
+            let local = frame.map_or(mdl_goldsrc::IDENTITY, |f| matrix(f.rotation, f.position));
             let w = match bone.parent {
                 Some(p) if p < world.len() => concat(&world[p], &local),
                 _ => local,
@@ -633,6 +640,29 @@ impl StudioModel {
                 .iter()
                 .map(|(bone, pose_to_bone)| concat(&world[*bone], pose_to_bone)),
         );
+    }
+}
+
+impl StudioModel {
+    /// Bone `bone`'s local transform in `seq` at `seconds` (between its two nearest frames).
+    fn sequence_frame(&self, seq: &Sequence, seconds: f32, bone: usize) -> BoneFrame {
+        let bones = self.bones.len();
+        let last = seq.num_frames - 1;
+        let mut frame = (seconds.max(0.0) * seq.fps).max(0.0);
+        if seq.looping && last > 0 {
+            frame %= last as f32;
+        } else {
+            frame = frame.min(last as f32);
+        }
+        let first = (frame as usize).min(last);
+        let next = (first + 1).min(last);
+        let t = frame - first as f32;
+        let a = seq.frames[first * bones + bone];
+        let c = seq.frames[next * bones + bone];
+        BoneFrame {
+            rotation: slerp(a.rotation, c.rotation, t),
+            position: core::array::from_fn(|i| a.position[i] + (c.position[i] - a.position[i]) * t),
+        }
     }
 }
 

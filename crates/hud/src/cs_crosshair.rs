@@ -69,10 +69,14 @@ pub(crate) fn cs_crosshair_for(
         return Some(Some(CS_KNIFE_CROSSHAIR));
     }
     let weapon = weapon_iw4::cs::cs_weapon(index)?;
+    // CS:GO's AUG and SG 553 aim down their scope, whose dot takes the crosshair's place.
+    let aimsight = ps.cs_shooting_mode == weapon_iw4::csgo::SHOOTING_CSGO
+        && matches!(weapon.name, "aug" | "sg552");
     Some(match weapon.spread {
         CsSpread::Sniper { .. } => None,
         // The auto snipers show theirs until the scope comes up.
         CsSpread::AutoSniper { .. } if ps.cs_zoom != 0 => None,
+        _ if aimsight && ps.cs_zoom != 0 => None,
         _ => Some(weapon.crosshair),
     })
 }

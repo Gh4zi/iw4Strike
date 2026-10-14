@@ -7,7 +7,7 @@
 mod alpha;
 mod gpu;
 
-pub(crate) use gpu::{FsrOutput, prepare_fsr};
+pub(crate) use gpu::{FsrOutput, FsrSet, prepare_fsr};
 
 use bevy::{
     asset::RenderAssetUsages,

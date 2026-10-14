@@ -23,12 +23,12 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
     }
     if registry.resolve("always_edgebug").is_none() {
         registry.register(crate::CommandSpec::new("always_edgebug").usage(
-            "always_edgebug [0|1] — land at any edge, close enough to go off it, and you edgebug: no landing, no fall damage, your speed kept; landings elsewhere hurt as usual (not in mv_mode cs16)",
+            "always_edgebug [0|1] — server cheat, off by default and at every launch: land at any edge, close enough to go off it, and you edgebug: no landing, no fall damage, your speed kept; landings elsewhere hurt as usual (not in mv_mode cs16). The host's applies to everyone on the server",
         ));
     }
     if registry.resolve("always_pixelsurf").is_none() {
         registry.register(crate::CommandSpec::new("always_pixelsurf").usage(
-            "always_pixelsurf [0|1] — hold a key into any wall while falling and moving along it to pixelsurf: your height holds until you let go or something stops you (not in mv_mode cs16)",
+            "always_pixelsurf [0|1] — server cheat, off by default and at every launch: hold a key into any wall while falling and moving along it to pixelsurf: your height holds until you let go or something stops you (not in mv_mode cs16). The host's applies to everyone on the server",
         ));
     }
     if registry.resolve("shooting_mode").is_none() {
@@ -199,13 +199,38 @@ pub(crate) fn sync_movement_mode(game: Res<frame::GameSettings>) {
         movement_iw4::rules::set_mode(wanted);
         diag::info!(Console, "mv_mode = {} — {}", wanted.name(), wanted.describe());
     }
-    if movement_iw4::rules::always_edgebug() != game.always_edgebug {
-        movement_iw4::rules::set_always_edgebug(game.always_edgebug);
-        diag::info!(Console, "always_edgebug = {}", u8::from(game.always_edgebug));
+}
+
+/// The movement cheats in play (`always_edgebug`, `always_pixelsurf`): server settings, off
+/// unless the host turns them on. Hosting, they are this player's own; on another's server, the
+/// server's, which it tells its clients in the server info, so their prediction moves as it does
+/// and none turns them on for themselves.
+pub(crate) fn follow_server_movement_cheats(
+    game: Res<frame::GameSettings>,
+    presented: Res<net::PresentedSnapshot>,
+    authority: Option<Res<net::AuthorityWorld>>,
+) {
+    let server = |name: &str| {
+        presented.snapshot().is_some_and(|snap| {
+            snap.meta
+                .objectives
+                .server_info
+                .iter()
+                .any(|(key, value)| key == name && value == "1")
+        })
+    };
+    let (edgebug, pixelsurf) = if authority.is_some() {
+        (game.always_edgebug, game.always_pixelsurf)
+    } else {
+        (server("always_edgebug"), server("always_pixelsurf"))
+    };
+    if movement_iw4::rules::always_edgebug() != edgebug {
+        movement_iw4::rules::set_always_edgebug(edgebug);
+        diag::info!(Console, "always_edgebug = {}", u8::from(edgebug));
     }
-    if movement_iw4::rules::always_pixelsurf() != game.always_pixelsurf {
-        movement_iw4::rules::set_always_pixelsurf(game.always_pixelsurf);
-        diag::info!(Console, "always_pixelsurf = {}", u8::from(game.always_pixelsurf));
+    if movement_iw4::rules::always_pixelsurf() != pixelsurf {
+        movement_iw4::rules::set_always_pixelsurf(pixelsurf);
+        diag::info!(Console, "always_pixelsurf = {}", u8::from(pixelsurf));
     }
 }
 

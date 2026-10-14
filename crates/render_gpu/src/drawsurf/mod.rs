@@ -1,6 +1,7 @@
 mod admitted;
 mod backend;
 mod colour_submit;
+mod cs_aimsight;
 mod cs_scope;
 mod cs_smoke;
 mod cs_viewmodel;
@@ -32,6 +33,7 @@ mod sun_effects;
 mod texture_table;
 
 pub use admitted::AdmittedExactPort;
+pub use cs_aimsight::CsAimsightFrame;
 pub use cs_scope::CsScopeFrame;
 pub use cs_smoke::{
     CS_SMOKE_DIM, CS_SMOKE_HOLES, CS_SMOKE_SLOTS, CsSmokeFrame, CsSmokeHole, CsSmokeVolume,

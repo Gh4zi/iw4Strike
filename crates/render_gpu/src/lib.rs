@@ -37,8 +37,8 @@ pub use drawsurf::{
     write_buffer_padded, write_buffer_range,
 };
 pub use drawsurf::{
-    CS_VIEWMODEL_MAX_BONES, CsScopeFrame, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame,
-    CsViewmodelMaps, CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex,
+    CS_VIEWMODEL_MAX_BONES, CsAimsightFrame, CsScopeFrame, CsViewmodelDraw, CsViewmodelFlash,
+    CsViewmodelFrame, CsViewmodelMaps, CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex,
     CsWorldModelInstance, CsWorldModelsFrame,
 };
 pub use drawsurf::{

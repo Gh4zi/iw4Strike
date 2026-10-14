@@ -16,7 +16,7 @@ pub const CSGO_SOUND_PREFIX: &str = "csgo/";
 
 /// The CS:GO sound script groups our guns, knife, grenades and bomb play from (`weapon_ak47.`
 /// …): their shots and the sounds their animations call. CS:GO's other weapon sounds stay unread.
-const CSGO_SOUND_GROUPS: [&str; 46] = [
+const CSGO_SOUND_GROUPS: [&str; 55] = [
     // A head hit: on a helmet, on a bare head (each with the shooter's feedback version).
     "player.damagehelmet",
     "player.damageheadshot",
@@ -54,6 +54,17 @@ const CSGO_SOUND_GROUPS: [&str; 46] = [
     "weapon_cz75a.",
     "weapon_revolver.",
     "weapon_knife.",
+    // The other knives' draws, flips and inspects (their viewmodels call these, not
+    // `Weapon_Knife.*`), and the cloth rustle some inspects play.
+    "butterflyknife.",
+    "knife.gypsy.",
+    "knife.stilleto.",
+    "knife.ursus.",
+    "knife.widow.",
+    "knifebowie.",
+    "knifefalchion.",
+    "knifepush.",
+    "weapon.weaponmove",
     "weapon_hegrenade.",
     // The grenades: drawing one and pulling its pin, bouncing, and going off (the HE's blast is
     // `BaseGrenade.Explode`, the smoke's pop `BaseSmokeEffect.Sound`).

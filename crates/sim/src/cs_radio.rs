@@ -95,17 +95,15 @@ fn send_sound(world: &mut FrameWorld, tick: Tick, audience: Vec<ClientId>, alias
 /// whole team. CS 1.6: "Fire in the hole!" for any grenade to the teammates (the thrower plays it
 /// for themselves).
 pub(crate) fn grenade_call(world: &mut FrameWorld, tick: Tick, id: ClientId, grenade: &str) {
-    use weapon_iw4::cs::{CSGO_RADIO_ALIAS_PREFIX, csgo_grenade_radio, csgo_radio_voice};
+    use weapon_iw4::cs::{CSGO_RADIO_ALIAS_PREFIX, csgo_grenade_radio};
     let Some(team) = world.client_meta(id).map(|meta| meta.client_state_team) else {
         return;
     };
     let csgo = crate::cs_settings::shooting_mode() != weapon_iw4::csgo::SHOOTING_CS16;
     let alias = if csgo {
-        let allies = team == TEAM_ALLIES;
-        let faction = game_faction(world, allies).unwrap_or_default();
         format!(
             "{CSGO_RADIO_ALIAS_PREFIX}{}/{}",
-            csgo_radio_voice(&faction, allies),
+            csgo_voice(world, team),
             csgo_grenade_radio(grenade)
         )
     } else {
@@ -134,6 +132,20 @@ pub(crate) fn publish_factions(world: &mut FrameWorld) {
         runtime.server_info.insert("cs_factions".to_owned());
         runtime.dvars.insert("cs_factions".to_owned(), value);
     }
+}
+
+/// The CS:GO voice a player on MW2 team `team` speaks in, which is also the agent they are
+/// drawn as: their side's ([`weapon_iw4::cs::csgo_side_voice`]), by the side they play
+/// ([`weapon_iw4::cs::cs_plays_terrorist`]) as the clients take it from `cs_attackers`.
+pub(crate) fn csgo_voice(world: &mut FrameWorld, team: i32) -> &'static str {
+    let attackers = world
+        .ecs()
+        .get_resource::<crate::script::Runtime>()
+        .and_then(|runtime| runtime.dvars.get("cs_attackers").cloned());
+    let terrorist = weapon_iw4::cs::cs_plays_terrorist(attackers.as_deref(), team == TEAM_ALLIES);
+    let allies = game_faction(world, true).unwrap_or_default();
+    let axis = game_faction(world, false).unwrap_or_default();
+    weapon_iw4::cs::csgo_side_voice(&allies, &axis, terrorist)
 }
 
 /// The MW2 faction a team wears on this map (`game["allies"]` / `game["axis"]`).

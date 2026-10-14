@@ -32,6 +32,27 @@ pub fn set_smoke_mode(mode: u32) {
     SMOKE_MODE.store(mode, Ordering::Relaxed);
 }
 
+/// Tells clients this server's movement cheats (the server info `always_edgebug` and
+/// `always_pixelsurf`, "1" or "0"): theirs follow it, so their prediction moves as the server
+/// does and none turns them on for themselves.
+pub(crate) fn publish_movement_cheats(world: &mut crate::frame::FrameWorld) {
+    let Some(mut runtime) = world.ecs().get_resource_mut::<crate::script::Runtime>() else {
+        return;
+    };
+    for (name, on) in [
+        ("always_edgebug", movement_iw4::rules::always_edgebug()),
+        ("always_pixelsurf", movement_iw4::rules::always_pixelsurf()),
+    ] {
+        let value = if on { "1" } else { "0" };
+        if runtime.dvars.get(name).map(String::as_str) != Some(value)
+            || !runtime.server_info.contains(name)
+        {
+            runtime.server_info.insert(name.to_owned());
+            runtime.dvars.insert(name.to_owned(), value.to_owned());
+        }
+    }
+}
+
 /// Map destructibles (cars, explosive barrels, breakable walls) take damage and blow up. Off by
 /// default under CS rules (`sv_destructibles 0`): a competitive map should not change shape.
 static DESTRUCTIBLES: AtomicBool = AtomicBool::new(!movement_iw4::rules::CS_RULES);

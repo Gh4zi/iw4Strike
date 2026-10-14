@@ -1397,7 +1397,8 @@ fn cs_zoom_frame(
         && !reloading
         && cmd.server_time >= ps.cs_next_attack2_ms
     {
-        ps.cs_zoom = weapon_iw4::cs::next_zoom(cs, ps.cs_zoom);
+        let levels = weapon_iw4::cs::zoom_levels(cs, ps.cs_shooting_mode);
+        ps.cs_zoom = weapon_iw4::cs::next_zoom_of(levels, ps.cs_zoom);
         ps.cs_next_attack2_ms = cmd.server_time + weapon_iw4::cs::CS_ZOOM_DELAY_MS;
     }
 }

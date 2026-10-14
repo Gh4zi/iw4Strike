@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use csgo_anim::hitbox::WorldHitbox;
 use csgo_anim::{Agent, AnimState, Animset, Observation};
-use entity_iw4::TEAM_ALLIES;
 use glam::Vec3;
 
 use crate::frame::FrameWorld;
@@ -136,8 +135,6 @@ pub(crate) fn tick_csgo_hit_bodies(world: &mut FrameWorld, msec: i32) {
     let Some(pack) = csgo_anim::pack() else {
         return;
     };
-    let allies = crate::cs_radio::game_faction(world, true).unwrap_or_default();
-    let axis = crate::cs_radio::game_faction(world, false).unwrap_or_default();
     let dt = msec as f32 / 1000.0;
     let mut bodies = std::mem::take(&mut world.csgo_hit_bodies_mut().bodies);
     let mut live = Vec::new();
@@ -148,12 +145,12 @@ pub(crate) fn tick_csgo_hit_bodies(world: &mut FrameWorld, msec: i32) {
         if meta.lifecycle != ClientLifecycle::Alive {
             continue;
         }
-        let is_allies = meta.client_state_team == TEAM_ALLIES;
+        let team = meta.client_state_team;
         let Some(ps) = world.player(id).copied() else {
             continue;
         };
-        let faction = if is_allies { &allies } else { &axis };
-        let name = csgo_anim::agent_model(weapon_iw4::cs::csgo_radio_voice(faction, is_allies));
+        // The agent of the player's side, as the clients draw them.
+        let name = csgo_anim::agent_model(crate::cs_radio::csgo_voice(world, team));
         let Some(agent) = pack.agent(name) else {
             continue;
         };

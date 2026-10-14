@@ -532,8 +532,12 @@ fn apply_fpv_lens_fov(
     };
     let (horiz, _) = calc_fov_from_ads(&inputs, f_weapon_pos_frac, b_position_to_ads, &overlay);
     // A CS scope snaps straight to its zoom (4:3 horizontal degrees, as CS's fov), and the mouse
-    // slows with it.
-    let horiz = if cs_zoom != 0 { cs_zoom as f32 } else { horiz };
+    // slows with it; CS:GO's AUG and SG 553 ease to theirs as the gun comes up to the scope.
+    let horiz = match super::cs_viewmodel::aimsight_view() {
+        Some((amount, fov)) => horiz + (fov - horiz) * amount,
+        None if cs_zoom != 0 => cs_zoom as f32,
+        None => horiz,
+    };
     if let Some(actions) = actions {
         // CS turns `sensitivity * m_yaw` degrees a count at its fov of 90, and a scope slows it by
         // its fov over 90 times `zoom_sensitivity_ratio` (Source's `GetFOVSensitivityAdjust`,

@@ -2388,6 +2388,30 @@ pub fn csgo_radio_voice(faction: &str, allies: bool) -> &'static str {
     }
 }
 
+/// The CS:GO voice (and so the agent and arms) of whoever plays the Terrorists (`terrorist`) or
+/// the Counter-Terrorists on a map whose MW2 teams wear `allies` and `axis`: the Terrorists wear
+/// the axis faction and the Counter-Terrorists the allies one, whichever MW2 team plays which
+/// side (some maps attack with the allies, and the bomb mode swaps them at halftime), as CS:GO's
+/// sides keep their own models when the teams swap.
+#[must_use]
+pub fn csgo_side_voice(allies: &str, axis: &str, terrorist: bool) -> &'static str {
+    if terrorist {
+        csgo_radio_voice(axis, false)
+    } else {
+        csgo_radio_voice(allies, true)
+    }
+}
+
+/// Whether a player on MW2's allies (`allies`) or not plays the Terrorists, by the team the bomb
+/// mode names its attackers (`cs_attackers`): without one, everyone but the allies does.
+#[must_use]
+pub fn cs_plays_terrorist(attackers: Option<&str>, allies: bool) -> bool {
+    match attackers {
+        Some("allies") => allies,
+        _ => !allies,
+    }
+}
+
 /// The talker concept a throw of CS grenade `grenade` (buy name) calls (`ThrowGrenade`).
 #[must_use]
 pub fn csgo_grenade_concept(grenade: &str) -> &'static str {
@@ -3287,10 +3311,29 @@ pub const CS_DEPLOY_ZOOM_DELAY_MS: i32 = 1000;
 /// The zoom right click steps to from `current` (0 = unzoomed): the next level, or back to 0.
 #[must_use]
 pub fn next_zoom(weapon: &CsWeapon, current: u32) -> u32 {
-    match weapon.zoom.iter().position(|&z| z == current) {
-        Some(i) => weapon.zoom.get(i + 1).copied().unwrap_or(0),
-        None if current == 0 => weapon.zoom.first().copied().unwrap_or(0),
+    next_zoom_of(weapon.zoom, current)
+}
+
+/// [`next_zoom`] through `levels`.
+#[must_use]
+pub fn next_zoom_of(levels: &[u32], current: u32) -> u32 {
+    match levels.iter().position(|&z| z == current) {
+        Some(i) => levels.get(i + 1).copied().unwrap_or(0),
+        None if current == 0 => levels.first().copied().unwrap_or(0),
         None => 0,
+    }
+}
+
+/// CS:GO's AUG and SG 553 zoom to 45 (`zoom fov 1`); CS 1.6's and CS:S's to 55.
+const CSGO_SCOPED_RIFLE_ZOOM: &[u32] = &[45];
+
+/// The zoom levels of `weapon` under shooting mode `mode` (`PlayerState::cs_shooting_mode`).
+#[must_use]
+pub fn zoom_levels(weapon: &CsWeapon, mode: u32) -> &'static [u32] {
+    if mode == crate::csgo::SHOOTING_CSGO && matches!(weapon.name, "aug" | "sg552") {
+        CSGO_SCOPED_RIFLE_ZOOM
+    } else {
+        weapon.zoom
     }
 }
 

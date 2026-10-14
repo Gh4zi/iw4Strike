@@ -38,6 +38,7 @@ use render_gpu::{
     CsViewmodelDraw, CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex, CsWorldModelInstance,
 };
 
+use super::cs_viewmodel::{cs_factions, terrorist_team};
 use super::cs_world_model::CsHeldWeaponTags;
 use super::remote_body::{RemoteFxBolts, RemotePlayer};
 
@@ -533,20 +534,6 @@ impl CsgoBodies {
     }
 }
 
-/// The server's `cs_factions` ("<allies> <axis>"): each side's MW2 faction.
-fn factions(snapshot: &sim::Snapshot) -> Option<(String, String)> {
-    let value = snapshot
-        .meta
-        .objectives
-        .server_info
-        .iter()
-        .find(|(name, _)| name == "cs_factions")?
-        .1
-        .clone();
-    let (allies, axis) = value.split_once(' ')?;
-    Some((allies.to_owned(), axis.to_owned()))
-}
-
 /// Poses and hands over every living player's CS:GO body this frame, hiding their MW2 body and
 /// moving their held weapon onto the CS:GO hand.
 #[allow(clippy::too_many_arguments)]
@@ -582,7 +569,7 @@ pub fn update_csgo_bodies(
     let Some(pack) = csgo_anim::pack() else {
         return;
     };
-    let (allies, axis) = factions(snapshot).unwrap_or_default();
+    let (allies, axis) = cs_factions(snapshot).unwrap_or_default();
     let dt = time.delta_secs().min(0.1);
     let mut live = HashSet::new();
     for (identity, runtime, remote, mut bolts) in &mut roots {
@@ -630,9 +617,10 @@ pub fn update_csgo_bodies(
         let Some(ps) = presented.player(client) else {
             continue;
         };
-        let is_allies = remote.client_state_team == entity_iw4::TEAM_ALLIES;
-        let faction = if is_allies { &allies } else { &axis };
-        let name = agent_model(weapon_iw4::cs::csgo_radio_voice(faction, is_allies));
+        // The agent of the side they play (as the server's hit boxes take it), not of their MW2
+        // team: some maps attack with the allies, and the teams swap sides at halftime.
+        let terrorist = terrorist_team(snapshot, remote.client_state_team);
+        let name = agent_model(weapon_iw4::cs::csgo_side_voice(&allies, &axis, terrorist));
         let Some(character) = bodies.character(&pack, name, &mut images) else {
             continue;
         };

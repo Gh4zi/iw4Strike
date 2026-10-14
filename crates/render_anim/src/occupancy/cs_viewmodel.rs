@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use assets::PreparedWeapons;
 use bevy::asset::RenderAssetUsages;
@@ -25,8 +25,8 @@ use mdl_goldsrc::Mat3x4;
 use net::{LocalPresentClient, PresentedSnapshot};
 use playerstate_iw4::PlayerState;
 use render_gpu::{
-    CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelMaps, CsViewmodelModel,
-    CsViewmodelShading, CsViewmodelVertex,
+    CsAimsightFrame, CsViewmodelDraw, CsViewmodelFlash, CsViewmodelFrame, CsViewmodelMaps,
+    CsViewmodelModel, CsViewmodelShading, CsViewmodelVertex,
 };
 use weapon_iw4::cs::CsWeapon;
 
@@ -55,11 +55,42 @@ const CSGO_VIEWMODEL_OFFSET: Mat3x4 = [
 /// CS:GO's default `viewmodel_fov` (horizontal degrees at 4:3): its guns are drawn as CS:GO draws
 /// them by default, whatever `viewmodel_fov` (tuned for CS2's and CS:S's) says.
 const CSGO_VIEWMODEL_FOV: f32 = 60.0;
-/// CS:GO's arms when the player wears no agent: the Phoenix Connexion's and the SAS's.
-const CSGO_ARMS: [&str; 2] = [
-    "models/weapons/t_arms_phoenix.mdl",
-    "models/weapons/ct_arms_sas.mdl",
-];
+/// CS's view `fov` unzoomed (`default_fov`). Source narrows the viewmodel's fov by as much as a
+/// zoom narrows the view's (`fovViewmodel = viewmodel_fov - (default_fov - fov)`), so a gun aimed
+/// down its scope at 45 is drawn at 15.
+const CS_DEFAULT_FOV: f32 = 90.0;
+/// A side's CS:GO look in first person: whether it plays the Terrorists (their knife and guns)
+/// and the arms of the agent it wears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct CsgoSide {
+    terrorist: bool,
+    arms: &'static str,
+}
+
+impl CsgoSide {
+    /// The Terrorists (`terrorist`) or the Counter-Terrorists on a map whose MW2 teams wear
+    /// `factions` (allies, axis): the arms of the side's agent, as their body wears it.
+    fn of(terrorist: bool, factions: Option<&(String, String)>) -> Self {
+        let (allies, axis) =
+            factions.map_or(("", ""), |(allies, axis)| (allies.as_str(), axis.as_str()));
+        Self {
+            terrorist,
+            arms: csgo_arms(weapon_iw4::cs::csgo_side_voice(allies, axis, terrorist)),
+        }
+    }
+}
+
+/// CS:GO's arms of the agent who speaks in `voice` (`csgo_anim::agent_model`).
+fn csgo_arms(voice: &str) -> &'static str {
+    match voice {
+        "sas" => "models/weapons/ct_arms_sas.mdl",
+        "seal" => "models/weapons/ct_arms_st6.mdl",
+        "balkan" => "models/weapons/t_arms_balkan.mdl",
+        "leet" => "models/weapons/t_arms_leet.mdl",
+        "separatist" => "models/weapons/t_arms_separatist.mdl",
+        _ => "models/weapons/t_arms_phoenix.mdl",
+    }
+}
 /// CS2's default `viewmodel_offset_x/y/z` (2.5 right, 0 forward, 1.5 down), in view space
 /// (x forward, y left, z up).
 const CS2_VIEWMODEL_OFFSET: Mat3x4 = [
@@ -94,8 +125,153 @@ const FLASH_TINT: [f32; 3] = [1.0, 0.86, 0.62];
 const SWAY_CATCH_UP: f32 = 5.0;
 const SWAY_MAX_LAG: f32 = 1.5;
 const SWAY_UNITS: f32 = 5.0;
+/// CS:S's and CS:GO's turn lag (their predicted viewmodel's): how far back the view's angles are
+/// looked at (`cl_wpn_sway_interp`, seconds), and the units one unit of the forward's turn since
+/// then moves the gun (`cl_wpn_sway_scale`: 1 in CS:S, 1.6 in CS:GO).
+const SWAY_INTERP: f64 = 0.1;
+const CSS_SWAY_SCALE: f32 = 1.0;
+const CSGO_SWAY_SCALE: f32 = 1.6;
+/// The scope's reticle dot, as a share of the lens's radius (a few pixels at 1080p).
+const AIM_DOT: f32 = 0.015;
+
+/// CS:GO's aim down a rifle's scope (`aimsight` in its items_game: the AUG's and SG 553's).
+/// Zoomed, the gun turns by `pivot_angle` (pitch, yaw, roll) about the point `pivot_forward`
+/// ahead of the eye and moves by minus `eye` (forward, left, up), which puts its scope's lens on
+/// the middle of the view, square to it; it goes in at `speed_up` of the way a second and back at
+/// `speed_down`, drawn at `fov` once in.
+#[derive(Clone, Copy, Debug)]
+struct Aimsight {
+    eye: [f32; 3],
+    pivot_angle: [f32; 3],
+    pivot_forward: f32,
+    speed_up: f32,
+    speed_down: f32,
+    fov: f32,
+}
+
+/// The aim of CS weapon `name`, the rifles that have one.
+fn aimsight(name: &str) -> Option<Aimsight> {
+    match name {
+        "aug" => Some(Aimsight {
+            eye: [-1.56, -3.6, -0.07],
+            pivot_angle: [0.78, -0.1, -0.03],
+            pivot_forward: 10.0,
+            speed_up: 10.0,
+            speed_down: 8.0,
+            fov: 45.0,
+        }),
+        "sg552" => Some(Aimsight {
+            eye: [0.72, -5.12, -1.33],
+            pivot_angle: [0.52, 0.04, 0.72],
+            pivot_forward: 8.0,
+            speed_up: 10.0,
+            speed_down: 8.0,
+            fov: 45.0,
+        }),
+        _ => None,
+    }
+}
+
+/// The gun `amount` (eased, 0 to 1) of the way into `aim`, in view space: turned about the
+/// pivot, then moved. `mirrored` (`cl_righthand 0`) mirrors it across the view as the gun is.
+fn aim_placement(aim: &Aimsight, amount: f32, mirrored: bool) -> Mat3x4 {
+    let side = if mirrored { -1.0 } else { 1.0 };
+    let turn = view_rotation(
+        aim.pivot_angle[0] * amount,
+        aim.pivot_angle[1] * amount * side,
+        aim.pivot_angle[2] * amount * side,
+    );
+    let pivot = [aim.pivot_forward, 0.0, 0.0];
+    let eye = [aim.eye[0], aim.eye[1] * side, aim.eye[2]];
+    let mut place = turn;
+    for (r, row) in place.iter_mut().enumerate() {
+        let turned = row[0] * pivot[0] + row[1] * pivot[1] + row[2] * pivot[2];
+        row[3] = pivot[r] - turned - eye[r] * amount;
+    }
+    place
+}
+
+/// Where a CS:GO rifle's scope lens is (its `aimsight lens mask` model): the bone it rides, its
+/// centre in the gun's bind space (the bone's skinning matrix places it) and its radius.
+#[derive(Clone, Copy, Debug)]
+struct Lens {
+    bone: usize,
+    center: [f32; 3],
+    radius: f32,
+}
+
+fn transform(m: &Mat3x4, p: [f32; 3]) -> [f32; 3] {
+    [0, 1, 2].map(|r| m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3])
+}
+
+/// Inverse of a rotation and translation.
+fn rigid_inverse(m: &Mat3x4) -> Mat3x4 {
+    let mut out = [[0.0; 4]; 3];
+    for (r, row) in out.iter_mut().enumerate() {
+        for (c, v) in row.iter_mut().take(3).enumerate() {
+            *v = m[c][r];
+        }
+        row[3] = -(row[0] * m[0][3] + row[1] * m[1][3] + row[2] * m[2][3]);
+    }
+    out
+}
+
+/// The lens of CS:GO viewmodel `model` (`v_rif_aug`) on `gun`, from its scope's lens mask
+/// (`models/weapons/v_rif_aug_scopelensmask.mdl`, a disc on one of the gun's bones), when the
+/// gun has one.
+fn scope_lens(vpk: &mdl_source::Vpk, gun: &mdl_source::StudioModel, model: &str) -> Option<Lens> {
+    let stem = format!("models/weapons/{model}_scopelensmask");
+    let mask = mdl_source::StudioModel::parse(
+        &vpk.read(&format!("{stem}.mdl"))?,
+        &vpk.read(&format!("{stem}.vvd"))?,
+        &vpk.read(&format!("{stem}.dx90.vtx"))?,
+    )
+    .ok()?;
+    let mask_bone = mask.bones.first()?;
+    let bone = gun
+        .bones
+        .iter()
+        .position(|b| b.name.eq_ignore_ascii_case(&mask_bone.name))?;
+    // The mask's bind space, to its bone's, to the gun's bind space.
+    let to_gun = mdl_goldsrc::concat(
+        &rigid_inverse(&gun.bones[bone].pose_to_bone),
+        &mask_bone.pose_to_bone,
+    );
+    let points: Vec<[f32; 3]> = mask
+        .vertices
+        .iter()
+        .map(|v| transform(&to_gun, v.position))
+        .collect();
+    let count = points.len().max(1) as f32;
+    let center = [0, 1, 2].map(|k| points.iter().map(|p| p[k]).sum::<f32>() / count);
+    let radius = points
+        .iter()
+        .map(|p| (0..3).map(|k| (p[k] - center[k]).powi(2)).sum::<f32>().sqrt())
+        .fold(0.0, f32::max);
+    (radius > 0.0).then_some(Lens {
+        bone,
+        center,
+        radius,
+    })
+}
 
 static SWAY: AtomicBool = AtomicBool::new(true);
+/// How far into a rifle's scope the gun is (eased, as f32 bits) and the view's zoom there.
+static AIM_AMOUNT: AtomicU32 = AtomicU32::new(0);
+static AIM_FOV: AtomicU32 = AtomicU32::new(0);
+
+/// While the gun goes into (or out of) a CS:GO rifle's scope: how far in it is (0 to 1) and the
+/// zoom (CS fov) it brings, which the view eases to with it, as CS:GO's ironsight does.
+pub fn aimsight_view() -> Option<(f32, f32)> {
+    let amount = f32::from_bits(AIM_AMOUNT.load(Ordering::Relaxed));
+    (amount > 0.0).then(|| (amount, f32::from_bits(AIM_FOV.load(Ordering::Relaxed))))
+}
+
+/// Set once a frame by the viewmodel's update: [`aimsight_view`]'s amount and zoom.
+fn publish_aim(amount: f32, fov: f32) {
+    AIM_FOV.store(fov.to_bits(), Ordering::Relaxed);
+    AIM_AMOUNT.store(amount.to_bits(), Ordering::Relaxed);
+}
 
 /// Whether the gun bobs when walking and trails when turning.
 pub fn viewmodel_sway() -> bool {
@@ -137,10 +313,17 @@ struct Cs2Segment {
 
 impl Studio {
     /// Matrices that place each vertex's bind-space position in view space (before placement).
-    fn pose(&self, sequence: usize, seconds: f32, out: &mut Vec<Mat3x4>) {
+    /// `fading`: the sequences still fading out over it (Source models only; see [`Fade`]).
+    fn pose(
+        &self,
+        sequence: usize,
+        seconds: f32,
+        fading: &[(usize, f32, f32)],
+        out: &mut Vec<Mat3x4>,
+    ) {
         match self {
             Self::GoldSrc(model) => model.pose(sequence, seconds, out),
-            Self::Source(model) => model.pose(sequence, seconds, out),
+            Self::Source(model) => model.pose_fading(sequence, seconds, fading, out),
             Self::Source2(viewmodel, segments) => {
                 let Some(segment) = segments.get(sequence) else {
                     return;
@@ -160,6 +343,77 @@ struct SequenceInfo {
     duration: f32,
     /// (frame, sound alias without the `/plr` suffix).
     sounds: Vec<(f32, String)>,
+    /// Seconds a Source sequence fades in over the one before it and out under the one after
+    /// (`fadeintime`, `fadeouttime`); 0 for the formats that cut between sequences.
+    fade_in: f32,
+    fade_out: f32,
+    /// Cuts in with no fade (`STUDIO_SNAP`: CS:GO's shots, draws and reloads).
+    snap: bool,
+}
+
+/// A sequence still fading out under the one that followed it (Source's
+/// `CSequenceTransitioner`): it keeps playing at its rate while its share of the pose eases from
+/// all of it to none.
+#[derive(Clone, Copy)]
+struct Fade {
+    sequence: usize,
+    /// When the sequence started playing and its speed, to know where in it the pose is.
+    started: f64,
+    rate: f32,
+    /// When the fade began and how long it lasts (seconds).
+    from: f64,
+    over: f32,
+}
+
+/// At most this many sequences fade at once; an older one is dropped.
+const MAX_FADES: usize = 4;
+
+impl Fade {
+    /// Its share of the pose at `now` (`GetFadeout`: 1 down to 0 on a smooth spline).
+    fn weight(&self, now: f64) -> f32 {
+        let left = 1.0 - (now - self.from) as f32 / self.over;
+        if left <= 0.0 {
+            0.0
+        } else if left >= 1.0 {
+            1.0
+        } else {
+            left * left * (3.0 - 2.0 * left)
+        }
+    }
+}
+
+/// Changing from the sequence `playing` plays to `next`: unless `next` snaps in, the old one
+/// fades out under it over the shorter of its own fade-out and `next`'s fade-in.
+fn fade_out(playing: &mut Playing, next: Option<usize>, sequences: &[SequenceInfo], now: f64) {
+    let next = next.and_then(|n| sequences.get(n));
+    if next.is_none_or(|next| next.snap) {
+        playing.fading.clear();
+        return;
+    }
+    let (Some(next), Some((current, info))) = (
+        next,
+        playing
+            .sequence
+            .and_then(|c| sequences.get(c).map(|info| (c, info))),
+    ) else {
+        return;
+    };
+    let over = info.fade_out.min(next.fade_in);
+    if over <= 0.0 {
+        playing.fading.clear();
+        return;
+    }
+    playing.fading.retain(|fade| fade.weight(now) > 0.0);
+    if playing.fading.len() >= MAX_FADES {
+        playing.fading.remove(0);
+    }
+    playing.fading.push(Fade {
+        sequence: current,
+        started: playing.started,
+        rate: playing.rate,
+        from: now,
+        over,
+    });
 }
 
 /// The M4A1's and USP's silenced animations, and the two that screw the silencer on and off.
@@ -208,6 +462,10 @@ struct Roles {
     /// often it is picked (the Deagle's spin 1 in 11).
     inspect: Vec<usize>,
     inspect_weights: Vec<u32>,
+    /// Every plain idle and draw of a CS:S or CS:GO model with how often each is picked (its
+    /// activity weight): CS:GO's knives have two idles, and the Butterfly and Ursus two draws.
+    idles: Vec<(usize, u32)>,
+    draws: Vec<(usize, u32)>,
 }
 
 /// A gun's idle, draw, reload and shoot animations.
@@ -221,6 +479,67 @@ impl Roles {
             _ => (self.idle, self.draw, self.reload, &self.shoot),
         }
     }
+
+    /// The idle to play: CS:GO picks one of a weapon's plain idles by weight each time one
+    /// starts; `idle` itself when it is another (a silenced or empty pistol's) or the only one.
+    fn pick_idle(&self, idle: Option<usize>, roll: u32) -> Option<usize> {
+        pick_weighted(&self.idles, idle, self.idle, roll)
+    }
+
+    /// The draw to play, picked as [`pick_idle`](Self::pick_idle) picks the idle.
+    fn pick_draw(&self, draw: Option<usize>, roll: u32) -> Option<usize> {
+        pick_weighted(&self.draws, draw, self.draw, roll)
+    }
+
+    /// Whether `sequence` is an idle while `idle` is the gun's: it, or any plain one when it is
+    /// the plain one.
+    fn is_idle(&self, sequence: usize, idle: Option<usize>) -> bool {
+        Some(sequence) == idle
+            || (idle == self.idle && self.idles.iter().any(|(s, _)| *s == sequence))
+    }
+
+    /// Whether `sequence` draws the gun while `draw` is the gun's draw: it, or any plain one.
+    fn is_draw(&self, sequence: usize, draw: Option<usize>) -> bool {
+        Some(sequence) == draw
+            || Some(sequence) == self.draw
+            || self.draws.iter().any(|(s, _)| *s == sequence)
+    }
+
+    /// Whether each idle that ends makes way for another pick (the weapon has several).
+    fn idle_varies(&self, idle: Option<usize>) -> bool {
+        idle == self.idle && self.idles.len() > 1
+    }
+}
+
+/// CS:GO's `SelectWeightedSequence` among `set` (sequence, weight) by `roll`, when `wanted` is
+/// its `plain` one and it has a choice; else `wanted`.
+fn pick_weighted(
+    set: &[(usize, u32)],
+    wanted: Option<usize>,
+    plain: Option<usize>,
+    roll: u32,
+) -> Option<usize> {
+    if wanted.is_none() || wanted != plain || set.len() < 2 {
+        return wanted;
+    }
+    let total: u32 = set.iter().map(|(_, weight)| (*weight).max(1)).sum();
+    let mut left = roll % total;
+    for &(sequence, weight) in set {
+        let weight = weight.max(1);
+        if left < weight {
+            return Some(sequence);
+        }
+        left -= weight;
+    }
+    wanted
+}
+
+/// The sequences of `studio` playing `activity`, each with its weight.
+fn weighted(studio: &mdl_source::StudioModel, activity: &str) -> Vec<(usize, u32)> {
+    studio
+        .sequences_for_activity(activity)
+        .map(|i| (i, studio.sequences[i].activity_weight.unsigned_abs()))
+        .collect()
 }
 
 /// The knife's sequences go by the same labels in CS:S and CS 1.6; CS:GO's knives slash with
@@ -272,8 +591,6 @@ struct ViewWeapon {
     scope_overlay: bool,
     /// Shell-by-shell reload: (start, per shell, finish) seconds (shotguns).
     shell_reload: Option<(f32, f32, f32)>,
-    /// The gun's CS2 model and clips, used when CS2 is installed.
-    cs2: Option<weapon_iw4::cs::Cs2View>,
 }
 
 impl ViewWeapon {
@@ -294,7 +611,6 @@ impl ViewWeapon {
             dual: false,
             scope_overlay: false,
             shell_reload: None,
-            cs2: weapon_iw4::cs::cs2_view(name),
         }
     }
 
@@ -355,6 +671,8 @@ struct LoadedModel {
     eject: Option<(usize, Mat3x4)>,
     /// A GoldSrc model holding its weapon in the right hand already (not mirrored).
     goldsrc_right_handed: bool,
+    /// A CS:GO rifle's scope lens, for its aim down the scope.
+    lens: Option<Lens>,
 }
 
 struct Playing {
@@ -377,6 +695,8 @@ struct Playing {
     flash: Option<(f64, u32)>,
     /// The clip last frame (a shotgun reload plays a shell going in as it grows).
     clip: i32,
+    /// Sequences played before `sequence`, still fading out under it (oldest first).
+    fading: Vec<Fade>,
 }
 
 #[derive(Resource, Default)]
@@ -402,6 +722,13 @@ pub struct CsViewmodels {
     gun_accuracy: f32,
     /// World-space facing the gun trails toward (turn sway).
     lagged_forward: Option<[f32; 3]>,
+    /// The view's (pitch, yaw) over the last [`SWAY_INTERP`] seconds and when, oldest first
+    /// (CS:S's and CS:GO's turn sway).
+    sway_history: std::collections::VecDeque<(f64, [f32; 2])>,
+    /// How far into a rifle's scope the gun is (0 to 1, not eased).
+    aim: f32,
+    /// CS:GO's `dev/scope_vignette`, darkening the blur around an aimed scope.
+    vignette: Option<Handle<Image>>,
     /// CS:S muzzle flash sprites (`sprites/muzzleflash4`, `effects/muzzleflashx`), looked up once.
     flash_images: Option<Option<[Handle<Image>; 2]>>,
     /// CS2 textures on the GPU, shared by every gun that draws them (the arms).
@@ -409,6 +736,8 @@ pub struct CsViewmodels {
     /// When `+lookatweapon` was last taken (CS:GO takes it at most every
     /// [`INSPECT_COMMAND_RATE`]).
     inspect_taken: Option<f64>,
+    /// The two sides' looks on the map being played (Terrorists, Counter-Terrorists).
+    sides: Option<[CsgoSide; 2]>,
     /// Since when `+reload` has been held (none while it is up).
     reload_held_since: Option<f64>,
 }
@@ -527,6 +856,9 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
             fps: s.fps,
             num_frames: s.num_frames,
             duration: s.duration(),
+            fade_in: 0.0,
+            fade_out: 0.0,
+            snap: true,
             sounds: s
                 .events
                 .iter()
@@ -588,6 +920,8 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
     let mut roles = Roles {
         inspect: Vec::new(),
         inspect_weights: Vec::new(),
+        idles: Vec::new(),
+        draws: Vec::new(),
         slashes,
         stab,
         stab_miss,
@@ -637,6 +971,7 @@ fn goldsrc_model(studio: mdl_goldsrc::StudioModel, images: &mut Assets<Image>) -
         roles,
         muzzle: None,
         eject: None,
+        lens: None,
     }
 }
 
@@ -710,6 +1045,9 @@ fn source_model(
             fps: s.fps,
             num_frames: s.num_frames,
             duration: s.duration(),
+            fade_in: s.fade_in,
+            fade_out: s.fade_out,
+            snap: s.flags & mdl_source::studio::SEQ_SNAP != 0,
             sounds: s
                 .events
                 .iter()
@@ -799,6 +1137,8 @@ fn source_model(
         throw,
         arm,
         silenced,
+        idles: weighted(&studio, "ACT_VM_IDLE"),
+        draws: weighted(&studio, "ACT_VM_DRAW"),
         idle: studio.sequence_for_activity("ACT_VM_IDLE"),
         draw: studio.sequence_for_activity("ACT_VM_DRAW"),
         reload: studio.sequence_for_activity("ACT_VM_RELOAD"),
@@ -831,6 +1171,7 @@ fn source_model(
         muzzle,
         eject,
         goldsrc_right_handed: false,
+        lens: None,
     }
 }
 
@@ -911,6 +1252,8 @@ fn cs2_roles(viewmodel: &mdl_source2::viewmodel::Viewmodel) -> Roles {
         empty,
         inspect: Vec::new(),
         inspect_weights: Vec::new(),
+        idles: Vec::new(),
+        draws: Vec::new(),
     }
 }
 
@@ -1056,6 +1399,9 @@ fn cs2_model(
                 fps,
                 num_frames: (duration * fps).round() as usize + 1,
                 duration,
+                fade_in: 0.0,
+                fade_out: 0.0,
+                snap: true,
                 sounds: clip
                     .events
                     .iter()
@@ -1097,13 +1443,14 @@ fn cs2_model(
         muzzle,
         eject,
         goldsrc_right_handed: false,
+        lens: None,
     }
 }
 
 /// A viewmodel read and decoded off the main thread; its textures still go into `Assets`.
 enum DecodedModel {
     Source(mdl_source::LoadedModel),
-    Csgo(mdl_source::LoadedModel),
+    Csgo(mdl_source::LoadedModel, Option<Lens>),
     GoldSrc(mdl_goldsrc::StudioModel),
     Source2(Box<Cs2Decoded>),
 }
@@ -1112,6 +1459,7 @@ enum DecodedModel {
 fn decode_csgo(vpk: &mdl_source::Vpk, model: &str, arms: &str) -> Result<DecodedModel, String> {
     let mut gun = mdl_source::load_model(vpk, &format!("models/weapons/{model}.mdl"))
         .map_err(|e| format!("CS:GO {model}: {e}"))?;
+    let lens = scope_lens(vpk, &gun.model, model);
     // One slot stays free for the muzzle flash's.
     match mdl_source::load_model(vpk, arms)
         .and_then(|arms| gun.bone_merge(&arms, render_gpu::CS_VIEWMODEL_MAX_BONES - 1))
@@ -1119,7 +1467,7 @@ fn decode_csgo(vpk: &mdl_source::Vpk, model: &str, arms: &str) -> Result<Decoded
         Ok(()) => {}
         Err(error) => diag::warn!(World, "cs viewmodel: CS:GO {model} without arms: {error}"),
     }
-    Ok(DecodedModel::Csgo(gun))
+    Ok(DecodedModel::Csgo(gun, lens))
 }
 
 /// Reads and decodes a viewmodel: CS2's model when CS2 is installed and the weapon has one, else
@@ -1178,7 +1526,10 @@ fn finish_model(
 ) -> Option<Arc<LoadedModel>> {
     let model = match decoded {
         Ok(DecodedModel::Source(loaded)) => source_model(loaded, images, Format::Source),
-        Ok(DecodedModel::Csgo(loaded)) => source_model(loaded, images, Format::Csgo),
+        Ok(DecodedModel::Csgo(loaded, lens)) => LoadedModel {
+            lens,
+            ..source_model(loaded, images, Format::Csgo)
+        },
         Ok(DecodedModel::GoldSrc(studio)) => goldsrc_model(studio, images),
         Ok(DecodedModel::Source2(decoded)) => cs2_model(*decoded, images, cs2_images),
         Err(error) => {
@@ -1204,6 +1555,7 @@ struct Warmup {
     goldsrc: Option<asset_transport::GoldSrcDirs>,
     models: Vec<(ModelKey, Result<DecodedModel, String>)>,
     flashes: Option<[mdl_source::vtf::Image; 2]>,
+    vignette: Option<mdl_source::vtf::Image>,
 }
 
 /// Opens the CS:S pack (or finds the Condition Zero / CS 1.6 folders), and decodes the viewmodels every player
@@ -1256,27 +1608,13 @@ fn warm_up() -> Warmup {
     }
     let mut models = Vec::new();
     if css.is_some() || goldsrc.is_some() || csgo.is_some() {
-        let pistols = cs::CS_WEAPONS
-            .iter()
-            .filter(|w| matches!(w.name, "glock" | "usp"))
-            .map(|w| (w.name, w.view_model, w.css_view_model));
-        let grenades = cs::CS_GRENADES
-            .iter()
-            .map(|g| (g.name, g.view_model, g.css_view_model));
-        let (knife, c4) = (&cs::CS_KNIFE, &cs::CS_C4);
-        let spawn_set = [
-            (knife.name, knife.view_model, knife.css_view_model),
-            (c4.name, c4.view_model, c4.css_view_model),
-        ]
-        .into_iter()
-        .chain(pistols)
-        .chain(grenades);
-        for (name, view_model, css_view_model) in spawn_set {
-            // Both sides: only CS:GO's models differ by side (their arms), the others are read
-            // once and shared.
+        for (name, view_model, css_view_model) in spawn_set() {
+            // Both sides (with no map's factions known yet): only CS:GO's models differ by side
+            // (their arms), the others are read once and shared.
             for terrorist in [true, false] {
+                let side = CsgoSide::of(terrorist, None);
                 let cs2_gun = cs2.as_deref().zip(cs::cs2_view(name));
-                let csgo_gun = csgo_source(csgo.as_deref(), name, terrorist, None);
+                let csgo_gun = csgo_source(csgo.as_deref(), name, side, None);
                 if !terrorist && csgo_gun.is_none() {
                     continue;
                 }
@@ -1288,7 +1626,7 @@ fn warm_up() -> Warmup {
                     view_model,
                     css_view_model,
                 );
-                models.push(((name, terrorist), decoded));
+                models.push(((name, side), decoded));
             }
         }
     }
@@ -1299,6 +1637,9 @@ fn warm_up() -> Warmup {
             load("materials/effects/muzzleflashx.vtf")?,
         ])
     });
+    let vignette = csgo.as_deref().and_then(|pack| {
+        mdl_source::vtf::decode(&pack.read("materials/dev/scope_vignette.vtf")?).ok()
+    });
     Warmup {
         cs2,
         csgo,
@@ -1306,25 +1647,48 @@ fn warm_up() -> Warmup {
         goldsrc,
         models,
         flashes,
+        vignette,
     }
 }
 
-/// A viewmodel's cache key: the weapon, and whether the Terrorists hold it (CS:GO's arms differ).
-type ModelKey = (&'static str, bool);
+/// A viewmodel's cache key: the weapon, and the side holding it (CS:GO's arms differ).
+type ModelKey = (&'static str, CsgoSide);
 
 /// CS:GO's model of `name` and the side's arms, when CS:GO is installed and has the weapon.
 fn csgo_source<'a>(
     csgo: Option<&'a mdl_source::Vpk>,
     name: &str,
-    terrorist: bool,
+    side: CsgoSide,
     knife: Option<&'static str>,
 ) -> Option<(&'a mdl_source::Vpk, &'static str, &'static str)> {
-    let side = usize::from(!terrorist);
     csgo.zip(weapon_iw4::cs::csgo_view_model(name)).map(|(vpk, models)| {
         // `cl_knife`: the chosen CS:GO knife instead of the side's own.
-        let model = knife.filter(|_| name == "knife").unwrap_or(models[side]);
-        (vpk, model, CSGO_ARMS[side])
+        let model = knife
+            .filter(|_| name == "knife")
+            .unwrap_or(models[usize::from(!side.terrorist)]);
+        (vpk, model, side.arms)
     })
+}
+
+/// The viewmodels every player holds at spawn (knife, C4, starting pistols, grenades), by name,
+/// with their GoldSrc and CS:S models.
+fn spawn_set() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
+    use weapon_iw4::cs;
+    let pistols = cs::CS_WEAPONS
+        .iter()
+        .filter(|w| matches!(w.name, "glock" | "usp"))
+        .map(|w| (w.name, w.view_model, w.css_view_model));
+    let grenades = cs::CS_GRENADES
+        .iter()
+        .map(|g| (g.name, g.view_model, g.css_view_model));
+    let (knife, c4) = (&cs::CS_KNIFE, &cs::CS_C4);
+    [
+        (knife.name, knife.view_model, knife.css_view_model),
+        (c4.name, c4.view_model, c4.css_view_model),
+    ]
+    .into_iter()
+    .chain(pistols)
+    .chain(grenades)
 }
 
 /// Where a weapon's viewmodel stands.
@@ -1354,15 +1718,17 @@ impl CsViewmodels {
             self.flash_images = Some(warm.flashes.map(|sprites| {
                 sprites.map(|sprite| images.add(image(sprite.width, sprite.height, sprite.rgba)))
             }));
+            self.vignette = warm
+                .vignette
+                .map(|vignette| images.add(image(vignette.width, vignette.height, vignette.rgba)));
             for (key, decoded) in warm.models {
                 let model = finish_model(key.0, decoded, images, &mut self.cs2_images);
                 // A model that is not CS:GO's serves both sides.
-                if !key.1 || model.as_ref().is_some_and(|m| m.format == Format::Csgo) {
-                    self.models.insert(key, model);
-                } else {
-                    self.models.insert((key.0, false), model.clone());
-                    self.models.insert(key, model);
+                if key.1.terrorist && !model.as_ref().is_some_and(|m| m.format == Format::Csgo) {
+                    self.models
+                        .insert((key.0, CsgoSide::of(false, None)), model.clone());
                 }
+                self.models.insert(key, model);
             }
         }
         let finished: Vec<ModelKey> = self
@@ -1384,17 +1750,33 @@ impl CsViewmodels {
         self.flash_images.clone().flatten()
     }
 
-    /// `weapon`'s viewmodel for a player on the Terrorists' side or not. One not read yet is
-    /// decoded off the main thread, loading meanwhile.
+    /// `weapon`'s viewmodel for a player on `side`. One not read yet is decoded off the main
+    /// thread, loading meanwhile.
     fn model_for(
         &mut self,
         weapon: ViewWeapon,
-        terrorist: bool,
+        side: CsgoSide,
+        knife: Option<&'static str>,
+    ) -> ModelLoad {
+        self.model_by_name(
+            (weapon.name, weapon.view_model, weapon.css_view_model),
+            weapon.knife,
+            side,
+            knife,
+        )
+    }
+
+    /// [`model_for`](Self::model_for) by the weapon's name and its GoldSrc and CS:S models.
+    fn model_by_name(
+        &mut self,
+        (name, view_model, css_view_model): (&'static str, &'static str, &'static str),
+        is_knife: bool,
+        side: CsgoSide,
         knife: Option<&'static str>,
     ) -> ModelLoad {
         // A chosen CS:GO knife is its own model (by its viewmodel's name).
-        let knife = knife.filter(|_| weapon.knife && self.csgo.clone().flatten().is_some());
-        let key = (knife.unwrap_or(weapon.name), terrorist);
+        let knife = knife.filter(|_| is_knife && self.csgo.clone().flatten().is_some());
+        let key = (knife.unwrap_or(name), side);
         if let Some(model) = self.models.get(&key) {
             return model
                 .clone()
@@ -1405,13 +1787,11 @@ impl CsViewmodels {
             let csgo = self.csgo.clone().flatten();
             let css = self.css.clone().flatten();
             let goldsrc = self.goldsrc.clone().flatten();
-            let (view_model, css_view_model) = (weapon.view_model, weapon.css_view_model);
-            let cs2_view = weapon.cs2;
-            let name = weapon.name;
+            let cs2_view = weapon_iw4::cs::cs2_view(name);
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 decode_model(
                     cs2.as_deref().zip(cs2_view),
-                    csgo_source(csgo.as_deref(), name, terrorist, knife),
+                    csgo_source(csgo.as_deref(), name, side, knife),
                     css.as_deref(),
                     goldsrc.as_ref(),
                     view_model,
@@ -1422,11 +1802,29 @@ impl CsViewmodels {
         }
         ModelLoad::Loading
     }
+
+    /// On a map whose two sides wear `sides` (Terrorists, Counter-Terrorists): drops the
+    /// viewmodels of any other side and starts reading the spawn set (with the chosen knife) for
+    /// both, as the startup read does before a map is known, so none is read at a spawn.
+    fn follow_sides(&mut self, sides: [CsgoSide; 2], knife: Option<&'static str>) {
+        if !self.warmed_up || self.sides == Some(sides) {
+            return;
+        }
+        self.sides = Some(sides);
+        self.models.retain(|(_, side), _| sides.contains(side));
+        for side in sides {
+            for weapon in spawn_set() {
+                let is_knife = weapon.0 == weapon_iw4::cs::CS_KNIFE.name;
+                let _ = self.model_by_name(weapon, is_knife, side, knife);
+            }
+        }
+    }
 }
 
 /// Whether `team` plays the Terrorists in this match: the bomb mode's attackers (`cs_attackers`),
-/// MW2's axis when it names none (as the CS HUD decides).
-fn terrorist_team(snap: &sim::Snapshot, team: i32) -> bool {
+/// everyone but MW2's allies when it names none, as the server decides
+/// ([`weapon_iw4::cs::cs_plays_terrorist`]).
+pub(super) fn terrorist_team(snap: &sim::Snapshot, team: i32) -> bool {
     let attackers = snap
         .meta
         .objectives
@@ -1434,10 +1832,20 @@ fn terrorist_team(snap: &sim::Snapshot, team: i32) -> bool {
         .iter()
         .find(|(name, _)| name == "cs_attackers")
         .map(|(_, value)| value.as_str());
-    match attackers {
-        Some("allies") => team == entity_iw4::TEAM_ALLIES,
-        _ => team == entity_iw4::TEAM_AXIS,
-    }
+    weapon_iw4::cs::cs_plays_terrorist(attackers, team == entity_iw4::TEAM_ALLIES)
+}
+
+/// The server's `cs_factions` ("<allies> <axis>"): each side's MW2 faction.
+pub(super) fn cs_factions(snapshot: &sim::Snapshot) -> Option<(String, String)> {
+    let value = &snapshot
+        .meta
+        .objectives
+        .server_info
+        .iter()
+        .find(|(name, _)| name == "cs_factions")?
+        .1;
+    let (allies, axis) = value.split_once(' ')?;
+    Some((allies.to_owned(), axis.to_owned()))
 }
 
 /// Whether the CS gun `ps` holds draws the sniper scope (and hides itself) when zoomed.
@@ -1658,15 +2066,22 @@ fn accuracy_shift(ps: &PlayerState, index: Option<u8>, reloading: bool) -> f32 {
 
 /// Walk bob and turn sway as one view-space placement of the gun: small offsets (about a unit)
 /// and tilts (well under a degree), so the gun never swings far enough to show its back.
+/// `steady` scales it all (0 holds the gun still, as aiming down a scope does), `now` is the
+/// clock the turn sway's history keeps.
+#[allow(clippy::too_many_arguments)]
 fn sway_placement(
     state: &mut CsViewmodels,
     ps: &PlayerState,
     index: Option<u8>,
     reloading: bool,
+    format: Format,
+    now: f64,
+    steady: f32,
     dt: f32,
 ) -> Mat3x4 {
     if !viewmodel_sway() {
         state.lagged_forward = None;
+        state.sway_history.clear();
         return mdl_goldsrc::IDENTITY;
     }
     let recoil = recoil_view(ps);
@@ -1724,39 +2139,90 @@ fn sway_placement(
     offset[0] += vertical * 0.4;
     offset[1] -= lateral * 0.2;
 
-    // `CalcViewModelLag`: the gun trails the facing it is catching up to, and looking up or
-    // down slides it (back, left and down as the view dips).
-    let lagged = state.lagged_forward.get_or_insert(forward);
-    let diff: [f32; 3] = core::array::from_fn(|i| forward[i] - lagged[i]);
-    let lag = diff.iter().map(|v| v * v).sum::<f32>().sqrt();
-    let catch_up = if lag > SWAY_MAX_LAG {
-        SWAY_CATCH_UP * lag / SWAY_MAX_LAG
-    } else {
-        SWAY_CATCH_UP
+    let source_scale = match format {
+        Format::Csgo => Some(CSGO_SWAY_SCALE),
+        Format::Source => Some(CSS_SWAY_SCALE),
+        Format::GoldSrc | Format::Source2 => None,
     };
-    let step = (catch_up * dt).min(1.0);
-    for i in 0..3 {
-        lagged[i] += diff[i] * step;
-    }
-    let len = lagged.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if len > 0.0 {
-        for v in lagged.iter_mut() {
-            *v /= len;
+    if let Some(scale) = source_scale {
+        // CS:S's and CS:GO's (`CPredictedViewModel::CalcViewModelLag`): the gun moves by how far
+        // the view's forward has turned since `cl_wpn_sway_interp` ago, against the turn. It
+        // follows the view's angles over time, so it trails a turn the same at any frame rate
+        // and turning speed, and settles as soon as the turning stops.
+        state.lagged_forward = None;
+        let turned = turned_since(&mut state.sway_history, now, [view[0], view[1]]);
+        let (turned, _, _) = math_iw4::angle_vectors([turned[0], turned[1], 0.0]);
+        offset[0] += (1.0 - turned[0]) * scale;
+        offset[1] -= turned[1] * scale;
+        offset[2] -= turned[2] * scale;
+    } else {
+        // `CalcViewModelLag`: the gun trails the facing it is catching up to, and looking up or
+        // down slides it (back, left and down as the view dips).
+        state.sway_history.clear();
+        let lagged = state.lagged_forward.get_or_insert(forward);
+        let diff: [f32; 3] = core::array::from_fn(|i| forward[i] - lagged[i]);
+        let lag = diff.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let catch_up = if lag > SWAY_MAX_LAG {
+            SWAY_CATCH_UP * lag / SWAY_MAX_LAG
+        } else {
+            SWAY_CATCH_UP
+        };
+        let step = (catch_up * dt).min(1.0);
+        for i in 0..3 {
+            lagged[i] += diff[i] * step;
         }
+        let len = lagged.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if len > 0.0 {
+            for v in lagged.iter_mut() {
+                *v /= len;
+            }
+        }
+        let drift = to_view(diff);
+        for i in 0..3 {
+            offset[i] -= drift[i] * SWAY_UNITS;
+        }
+        let pitch = (view[0] + 180.0).rem_euclid(360.0) - 180.0;
+        offset[0] -= pitch * 0.035;
+        offset[1] += pitch * 0.03;
+        offset[2] -= pitch * 0.02;
     }
-    let drift = to_view(diff);
-    for i in 0..3 {
-        offset[i] -= drift[i] * SWAY_UNITS;
-    }
-    let pitch = (view[0] + 180.0).rem_euclid(360.0) - 180.0;
-    offset[0] -= pitch * 0.035;
-    offset[1] += pitch * 0.03;
-    offset[2] -= pitch * 0.02;
-    let mut place = view_rotation(-vertical * 0.4, -lateral * 0.3, vertical * 0.5);
+    let mut place = view_rotation(
+        -vertical * 0.4 * steady,
+        -lateral * 0.3 * steady,
+        vertical * 0.5 * steady,
+    );
     for (row, value) in place.iter_mut().zip(offset) {
-        row[3] = value;
+        row[3] = value * steady;
     }
     place
+}
+
+/// How far the view (`angles`: pitch, yaw) has turned since [`SWAY_INTERP`] before `now`, by
+/// the angles `history` holds (taking these in): the angles then are found between the two
+/// taken around it, or are the oldest while the history is shorter.
+fn turned_since(
+    history: &mut std::collections::VecDeque<(f64, [f32; 2])>,
+    now: f64,
+    angles: [f32; 2],
+) -> [f32; 2] {
+    // A clock that went back (a new match) starts over.
+    if history.back().is_some_and(|(at, _)| *at > now) {
+        history.clear();
+    }
+    history.push_back((now, angles));
+    let then = now - SWAY_INTERP;
+    while history.len() > 2 && history[1].0 <= then {
+        history.pop_front();
+    }
+    let (from_at, from) = history[0];
+    let earlier = match history.get(1) {
+        Some(&(to_at, to)) if from_at < then && to_at > from_at => {
+            let t = ((then - from_at) / (to_at - from_at)).clamp(0.0, 1.0) as f32;
+            [0, 1].map(|i| from[i] + math_iw4::angle_subtract(to[i], from[i]) * t)
+        }
+        _ => from,
+    };
+    [0, 1].map(|i| math_iw4::angle_subtract(angles[i], earlier[i]))
 }
 
 /// Rotation that undoes the view's recoil punch (pitch, yaw degrees) in GoldSrc view axes.
@@ -1782,8 +2248,10 @@ pub fn update_cs_viewmodel(
     mut active: ResMut<CsViewmodelActive>,
     mut sounds: MessageWriter<audio::AliasCommand>,
     mut actions: Option<ResMut<net::ClientActionInput>>,
+    mut aim_frame: ResMut<CsAimsightFrame>,
 ) {
     let (view, settings) = view_settings;
+    aim_frame.amount = 0.0;
     // `+lookatweapon` this frame (taken whatever is held, so it never waits for a gun).
     let inspect = actions
         .as_mut()
@@ -1795,33 +2263,70 @@ pub fn update_cs_viewmodel(
     active.0 = false;
     state.pump(&mut images);
     let Some(weapons) = weapons else {
+        publish_aim(0.0, 0.0);
         return;
     };
     let Some(ps) = presented.viewweapon_player(local.0) else {
         state.playing = None;
         state.lagged_forward = None;
+        state.sway_history.clear();
+        state.aim = 0.0;
+        publish_aim(0.0, 0.0);
         return;
     };
     let Some((weapon_index, weapon)) = held_cs_weapon(ps, &weapons) else {
         state.playing = None;
+        state.aim = 0.0;
+        publish_aim(0.0, 0.0);
         return;
     };
-    let terrorist = presented
-        .snapshot()
-        .and_then(|snap| {
-            let team = snap.meta.for_client(local.0)?.client_state_team;
-            Some(terrorist_team(snap, team))
-        })
-        .unwrap_or(true);
     let knife = weapon_iw4::cs::csgo_knife_view_model(&settings.knife);
-    let model = match state.model_for(weapon, terrorist, knife) {
+    // The side of whoever's gun this is (the killer's in a killcam), with their agent's arms.
+    let viewed = match *view {
+        ViewSubject::Seat {
+            focus: Some(focus), ..
+        } => sim::ClientId(focus),
+        _ => local.0,
+    };
+    let side = match presented.snapshot() {
+        Some(snap) => {
+            let factions = cs_factions(snap);
+            state.follow_sides(
+                [true, false].map(|terrorist| CsgoSide::of(terrorist, factions.as_ref())),
+                knife,
+            );
+            let team = snap
+                .meta
+                .for_client(viewed)
+                .map_or(entity_iw4::TEAM_AXIS, |meta| meta.client_state_team);
+            CsgoSide::of(terrorist_team(snap, team), factions.as_ref())
+        }
+        None => CsgoSide::of(true, None),
+    };
+    let model = match state.model_for(weapon, side, knife) {
         ModelLoad::Ready(model) => model,
         ModelLoad::Loading => {
             active.0 = true;
+            publish_aim(0.0, 0.0);
             return;
         }
-        ModelLoad::Unavailable => return,
+        ModelLoad::Unavailable => {
+            publish_aim(0.0, 0.0);
+            return;
+        }
     };
+    // CS:GO's aim down the AUG's or SG 553's scope while zoomed: in at its `aimsight speed up`
+    // of the way a second, back out at its `speed down`; the view's zoom eases with it.
+    let aim = aimsight(weapon.name).filter(|_| model.lens.is_some());
+    let aiming = aim.is_some() && ps.cs_zoom != 0;
+    let dt = time.delta_secs();
+    state.aim = match aim {
+        Some(aim) if aiming => (state.aim + aim.speed_up * dt).min(1.0),
+        Some(aim) => (state.aim - aim.speed_down * dt).max(0.0),
+        None => 0.0,
+    };
+    let aim_in = state.aim * state.aim * (3.0 - 2.0 * state.aim);
+    publish_aim(aim_in, aim.map_or(0.0, |aim| aim.fov));
     // From here the CS model owns the first-person view, even when it is hidden this frame.
     active.0 = true;
     if ps.pm_type >= playerstate_iw4::PM_TYPE_DEAD
@@ -1875,7 +2380,10 @@ pub fn update_cs_viewmodel(
         ),
         _ => (idle, gun_reload, shoot),
     };
+    // What a weighted pick of an idle or draw (or an inspect) draws by.
+    let roll = ((now * 1000.0) as u64).wrapping_mul(2_654_435_761) as u32 >> 8;
     let start = |playing: &mut Playing, sequence: Option<usize>, rate: f32| {
+        fade_out(playing, sequence, &model.sequences, now);
         playing.sequence = sequence;
         playing.started = now;
         playing.rate = rate;
@@ -1952,11 +2460,12 @@ pub fn update_cs_viewmodel(
                 if !silenced {
                     playing.flash = Some((now, ps.cs_last_fire_ms.unsigned_abs()));
                 }
-                // The Glock in burst mode and the Elites' right gun shoot with the other set.
-                let alt = (weapon.burst || weapon.dual)
+                // The Glock in burst mode and the Elites' right gun shoot with the other set, as
+                // do the AUG and SG 553 aimed down their scope (CS:GO's `ironsight_fire`).
+                let other_mode = (weapon.burst || weapon.dual)
                     && weapon.mode_bit != 0
-                    && ps.cs_burst_modes & weapon.mode_bit != 0
-                    && !roles.shoot_alt.is_empty();
+                    && ps.cs_burst_modes & weapon.mode_bit != 0;
+                let alt = (other_mode || aiming) && !roles.shoot_alt.is_empty();
                 let set = if alt {
                     roles.shoot_alt.as_slice()
                 } else {
@@ -2021,15 +2530,18 @@ pub fn update_cs_viewmodel(
             if inspecting && (ps.cs_zoom != 0 || reload_held) {
                 // Zooming in puts the weapon back up, as does holding reload with nothing to
                 // reload (a reload that starts plays over the inspect anyway).
-                start(playing, idle, 1.0);
+                start(playing, roles.pick_idle(idle, roll), 1.0);
             } else if inspect
                 && !roles.inspect.is_empty()
                 && !reloading
                 && ps.cs_zoom == 0
                 && !weapon.grenade
                 && !playing.arming
-                // As CS:GO's `LookAtHeldWeapon`: an inspect still playing is not started over.
-                && (playing.sequence == idle
+                // As CS:GO's `LookAtHeldWeapon`: an inspect still playing is not started over, and
+                // one can cut the draw short (the knife out and inspected at once).
+                && (playing
+                    .sequence
+                    .is_some_and(|s| roles.is_idle(s, idle) || roles.is_draw(s, draw))
                     || playing.sequence.is_none_or(|s| {
                         (now - playing.started) as f32 * playing.rate
                             >= model.sequences[s].duration
@@ -2057,12 +2569,15 @@ pub fn update_cs_viewmodel(
             playing
         }
         _ => state.playing.insert({
-            if weapon.knife {
+            let drawn = roles.pick_draw(draw, roll).or(idle);
+            // The knife's deploy sound, unless its draw calls its own (every CS:GO knife's does:
+            // the Butterfly's flips, the Ursus's catch).
+            if weapon.knife && drawn.is_none_or(|s| model.sequences[s].sounds.is_empty()) {
                 play_local(&mut sounds, knife_deploy_sound(model.format));
             }
             Playing {
                 weapon: weapon_index,
-                sequence: draw.or(idle),
+                sequence: drawn,
                 started: now,
                 rate: 1.0,
                 events_through: None,
@@ -2073,6 +2588,7 @@ pub fn update_cs_viewmodel(
                 arming: false,
                 flash: None,
                 clip,
+                fading: Vec::new(),
             }
         }),
     };
@@ -2080,23 +2596,24 @@ pub fn update_cs_viewmodel(
         .flash
         .filter(|(started, _)| now - started < FLASH_SECONDS)
         .map(|(started, seed)| (((now - started) / FLASH_SECONDS) as f32, seed));
-    // A finished one-shot sequence settles into idle; a grenade holds its pulled pin or empty
-    // hand until the next step.
+    // A finished one-shot sequence settles into idle, and a finished idle makes way for the next
+    // one picked when the weapon has several (CS:GO's knives); a grenade holds its pulled pin or
+    // empty hand until the next step.
     let holding = (weapon.grenade && ps.cs_grenade != playerstate_iw4::cs_grenade::IDLE)
         || (weapon.c4 && playing.arming);
     if let Some(sequence) = playing.sequence
-        && Some(sequence) != idle
+        && (!roles.is_idle(sequence, idle) || roles.idle_varies(idle))
         && !holding
         && (now - playing.started) as f32 * playing.rate > model.sequences[sequence].duration
     {
-        start(playing, idle, 1.0);
+        start(playing, roles.pick_idle(idle, roll), 1.0);
     }
     let Some(sequence) = playing.sequence else {
         return;
     };
     let info = &model.sequences[sequence];
     let mut seconds = (now - playing.started) as f32 * playing.rate;
-    if Some(sequence) == idle && info.duration > 0.0 {
+    if roles.is_idle(sequence, idle) && info.duration > 0.0 {
         seconds %= info.duration;
     } else if holding {
         seconds = seconds.min(info.duration);
@@ -2116,11 +2633,31 @@ pub fn update_cs_viewmodel(
         }
         playing.events_through = Some(anim_frame);
     }
+    // The sequences fading out over this one, the latest first as Source blends them.
+    playing.fading.retain(|fade| fade.weight(now) > 0.0);
+    let fading: Vec<(usize, f32, f32)> = playing
+        .fading
+        .iter()
+        .rev()
+        .map(|fade| {
+            let at = (now - fade.started) as f32 * fade.rate;
+            (fade.sequence, at, fade.weight(now))
+        })
+        .collect();
 
     let cs_index = weapon_iw4::cs::cs_weapon_index_for(&weapons.0.script_name_of(weapon_index));
-    let sway = sway_placement(&mut state, ps, cs_index, reloading, time.delta_secs());
+    let sway = sway_placement(
+        &mut state,
+        ps,
+        cs_index,
+        reloading,
+        model.format,
+        now,
+        1.0 - aim_in,
+        dt,
+    );
     let CsViewmodels { bones, .. } = &mut *state;
-    model.studio.pose(sequence, seconds, bones);
+    model.studio.pose(sequence, seconds, &fading, bones);
     // A CS2 silencer that is off shrinks to a point, except while it goes on or comes off.
     if let Some(silencer) = &roles.silenced
         && let Some((bone, origin)) = silencer.hidden_bone
@@ -2134,18 +2671,29 @@ pub fn update_cs_viewmodel(
         });
         *m = at.map(|t| [0.0, 0.0, 0.0, t]);
     }
-    let mut place = mdl_goldsrc::concat(&sway, &unpunch(recoil_view(ps)));
-    match model.format {
-        Format::Source2 => place = mdl_goldsrc::concat(&CS2_VIEWMODEL_OFFSET, &place),
-        Format::Csgo => place = mdl_goldsrc::concat(&CSGO_VIEWMODEL_OFFSET, &place),
-        Format::Source | Format::GoldSrc => {}
-    }
     let right_handed = match model.format {
         Format::Source => weapon.css_right_handed,
         Format::GoldSrc => model.goldsrc_right_handed,
         // CS:GO and CS2 build their guns right-handed.
         Format::Csgo | Format::Source2 => true,
     };
+    let mut place = mdl_goldsrc::concat(&sway, &unpunch(recoil_view(ps)));
+    if let Some(aim) = aim.filter(|_| aim_in > 0.0) {
+        let aimed = aim_placement(&aim, aim_in, right_handed != settings.right_hand);
+        place = mdl_goldsrc::concat(&place, &aimed);
+    }
+    match model.format {
+        Format::Source2 => place = mdl_goldsrc::concat(&CS2_VIEWMODEL_OFFSET, &place),
+        Format::Csgo => {
+            // `viewmodel_offset_*` gives way to the aim.
+            let mut offset = CSGO_VIEWMODEL_OFFSET;
+            for row in &mut offset {
+                row[3] *= 1.0 - aim_in;
+            }
+            place = mdl_goldsrc::concat(&offset, &place);
+        }
+        Format::Source | Format::GoldSrc => {}
+    }
     // `cl_righthand`: mirrored when the model is built for the other hand.
     if right_handed != settings.right_hand {
         place = mdl_goldsrc::concat(&place, &RIGHT_HAND_MIRROR);
@@ -2157,8 +2705,14 @@ pub fn update_cs_viewmodel(
     frame.model = Some(Arc::clone(&model.gpu));
     let (tan_half_fov_y, texture_gamma) = match model.format {
         Format::GoldSrc => (GOLDSRC_TAN_HALF_FOV_Y, 0.8),
-        // Source's viewmodel fov is horizontal at 4:3 (widened for wider screens like ours).
-        Format::Csgo => ((CSGO_VIEWMODEL_FOV * 0.5).to_radians().tan() * 0.75, 1.0),
+        // Source's viewmodel fov is horizontal at 4:3 (widened for wider screens like ours),
+        // narrowed by as much as the view's zoom narrows it (`CS_DEFAULT_FOV`): an aimed CS:GO
+        // rifle's view eases to its `aimsight fov`.
+        Format::Csgo => {
+            let zoom = aim.map_or(0.0, |aim| (CS_DEFAULT_FOV - aim.fov) * aim_in);
+            let fov = (CSGO_VIEWMODEL_FOV - zoom).max(1.0);
+            ((fov * 0.5).to_radians().tan() * 0.75, 1.0)
+        }
         Format::Source | Format::Source2 => (
             (settings.viewmodel_fov * 0.5).to_radians().tan() * 0.75,
             1.0,
@@ -2166,6 +2720,25 @@ pub fn update_cs_viewmodel(
     };
     frame.tan_half_fov_y = tan_half_fov_y;
     frame.texture_gamma = texture_gamma;
+    // The scope's lens on screen, for the blur around it and the reticle dot.
+    if aim_in > 0.0
+        && let Some(lens) = model.lens
+        && let Some(bone) = frame.bones.get(lens.bone)
+    {
+        let at = transform(bone, lens.center);
+        if at[0] > 1.0 {
+            let scale = 1.0 / (at[0] * tan_half_fov_y);
+            let [r, g, b, _] = settings.crosshair.color;
+            *aim_frame = CsAimsightFrame {
+                amount: aim_in,
+                lens_center: [-at[1] * scale, at[2] * scale],
+                lens_radius: lens.radius * scale,
+                dot_color: [r, g, b].map(|c| f32::from(c) / 255.0),
+                dot_radius: AIM_DOT,
+                vignette: state.vignette.clone(),
+            };
+        }
+    }
     // From above, on the viewer's side: the faces the player sees are the lit ones.
     let light: [f32; 3] = [-0.6, 0.3, 0.75];
     let len = light.iter().map(|v| v * v).sum::<f32>().sqrt();

@@ -219,6 +219,7 @@ impl Plugin for ConsolePlugin {
                             crate::debug_movement::route_movement_commands,
                             crate::crosshair::route_crosshair_commands,
                             crate::debug_movement::sync_movement_mode,
+                            crate::debug_movement::follow_server_movement_cheats,
                         ),
                         crate::debug_lod::route_lod_ramp_commands,
                         crate::debug_cg_gun::route_cg_gun_commands,

@@ -58,12 +58,25 @@ fn is_dropping(ws: i32) -> bool {
     )
 }
 
+/// A CS gun or knife goes away whenever asked, right after a shot included: CS:GO's holster has
+/// no wait of its own, so a bolt sniper switches out the moment it fires (the quick switch) and
+/// skips its bolt. MW2 waits for the shot to finish.
+fn cs_switch_after_shot(hand: &WeaponHandState, facts: &WeaponCombatFacts) -> bool {
+    let cs = facts.cs_weapon;
+    cs != 0
+        && (crate::cs::cs_weapon(cs).is_some() || crate::cs::is_knife(cs))
+        && hand.weaponstate == WeaponState::Firing as i32
+        && hand.weapon_delay == 0
+}
+
 pub fn weapon_check_for_change(
     hand: &mut WeaponHandState,
     facts: &WeaponCombatFacts,
     cmd: &mut WeaponCmd,
 ) -> Option<WeaponTickEvent> {
-    if !check_for_change_admits(hand.weaponstate, hand.weapon_time, hand.weapon_delay) {
+    if !check_for_change_admits(hand.weaponstate, hand.weapon_time, hand.weapon_delay)
+        && !cs_switch_after_shot(hand, facts)
+    {
         return None;
     }
 
