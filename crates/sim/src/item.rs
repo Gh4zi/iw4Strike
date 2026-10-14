@@ -799,6 +799,11 @@ fn try_touch_one(world: &mut FrameWorld, walker: ClientId) {
         if !item.scavenger && !ps.weapons.contains(&item.state.index) && !cs_takes {
             continue;
         }
+        // Counter-Strike: walking over a gun you already carry neither takes its ammo nor the
+        // gun; only a swap (use) takes it.
+        if movement_iw4::rules::CS_RULES && !item.scavenger && !cs_takes {
+            continue;
+        }
         if !item.scavenger && !cs_takes {
             let weapon = item.state.index as u32;
             let Some(facts) = world.combat_facts_for(weapon) else {
@@ -855,11 +860,28 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
     if weapon == 0 {
         return;
     }
-    let Some(ps) = world.player(walker).copied() else {
+    let Some(mut ps) = world.player(walker).copied() else {
         return;
     };
     let picker_pm_type = ps.pm_type;
-    let already_has = player_weapons_find_slot(&ps.weapons, weapon as i32) >= 0;
+    let mut already_has = player_weapons_find_slot(&ps.weapons, weapon as i32) >= 0;
+    let mut swapped_entnum = ENTITYNUM_NONE;
+    // Counter-Strike: a gun you already carry is only taken by swapping (use): yours is thrown
+    // forward first, as for another gun in the slot, and the floor gun comes with its own
+    // rounds, none if it is empty.
+    if movement_iw4::rules::CS_RULES && already_has && cs_gun_slot(world, weapon).is_some() {
+        let tick =
+            Tick((world.entity_kernel().level_time_ms() / crate::MATCH_TICK_MS as i32) as u32);
+        let Some(thrown) = throw_cs_weapon(world, tick, walker, weapon) else {
+            return;
+        };
+        swapped_entnum = thrown;
+        let Some(now) = world.player(walker).copied() else {
+            return;
+        };
+        ps = now;
+        already_has = player_weapons_find_slot(&ps.weapons, weapon as i32) >= 0;
+    }
     let (taken, left) = if already_has {
         let (_, _, have_stock) = ammo_from_ps(world, &ps, weapon);
         let room = world
@@ -878,7 +900,6 @@ fn grab_number(world: &mut FrameWorld, walker: ClientId, number: i32) {
     } else {
         world.despawn_dropped_item(number);
     }
-    let mut swapped_entnum = ENTITYNUM_NONE;
     let akimbo = world
         .combat_facts_for(weapon)
         .is_some_and(|facts| facts.dual_wield)
@@ -1299,11 +1320,8 @@ fn cs_selected_item(world: &mut FrameWorld, walker: ClientId, ps: &PlayerState) 
             continue;
         };
         let weapon = u32::try_from(item.state.index).unwrap_or(0);
-        if item.scavenger
-            || weapon == 0
-            || ps.weapons.contains(&item.state.index)
-            || cs_gun_slot(world, weapon).is_none()
-        {
+        // A gun you already carry is swapped too, as in CS:GO.
+        if item.scavenger || weapon == 0 || cs_gun_slot(world, weapon).is_none() {
             continue;
         }
         let center: [f32; 3] =

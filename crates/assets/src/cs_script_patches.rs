@@ -30,6 +30,7 @@ const fn once(
 const GAMELOGIC: &str = "maps/mp/gametypes/_gamelogic";
 const SD: &str = "maps/mp/gametypes/sd";
 const GAMEOBJECTS: &str = "maps/mp/gametypes/_gameobjects";
+const WEAPONS: &str = "maps/mp/gametypes/_weapons";
 
 /// The bomb mode's CS C4 threads, put in `sd.gsc` ahead of `initGametypeAwards`:
 /// - `csPlantThink` (a site): a carrier holding attack with the C4 in the site starts the plant
@@ -673,6 +674,26 @@ const PATCHES: &[Patch] = &[
          && ( !level.teamBased || isLastRound() || ( isDefined( attacker.pers ) \
          && game[\"roundsWon\"][attacker.pers[\"team\"]] >= getWatchedDvar( \"winlimit\" ) - 1 ) ) )",
         "final killcam on the match-winning kill only",
+    ),
+    // A dead player's gun drops as CS drops it: empty or not, and it lies there until the round
+    // restart clears the floor (MW2 kept only guns with rounds in the magazine, for 60 s).
+    once(
+        WEAPONS,
+        "if ( !(self AnyAmmoForWeaponModes( weapon )) )",
+        "if ( false )",
+        "CS drops: a dead player's gun drops with no ammo left",
+    ),
+    once(
+        WEAPONS,
+        "if ( !clipAmmoR && !clipAmmoL )",
+        "if ( false )",
+        "CS drops: a dead player's gun drops with an empty magazine",
+    ),
+    once(
+        WEAPONS,
+        "item thread deletePickupAfterAWhile();",
+        "",
+        "CS drops: a dropped gun stays until the round ends",
     ),
 ];
 
