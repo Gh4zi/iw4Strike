@@ -270,7 +270,17 @@ pub(crate) fn apply_script_blast(
         let victim_origin = world.player(target).map_or(bounds.mid(), |ps| ps.origin);
         let dir: [f32; 3] = std::array::from_fn(|i| victim_origin[i] - blast.origin[i]);
         let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
-        let commit = blast.attacker.and_then(|attacker| {
+        // The CS bomb hurts everyone near it: the planter's teammates take it as the world's
+        // blast (no planter), so MW2's friendly fire doesn't stop it and it's no team kill.
+        let attacker = match blast.attacker {
+            Some(attacker) if blast.cs_bomb && attacker != target => {
+                let side = crate::script_player::cs_bomb_side(world, attacker);
+                (side.is_none() || crate::script_player::cs_bomb_side(world, target) != side)
+                    .then_some(attacker)
+            }
+            other => other,
+        };
+        let commit = attacker.and_then(|attacker| {
             Some(DeathCommit {
                 victim: target,
                 victim_life,
@@ -291,7 +301,7 @@ pub(crate) fn apply_script_blast(
         });
         let hit = crate::script_player::Hit {
             victim: target,
-            attacker: blast.attacker,
+            attacker,
             amount,
             flags: IDFLAGS_RADIUS,
             means: blast.means,
@@ -388,11 +398,23 @@ pub(crate) fn apply_script_hit(world: &mut FrameWorld, tick: Tick, hit: &crate::
     crate::script::player_damage(world.ecs(), tick, &player_hit);
 }
 
+/// A CS HE grenade under CS:GO's shooting: CS:GO's damage and bell-curve falloff
+/// ([`weapon_iw4::cs::CSGO_HE_DAMAGE`]) instead of CS 1.6's straight one; walls still stop it.
+fn is_csgo_he(world: &FrameWorld, weapon: u32) -> bool {
+    // A CS grenade flies as the MW2 grenade it throws (the HE as `frag_grenade_mp`).
+    crate::cs_settings::shooting_mode() == weapon_iw4::csgo::SHOOTING_CSGO
+        && weapon_iw4::cs::cs_grenade_for_projectile(&crate::script_player::weapon_name(
+            world, weapon,
+        ))
+        .is_some_and(|grenade| grenade.name == "hegrenade")
+}
+
 fn radius_player_attempts(world: &FrameWorld, blast: &ExplosionBlast) -> Vec<DamageAttempt> {
     let mut intents = Vec::new();
     if blast.radius <= 0.0 {
         return intents;
     }
+    let csgo_he = is_csgo_he(world, blast.weapon);
     for target in radius_player_candidates(world, blast.origin, blast.radius) {
         let Some(meta) = world.client_meta(target) else {
             continue;
@@ -403,15 +425,30 @@ fn radius_player_attempts(world: &FrameWorld, blast: &ExplosionBlast) -> Vec<Dam
         if !blast.contains(bounds.mid()) {
             continue;
         }
-        let dist = radius_damage_distance_to_aabb(blast.origin, bounds.mid(), bounds.half());
         let vis_scale = player_radius_vis_scale(world, blast.origin, target, None);
-        let amount = radius_damage_amount(
-            blast.inner_damage,
-            blast.outer_damage,
-            blast.radius,
-            dist,
-            vis_scale,
-        );
+        let amount = if csgo_he {
+            let dist = csgo_body_target_distance(world, target, blast.origin, bounds.mid());
+            let amount = weapon_iw4::cs::csgo_blast_damage(
+                weapon_iw4::cs::CSGO_HE_DAMAGE,
+                weapon_iw4::cs::CSGO_HE_RADIUS,
+                dist,
+            ) * vis_scale;
+            diag::debug!(
+                Sim,
+                "cs he: client {} {dist:.0} units away, {vis_scale:.2} seen -> {amount:.1} damage",
+                target.0
+            );
+            amount.round() as i32
+        } else {
+            let dist = radius_damage_distance_to_aabb(blast.origin, bounds.mid(), bounds.half());
+            radius_damage_amount(
+                blast.inner_damage,
+                blast.outer_damage,
+                blast.radius,
+                dist,
+                vis_scale,
+            )
+        };
         if amount <= 0 {
             continue;
         }

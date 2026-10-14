@@ -2587,6 +2587,10 @@ pub fn is_c4(index: u8) -> bool {
 /// HE grenade blast (`pev->dmg` 100, radius `dmg * 3.5`), falling off linearly to the edge.
 pub const CS_HE_DAMAGE: i32 = 100;
 pub const CS_HE_RADIUS: i32 = 350;
+/// CS:GO's HE grenade: items_game's `explosive_grenade` damage 99, its blast reaching 3.5 times
+/// that far (as CS:S's), falling off as [`csgo_blast_damage`].
+pub const CSGO_HE_DAMAGE: f32 = 99.0;
+pub const CSGO_HE_RADIUS: f32 = CSGO_HE_DAMAGE * 3.5;
 /// Every CS grenade's fuse once thrown.
 pub const CS_GRENADE_FUSE_MS: i32 = 1500;
 /// CS:GO's smoke grenade (`CSmokeGrenadeProjectile`): still moving when its fuse is up, it looks
