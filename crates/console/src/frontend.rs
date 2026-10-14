@@ -480,15 +480,14 @@ pub(crate) fn route(
                                     .find(|advert| advert.id == id)
                             })
                             .ok_or("Lobby is no longer available")?;
+                        // A room in a match takes joiners too: they load straight into it (a
+                        // dedicated server is always in one).
                         if advert.locked
-                            || advert.in_match
                             || advert.players >= advert.max_players
                             || !advert.missing.is_empty()
                         {
                             return Err(if advert.locked {
                                 "Lobby closed".into()
-                            } else if advert.in_match {
-                                "Match already in progress".into()
                             } else if advert.players >= advert.max_players {
                                 "Lobby is full".into()
                             } else {
