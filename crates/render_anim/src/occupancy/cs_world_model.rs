@@ -12,6 +12,10 @@
 //! `p_` model is the gun in a player model's idle pose, held level: see
 //! [`build_goldsrc_world_model`]. A dropped weapon (`item` skips its MW2 twin) lies on its widest
 //! side where the item is.
+//!
+//! With CS:GO installed, what lies in the world is CS:GO's: a dropped weapon's own dropped model
+//! (`w_rif_ak47_dropped`), the dropped and planted bomb (`w_ied_dropped`, `w_c4_planted`) and
+//! the defuse kit (`w_defuser`).
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -81,13 +85,18 @@ enum Placement {
     Flat,
 }
 
-/// The model `weapon` shows as: CS:S's `w_` twin of its viewmodel, in a hand or dropped;
-/// GoldSrc's `p_` in a hand and `w_` dropped.
+/// The model `weapon` shows as: dropped, CS:GO's dropped model when it has one; CS:S's `w_`
+/// twin of its viewmodel, in a hand or dropped; GoldSrc's `p_` in a hand and `w_` dropped.
 fn model_name(
     weapons: &asset_game::WeaponRegistry,
     weapon: u32,
     placement: Placement,
 ) -> Option<String> {
+    if placement == Placement::Flat
+        && let Some(name) = csgo_dropped_name(weapons, weapon)
+    {
+        return Some(name);
+    }
     let (goldsrc, css) = view_models(weapons, weapon)?;
     if css_pack().is_some() {
         return Some(format!("w_{}", css.strip_prefix("v_")?));
@@ -106,9 +115,12 @@ fn goldsrc_dirs() -> Option<&'static asset_transport::GoldSrcDirs> {
     DIRS.get_or_init(asset_transport::find_goldsrc).as_ref()
 }
 
-/// Where the model `name` is read from: CS:S's pack, or the GoldSrc folders.
+/// Where the model `name` is read from: CS:GO's pack ([`CSGO`] names), CS:S's, or the GoldSrc
+/// folders.
 fn model_path(name: &str) -> String {
-    if css_pack().is_some() {
+    if let Some(name) = name.strip_prefix(CSGO) {
+        format!("models/weapons/{name}.mdl")
+    } else if css_pack().is_some() {
         format!("models/weapons/{name}.mdl")
     } else {
         format!("models/{name}.mdl")
@@ -126,10 +138,18 @@ fn has_model(name: &str) -> bool {
         return known;
     }
     let path = model_path(name);
-    let known = match (css_pack(), goldsrc_dirs()) {
-        (Some(pack), _) => pack.contains(&path),
-        (None, Some(dirs)) => dirs.file(&path).is_some(),
-        (None, None) => false,
+    let known = if name.starts_with(CSGO) {
+        // Asked again once CS:GO's pack is read.
+        let Some(pack) = csgo_pack() else {
+            return false;
+        };
+        pack.contains(&path)
+    } else {
+        match (css_pack(), goldsrc_dirs()) {
+            (Some(pack), _) => pack.contains(&path),
+            (None, Some(dirs)) => dirs.file(&path).is_some(),
+            (None, None) => false,
+        }
     };
     found.insert(name.to_owned(), known);
     known
@@ -150,12 +170,43 @@ pub(crate) fn css_installed() -> bool {
     css_pack().is_some()
 }
 
+/// Names of models read from CS:GO's pack (`csgo:w_ied_dropped`) start with this.
+const CSGO: &str = "csgo:";
+
+/// CS:GO's pack (`None` without CS:GO, and while it is being read).
+fn csgo_pack() -> Option<Arc<mdl_source::Vpk>> {
+    csgo_anim::pack().map(|pack| pack.vpk.clone())
+}
+
+/// CS:GO's dropped model of `weapon` (`csgo:w_rif_ak47_dropped`), when CS:GO has one.
+fn csgo_dropped_name(weapons: &asset_game::WeaponRegistry, weapon: u32) -> Option<String> {
+    use weapon_iw4::cs;
+    let index = cs::cs_weapon_index_for(&weapons.script_name_of(weapon))?;
+    let name = if cs::is_knife(index) {
+        "knife"
+    } else if let Some(grenade) = cs::cs_grenade(index) {
+        grenade.name
+    } else if cs::is_c4(index) {
+        "c4"
+    } else {
+        cs::cs_weapon(index)?.name
+    };
+    let view = cs::csgo_view_model(name)?[1];
+    let name = format!("{CSGO}w_{}_dropped", view.strip_prefix("v_")?);
+    has_model(&name).then_some(name)
+}
+
 /// MW2's bomb lying in the world (the bomb mode's carried-then-dropped or planted bomb).
 const MW2_BOMB_MODEL: &str = "prop_suitcase_bomb";
 
-/// The bomb's model, dropped or `planted`: CS:S's `w_c4` and `w_c4_planted`; GoldSrc's backpack
-/// and `w_c4`.
+/// The bomb's model, dropped or `planted`: CS:GO's `w_ied_dropped` and `w_c4_planted`; CS:S's
+/// `w_c4` and `w_c4_planted`; GoldSrc's backpack and `w_c4`.
 fn bomb_model(planted: bool) -> &'static str {
+    const CSGO_BOMB: [&str; 2] = ["csgo:w_ied_dropped", "csgo:w_c4_planted"];
+    let csgo = CSGO_BOMB[usize::from(planted)];
+    if has_model(csgo) {
+        return csgo;
+    }
     match (css_pack().is_some(), planted) {
         (true, false) => "w_c4",
         (true, true) => "w_c4_planted",
@@ -164,9 +215,12 @@ fn bomb_model(planted: bool) -> &'static str {
     }
 }
 
-/// A dropped defuse kit's model: CS:S's `w_defuser`, GoldSrc's thigh pack.
+/// A dropped defuse kit's model: CS:GO's or CS:S's `w_defuser`, GoldSrc's thigh pack.
 fn defuser_model() -> &'static str {
-    if css_pack().is_some() {
+    const CSGO_DEFUSER: &str = "csgo:w_defuser";
+    if has_model(CSGO_DEFUSER) {
+        CSGO_DEFUSER
+    } else if css_pack().is_some() {
         "w_defuser"
     } else {
         "w_thighpack"
@@ -290,10 +344,10 @@ fn settle(vertices: &mut [CsViewmodelVertex], placement: Placement) {
 }
 
 /// Builds a CS:S world model read from `models/weapons/<name>.mdl`, its rest pose baked into
-/// MW2's weapon tag frame, and where its muzzle ends up; or, on the floor or dropped, in its own
-/// frame settled there.
+/// MW2's weapon tag frame (`pack`, CS:S's, has the hand it hangs from), and where its muzzle
+/// ends up; or, on the floor or dropped, a CS:S or CS:GO model in its own frame settled there.
 fn build_world_model(
-    pack: &mdl_source::Vpk,
+    pack: Option<&mdl_source::Vpk>,
     loaded: mdl_source::LoadedModel,
     placement: Placement,
     images: &mut Assets<Image>,
@@ -316,6 +370,7 @@ fn build_world_model(
         let (anchor, carry) = match find("ValveBiped.weapon_bone") {
             Some(bone) => (bone, Affine3A::IDENTITY),
             None => {
+                let pack = pack.ok_or("no CS:S pack")?;
                 let carry = hand_to_weapon_bone(pack).ok_or("no CS:S player model for the hand")?;
                 // Riding on the hand bone, as CS:S bone-merges it.
                 mount = css_anatomy_from_hand(pack).map(|anatomy_from_hand| HandMount {
@@ -777,7 +832,12 @@ impl CsWorldModels {
             }
             None => {
                 let path = model_path(name);
-                let task = if let Some(pack) = css_pack() {
+                let task = if name.starts_with(CSGO) {
+                    let pack = csgo_pack()?;
+                    AsyncComputeTaskPool::get().spawn(async move {
+                        mdl_source::load_model_with(&pack, &path, false).map(Decoded::Source)
+                    })
+                } else if let Some(pack) = css_pack() {
                     AsyncComputeTaskPool::get().spawn(async move {
                         // The knife's and grenades' hand frame reads a CS:S player model once.
                         let _ = hand_to_weapon_bone(pack);
@@ -797,10 +857,7 @@ impl CsWorldModels {
             }
         };
         let built = block_on(task).and_then(|decoded| match decoded {
-            Decoded::Source(loaded) => {
-                let pack = css_pack().ok_or_else(|| "no CS:S pack".to_owned())?;
-                build_world_model(pack, loaded, placement, images)
-            }
+            Decoded::Source(loaded) => build_world_model(css_pack(), loaded, placement, images),
             Decoded::GoldSrc(studio) => build_goldsrc_world_model(name, &studio, placement, images),
         });
         let model = match built {

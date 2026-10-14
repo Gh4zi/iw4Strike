@@ -2558,10 +2558,23 @@ pub fn csgo_knife_view_model(name: &str) -> Option<&'static str> {
 
 /// The item index of a defuse kit lying on the floor (a dead Counter-Terrorist's): not a weapon.
 pub const CS_DEFUSE_KIT_ITEM: i32 = -2;
-/// The planted bomb's blast (`m_flBombRadius` 500 by default): 500 damage falling off linearly
-/// to nothing at 3.5 times that.
+/// The planted bomb's blast (`m_flBombRadius` 500 by default): 500 damage reaching 3.5 times
+/// that far, falling off linearly to nothing in CS 1.6 and as [`csgo_blast_damage`] in CS:GO.
 pub const CS_C4_DAMAGE: f32 = 500.0;
 pub const CS_C4_RADIUS: f32 = 1750.0;
+
+/// CS:GO's blast damage `distance` from a blast of `damage` reaching `radius`
+/// (`CCSGameRules::RadiusDamage`): a bell curve with the radius at its third standard
+/// deviation, so 96% of the damage a tenth of the way out, 49% at 0.4, 11% at 0.7 and 1% at
+/// the edge; nothing past it.
+#[must_use]
+pub fn csgo_blast_damage(damage: f32, radius: f32, distance: f32) -> f32 {
+    if radius <= 0.0 || distance >= radius {
+        return 0.0;
+    }
+    let sigma = radius / 3.0;
+    damage * libm::expf(-(distance * distance) / (2.0 * sigma * sigma))
+}
 
 /// `WeaponCombatFacts::cs_weapon` of the C4: past the grenades.
 pub const CS_C4_INDEX: u8 = CS_GRENADE_INDEX + CS_GRENADES.len() as u8;
@@ -4016,6 +4029,15 @@ mod tests {
         recoil(m3, &mut state, air, &mut punch, 12345);
         assert!((-11.0..=-8.0).contains(&punch[0]), "{punch:?}");
         assert!((spread(m3, 1.0, STANDING) - 0.0675).abs() < 1e-6);
+    }
+
+    #[test]
+    fn csgo_bomb_falls_off_as_a_bell_curve() {
+        let at = |share: f32| csgo_blast_damage(CS_C4_DAMAGE, CS_C4_RADIUS, CS_C4_RADIUS * share);
+        assert!((at(0.0) - 500.0).abs() < 1e-3);
+        assert!((at(0.4) / 500.0 - 0.487).abs() < 0.005);
+        assert!((at(0.7) / 500.0 - 0.110).abs() < 0.005);
+        assert!(at(0.99) > 0.0 && at(1.0) == 0.0);
     }
 
     #[test]

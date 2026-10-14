@@ -13,6 +13,8 @@ use playerstate_iw4::PM_TYPE_DEAD;
 const HUD_LAYOUT: &str = "file://{resources}/layout/hud/hud.xml";
 /// `g_LowHealthPercent`: at or under this share of health the panel turns critical.
 const LOW_HEALTH: f32 = 0.2;
+/// A CS player's full health, which the health bar is a share of.
+const MAX_HEALTH: i32 = 100;
 /// `g_HealthFlashSeconds`: how long a hit keeps the health panel flashing.
 const DAMAGE_FLASH_SECONDS: f32 = 1.0;
 /// The weapon panel's bullets turn red at or under this share of the magazine.
@@ -454,6 +456,7 @@ fn scoreboard_data(
     use crate::csgo_scoreboard::{Data, Line, Side};
     let rules = weapon_iw4::cs::cs_round_rules(sim::cs_settings::shooting_mode());
     let mut data = Data {
+        teams: snap.is_none_or(|snap| snap.meta.kind.is_team()),
         lines: Vec::new(),
         scores: crate::csgo_hud::scores(snap).unwrap_or([0, 0]),
         history: crate::cs_hud::server_info(snap, "cs_round_history").unwrap_or_default().to_owned(),
@@ -470,8 +473,18 @@ fn scoreboard_data(
     let local_team = snap.meta.for_client(local).map_or(0, |m| m.client_state_team);
     for row in crate::scoreboard::rows_from_parsed(snap, parsed) {
         let team = row.score.team;
-        let Some(terrorist) = crate::cs_hud::is_terrorist(Some(snap), team) else {
-            continue;
+        // Free-for-all: everyone playing in the one table.
+        let side = if !data.teams {
+            if team == entity_iw4::TEAM_SPECTATOR {
+                continue;
+            }
+            Side::Any
+        } else {
+            match crate::cs_hud::is_terrorist(Some(snap), team) {
+                Some(true) => Side::T,
+                Some(false) => Side::Ct,
+                None => continue,
+            }
         };
         let client = row.score.client as u32;
         let ps = snap.players.iter().find(|(id, _)| id.0 == client).map(|(_, ps)| ps);
@@ -487,7 +500,7 @@ fn scoreboard_data(
         };
         data.lines.push(Line {
             client,
-            side: if terrorist { Side::T } else { Side::Ct },
+            side,
             name: row.name.clone(),
             dead: row.dead,
             ping: row.score.ping,
@@ -550,6 +563,8 @@ pub(crate) struct CsgoPanorama {
     fonts: panorama::Fonts,
     doc: Option<panorama::Doc>,
     root: Option<Entity>,
+    /// Put away under the pause menu (and any other menu taking the input).
+    hidden: bool,
     health: Option<i32>,
     damaged_at: Option<f32>,
     notices: Vec<Notice>,
@@ -590,6 +605,7 @@ pub(crate) fn load(fonts: &mut Assets<Font>) -> Option<CsgoPanorama> {
         "file://{images}/hud/teamcounter/teamcounter_playercolor.png",
         "file://{images}/icons/ui/ping_4.svg",
         "file://{images}/icons/ui/competitive.svg",
+        "file://{images}/icons/ui/deathmatch.svg",
         "file://{images}/icons/ui/bomb.svg",
         "file://{images}/icons/ui/timer.svg",
         "file://{images}/icons/ui/bomb_c4.svg",
@@ -718,10 +734,11 @@ pub(crate) fn update_csgo_panorama(
         Query<(&ComputedNode, &bevy::ui::UiGlobalTransform)>,
         Res<frame::GameSettings>,
     ),
-    (actions, scores, identity): (
+    (actions, scores, identity, hud_input): (
         Option<Res<net::ClientActionInput>>,
         Option<Res<net::Scoreboard>>,
         Option<Res<frame::LaunchIdentity>>,
+        Option<Res<frame::HudInputView>>,
     ),
 ) {
     if !hud.active || !crate::cs_hud::replaces_mw2_hud() || !surface.is_ready() {
@@ -733,6 +750,19 @@ pub(crate) fn update_csgo_panorama(
     else {
         return;
     };
+    // CS:GO puts its HUD away under the pause menu.
+    let hidden = hud_input.as_deref().is_some_and(|input| input.script_menu_open);
+    if state.hidden != hidden {
+        state.hidden = hidden;
+        commands.entity(root).insert(if hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+    }
+    if hidden {
+        return;
+    }
     doc.set_scale(surface.height() / 1080.0);
     let snap = presented.snapshot();
     let ps = presented.player(local.0).filter(|_| !view.in_killcam());
@@ -748,7 +778,9 @@ pub(crate) fn update_csgo_panorama(
                 state.damaged_at = Some(now);
             }
             state.health = Some(health);
-            let share = health as f32 / ps.max_health.max(1) as f32;
+            // Of CS's 100, not `max_health`: with regeneration off, MW2's script lowers that to
+            // what is left a few seconds after each hit (`_healthoverlay`).
+            let share = health as f32 / MAX_HEALTH as f32;
             doc.set_var(panel, "health", &health.to_string());
             if let Some(bar) = doc.find_in(panel, "HealthBar") {
                 doc.set_value(bar, share);

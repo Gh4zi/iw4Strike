@@ -3,7 +3,8 @@
 //! Counter-Terrorists and the Terrorists with a row per player (status, ping, name, money for
 //! teammates, kills, assists, deaths, MVPs, score), each side's score and players alive, and
 //! between them the round timeline: each half's rounds with the winner's icon for how it was won
-//! (the server's `cs_round_history`) and the halves' scores.
+//! (the server's `cs_round_history`) and the halves' scores. Free-for-all shows CS:GO's
+//! deathmatch board instead: one table of everyone, without teams or the timeline.
 
 use std::collections::HashMap;
 
@@ -12,14 +13,19 @@ use panorama::{Doc, Files};
 /// The competitive board and its player row (`_Initialize`, `_GetPlayerRowForGameMode`).
 const BOARD: &str = "snippet_scoreboard-classic--with-timeline--half-times";
 const ROW: &str = "snippet_scoreboard-classic__row--comp";
+/// Free-for-all deathmatch's board and row (`mp_teammates_are_enemies`).
+const FFA_BOARD: &str = "snippet_scoreboard--no-teams";
+const FFA_ROW: &str = "snippet_scoreboard__row--deathmatch";
 /// The stat set shown (`_m_dataSetCurrent`); the other is CS:GO's second page of stats.
 const SHOWN_SET: &str = "0";
 
-/// The two sides, as the board names them (`CT`, `TERRORIST`).
+/// The two sides, as the board names them (`CT`, `TERRORIST`), and free-for-all's one table
+/// (`ANY`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Side {
     Ct,
     T,
+    Any,
 }
 
 impl Side {
@@ -27,8 +33,22 @@ impl Side {
         match self {
             Self::Ct => "CT",
             Self::T => "TERRORIST",
+            Self::Any => "ANY",
         }
     }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Ct => 0,
+            Self::T => 1,
+            Self::Any => 2,
+        }
+    }
+}
+
+/// The player row of the board for team play (`teams`) or free-for-all.
+fn row_snippet(teams: bool) -> &'static str {
+    if teams { ROW } else { FFA_ROW }
 }
 
 /// A player's line on the board.
@@ -53,6 +73,8 @@ pub(crate) struct Line {
 
 /// What the board shows.
 pub(crate) struct Data {
+    /// Team play; free-for-all without.
+    pub teams: bool,
     pub lines: Vec<Line>,
     /// Rounds won: Counter-Terrorists, Terrorists.
     pub scores: [i32; 2],
@@ -77,10 +99,11 @@ struct Round {
 
 #[derive(Default)]
 pub(crate) struct Scoreboard {
-    built: bool,
+    /// Built, for team play (`true`) or free-for-all.
+    built: Option<bool>,
     rows: HashMap<u32, Row>,
-    /// Each side's rows top to bottom, as last laid out.
-    order: [Vec<u32>; 2],
+    /// Each table's rows top to bottom, as last laid out (by [`Side::index`]).
+    order: [Vec<u32>; 3],
     rounds: Vec<Round>,
 }
 
@@ -108,9 +131,16 @@ impl Scoreboard {
         if !show {
             return;
         }
-        if !self.built {
+        if self.built != Some(data.teams) {
+            // The match went from team play to free-for-all or back: built again.
+            if self.built.is_some() {
+                for child in doc.children(board) {
+                    doc.remove(child);
+                }
+                *self = Self::default();
+            }
             self.build(doc, files, board, data);
-            self.built = true;
+            self.built = Some(data.teams);
         }
         self.fill_header(doc, files, board, data);
         self.fill_rows(doc, files, board, data);
@@ -118,7 +148,7 @@ impl Scoreboard {
     }
 
     fn build(&mut self, doc: &mut Doc, files: &Files, board: usize, data: &Data) {
-        doc.load_snippet(files, board, BOARD);
+        doc.load_snippet(files, board, if data.teams { BOARD } else { FFA_BOARD });
         // What this board has no use for: music kits, the meta buttons, spectators, the
         // caster buttons and website, the stats page switch.
         for id in [
@@ -139,7 +169,7 @@ impl Scoreboard {
         if let Some(labels) = doc.find_in(board, "id-sb-players-table__labels-row") {
             let mut sets: HashMap<String, usize> = HashMap::new();
             let mut container = None;
-            for (snippet, attrs) in doc.snippet_frames(ROW) {
+            for (snippet, attrs) in doc.snippet_frames(row_snippet(data.teams)) {
                 let Some(stat) = doc.snippet_attr(&snippet, "data-stat") else {
                     continue;
                 };
@@ -253,20 +283,22 @@ impl Scoreboard {
     /// The header and the sides' names, scores and players alive (`_UpdateMatchInfo`,
     /// `_UpdateTeamInfo`, `_UpdateTeams`).
     fn fill_header(&self, doc: &mut Doc, files: &Files, board: usize, data: &Data) {
+        let (icon, mode, fallback) = if data.teams {
+            ("competitive", "SFUI_GameModeCompetitive", "Competitive")
+        } else {
+            ("deathmatch", "SFUI_GameModeDeathmatch", "Deathmatch")
+        };
         if let Some(image) = doc.find_in(board, "id-sb-meta__mode__image") {
-            doc.set_image(image, Some("file://{images}/icons/ui/competitive.svg"));
+            doc.set_image(image, Some(&format!("file://{{images}}/icons/ui/{icon}.svg")));
         }
         if let Some(label) = doc.find_in(board, "id-sb-meta__labels__mode-map") {
-            let mode = files.token("SFUI_GameModeCompetitive").unwrap_or("Competitive");
+            let mode = files.token(mode).unwrap_or(fallback);
             doc.set_text(label, &format!("{mode} | {}", data.map));
         }
         doc.set_var(board, "s_gametime_time", &data.clock);
         for (k, side) in [Side::Ct, Side::T].into_iter().enumerate() {
             let name = side.name();
-            let label = match side {
-                Side::Ct => "SFUI_CT_Label",
-                Side::T => "SFUI_T_Label",
-            };
+            let label = if side == Side::Ct { "SFUI_CT_Label" } else { "SFUI_T_Label" };
             doc.set_var(board, &format!("sb_team_name--{name}"), files.token(label).unwrap_or(""));
             doc.set_var(board, &format!("sb_team_score--{name}"), &data.scores[k].to_string());
             let on_side = data.lines.iter().filter(|line| line.side == side);
@@ -279,7 +311,9 @@ impl Scoreboard {
 
     /// The players' rows (`_UpdatePlayer`, `_SortPlayer`): each side by score, then kills.
     fn fill_rows(&mut self, doc: &mut Doc, files: &Files, board: usize, data: &Data) {
-        for (k, side) in [Side::Ct, Side::T].into_iter().enumerate() {
+        let sides: &[Side] = if data.teams { &[Side::Ct, Side::T] } else { &[Side::Any] };
+        for &side in sides {
+            let k = side.index();
             let mut lines: Vec<&Line> = data.lines.iter().filter(|line| line.side == side).collect();
             lines.sort_by(|a, b| b.score.cmp(&a.score).then(b.kills.cmp(&a.kills)));
             let order: Vec<u32> = lines.iter().map(|line| line.client).collect();
@@ -292,7 +326,7 @@ impl Scoreboard {
                 }
                 if let Some(table) = doc.find_in(board, &format!("players-table-{}", side.name())) {
                     for &client in &order {
-                        let row = new_row(doc, files, table, side);
+                        let row = new_row(doc, files, table, side, row_snippet(data.teams));
                         self.rows.insert(client, row);
                     }
                 }
@@ -373,15 +407,15 @@ impl Scoreboard {
     }
 }
 
-/// A player's row (`_NewPlayerPanel`): the competitive row's stat cells in order, those of a
+/// A player's row (`_NewPlayerPanel`): the `snippet` row's stat cells in order, those of a
 /// stat set in that set's panel (only the shown set visible), every other cell darker.
-fn new_row(doc: &mut Doc, files: &Files, table: usize, side: Side) -> Row {
+fn new_row(doc: &mut Doc, files: &Files, table: usize, side: Side, snippet: &str) -> Row {
     let panel = doc.add_element(files, table, "Panel", &[("class", "sb-row")]);
     let mut cells = HashMap::new();
     let mut sets: HashMap<String, usize> = HashMap::new();
     let mut container = None;
     let mut idx = 0;
-    for (snippet, attrs) in doc.snippet_frames(ROW) {
+    for (snippet, attrs) in doc.snippet_frames(snippet) {
         let Some(stat) = doc.snippet_attr(&snippet, "data-stat") else {
             continue;
         };

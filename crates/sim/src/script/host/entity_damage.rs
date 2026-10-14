@@ -62,6 +62,8 @@ pub(crate) struct ScriptBlast {
     pub inflictor: Option<ScriptModelId>,
     pub means: &'static str,
     pub weapon: u32,
+    /// The CS bomb mode's planted bomb going off (`csBombBlast`).
+    pub cs_bomb: bool,
 }
 
 #[derive(Clone, Debug)]

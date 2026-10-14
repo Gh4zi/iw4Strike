@@ -285,6 +285,7 @@ fn add_c4_sound(
     css: bool,
     volume: f32,
     reach: Option<(f32, f32)>,
+    flat: bool,
 ) -> bool {
     let preferred: &[&str] = match event {
         "plant" | "initiate" => &["mp_bomb_plant"],
@@ -315,6 +316,12 @@ fn add_c4_sound(
         .starts_with("beep")
         .then(|| (60.0, beep_reach(event, css)))
         .or(reach);
+    // A flat sound plays on the 2D channel: no falloff, the same wherever the listener is.
+    let channel = if flat {
+        catalog.ent_channel_index("auto2d")
+    } else {
+        None
+    };
     catalog.add_loose_alias_tuned(&name, template, clips, |row| {
         steady_pitch(row);
         row.vol_min *= volume;
@@ -322,6 +329,11 @@ fn add_c4_sound(
         if let Some((from, to)) = reach {
             row.dist_min = from;
             row.dist_max = to;
+        }
+        if let (Some(channel), Some(flags)) = (channel, row.flags) {
+            let shift = asset_iw4::snd_alias::SND_ALIAS_FLAG_CHANNEL_SHIFT;
+            let mask = asset_iw4::snd_alias::SND_ALIAS_FLAG_CHANNEL_MASK;
+            row.flags = Some((flags & !(mask << shift)) | (channel << shift));
         }
     })
 }
@@ -587,7 +599,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             .read(&format!("sound/weapons/{wave}.wav"))
             .and_then(|b| decode_wav(&b));
         if let Some(decoded) = decoded {
-            add_c4_sound(catalog, event, &[decoded], false, 1.0, None);
+            add_c4_sound(catalog, event, &[decoded], false, 1.0, None, false);
         }
     }
     // Ladder steps: the GoldSrc game's own, else Half-Life's (the same waves).
@@ -891,7 +903,9 @@ pub fn append_csgo_round_sounds(catalog: &mut SoundCatalog) -> usize {
     for (event, entry, reach) in CSGO_C4 {
         let waves = read(entry);
         let volume = scripts.volume(entry).unwrap_or(1.0);
-        if !waves.is_empty() && add_c4_sound(catalog, event, &waves, true, volume, reach) {
+        // `c4.explode` is `SNDLVL_NONE`: heard as loud anywhere on the map.
+        let flat = event == "explode";
+        if !waves.is_empty() && add_c4_sound(catalog, event, &waves, true, volume, reach, flat) {
             added += 1;
         } else {
             missing.push(entry);
@@ -1115,7 +1129,7 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             .filter_map(|wave| vpk.read(&format!("sound/{wave}")))
             .filter_map(|bytes| decode_wav(&bytes))
             .collect();
-        add_c4_sound(catalog, event, &waves, true, 1.0, None);
+        add_c4_sound(catalog, event, &waves, true, 1.0, None, false);
     }
     // Ladder steps: Half-Life 2's, in CS:S's own pack or the `hl2` sound pack beside it.
     let hl2 = pak

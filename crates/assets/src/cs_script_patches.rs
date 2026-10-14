@@ -435,6 +435,20 @@ const PATCHES: &[Patch] = &[
         "updateDamageFeedback( typeHit )\n{\n\treturn;",
         "no hitmarker or hit sound (CS has none)",
     ),
+    // A grenade or blast leaves the screen clean: no dirt splashed on it from a grenade going
+    // off nearby, and no blur and slowdown from blast damage (CS has neither).
+    once(
+        "maps/mp/gametypes/_shellshock",
+        "dirtEffect( position )\n{",
+        "dirtEffect( position )\n{\n\treturn;",
+        "no dirt on the screen from nearby grenades",
+    ),
+    once(
+        "maps/mp/gametypes/_shellshock",
+        "shellshockOnDamage( cause, damage )\n{",
+        "shellshockOnDamage( cause, damage )\n{\n\treturn;",
+        "no shellshock from blast damage",
+    ),
     // The round timer: no "match ending soon" at a minute left, and the countdown ticks only in
     // the last 10 seconds (MW2 ticked every other second from 30). `snd_timer_warning_volume`
     // sets how loud they are.
@@ -668,13 +682,18 @@ const PATCHES: &[Patch] = &[
          \tsetDvar( \"cs_bomb\", \"defused\" ); makeDvarServerInfo( \"cs_bomb\", \"defused\" );",
         "CS C4: clients know the bomb was defused",
     ),
-    Patch {
-        module: SD,
-        find: "explosionOrigin, 512, 200, 20",
-        replace: "explosionOrigin, 1750, 500, 0",
-        times: 2,
-        why: "CS C4: 500 damage falling off to nothing at 1750 units",
-    },
+    once(
+        SD,
+        "radiusDamage( explosionOrigin, 512, 200, 20, player );",
+        "csBombBlast( explosionOrigin, player );",
+        "CS C4: 500 damage reaching 1750 units, as the shooting mode's CS has it",
+    ),
+    once(
+        SD,
+        "radiusDamage( explosionOrigin, 512, 200, 20 );",
+        "csBombBlast( explosionOrigin );",
+        "CS C4: the same blast without a planter",
+    ),
     once(
         SD,
         "\"exp_suitcase_bomb_main\"",
@@ -717,6 +736,36 @@ const PATCHES: &[Patch] = &[
         "item thread deletePickupAfterAWhile();",
         "",
         "CS drops: a dropped gun stays until the round ends",
+    ),
+    // The knife never drops (it rides on MW2's `beretta_mp`, `weapon_iw4::cs::CS_KNIFE`): a
+    // player who dies with it out drops their rifle, else their pistol, as CS:GO does.
+    once(
+        WEAPONS,
+        "mayDropWeapon( weapon )\n{\n\tif ( weapon == \"none\" )\n\t\treturn false;",
+        "csDeathDropWeapon()\n{\n\tbest = undefined;\n\
+         \tforeach ( weapon in self getWeaponsListPrimaries() )\n\t{\n\
+         \t\tif ( !mayDropWeapon( weapon ) )\n\t\t\tcontinue;\n\
+         \t\tif ( !isDefined( best ) || weaponClass( weapon ) != \"pistol\" )\n\t\t\tbest = weapon;\n\
+         \t}\n\treturn best;\n}\n\n\
+         mayDropWeapon( weapon )\n{\n\tif ( weapon == \"none\" || weapon == \"beretta_mp\" )\n\t\treturn false;",
+        "CS drops: never the knife; the best gun instead",
+    ),
+    once(
+        WEAPONS,
+        "dropWeaponForDeath( attacker )\n{\n\tweapon = self.lastDroppableWeapon;",
+        "dropWeaponForDeath( attacker )\n{\n\tweapon = self.lastDroppableWeapon;\n\
+         \tif ( !isDefined( weapon ) || !mayDropWeapon( weapon ) || !self hasWeapon( weapon ) )\n\
+         \t\tweapon = self csDeathDropWeapon();",
+        "CS drops: the dead player's best gun when the last one held isn't there to drop",
+    ),
+    // A drop the engine refuses ends there: MW2 went on with no item, and the pickup watcher it
+    // started on nothing spun until the script runtime killed it, a second's freeze each time.
+    once(
+        WEAPONS,
+        "\t\titem = self dropItem( weapon );\n\t\titem ItemWeaponSetAmmo( clipAmmoR, stockAmmo, clipAmmoL );",
+        "\t\titem = self dropItem( weapon );\n\t\tif ( !isDefined( item ) )\n\t\t\treturn;\n\
+         \t\titem ItemWeaponSetAmmo( clipAmmoR, stockAmmo, clipAmmoL );",
+        "drops: nothing more when no item was dropped",
     ),
 ];
 

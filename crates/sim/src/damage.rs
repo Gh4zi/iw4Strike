@@ -188,6 +188,24 @@ fn apply_entity_blast(world: &mut FrameWorld, blast: &ExplosionBlast) {
 
 const IDFLAGS_RADIUS: i32 = 1;
 
+/// How far `origin` is from where CS:GO's blasts measure a player (`BodyTarget`): a point
+/// between a quarter below the middle of the hull and the eyes, picked at random each time in
+/// CS:GO; here the middle of that span, where it lands on average.
+fn csgo_body_target_distance(
+    world: &FrameWorld,
+    target: ClientId,
+    origin: [f32; 3],
+    centre: [f32; 3],
+) -> f32 {
+    let body = world.player(target).map_or(centre, |ps| {
+        let low = centre[2] - (centre[2] - ps.origin[2]) * 0.25;
+        let eyes = ps.origin[2] + ps.view_height_current;
+        [centre[0], centre[1], (low + eyes) * 0.5]
+    });
+    let d: [f32; 3] = std::array::from_fn(|i| body[i] - origin[i]);
+    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+}
+
 pub(crate) fn apply_script_blast(
     world: &mut FrameWorld,
     tick: Tick,
@@ -212,6 +230,10 @@ pub(crate) fn apply_script_blast(
             },
         );
     }
+    // CS:GO's bomb (`CPlantedC4` through `RadiusDamage`): walls don't stop it (it ignores the
+    // world), and it falls off as CS:GO's bell curve.
+    let csgo_bomb =
+        blast.cs_bomb && crate::cs_settings::shooting_mode() == weapon_iw4::csgo::SHOOTING_CSGO;
     for target in radius_player_candidates(world, blast.origin, blast.radius) {
         let Some(meta) = world.client_meta(target) else {
             continue;
@@ -223,14 +245,25 @@ pub(crate) fn apply_script_blast(
         let Some(bounds) = world.player_area_bounds(target) else {
             continue;
         };
-        let dist = radius_damage_distance_to_aabb(blast.origin, bounds.mid(), bounds.half());
-        let vis_scale = player_radius_vis_scale(
-            world,
-            blast.origin,
-            target,
-            blast.inflictor.map(crate::AuthorityModelOwner::ScriptModel),
-        );
-        let amount = radius_damage_amount(blast.max, blast.min, blast.radius, dist, vis_scale);
+        let amount = if csgo_bomb {
+            let dist = csgo_body_target_distance(world, target, blast.origin, bounds.mid());
+            let amount = weapon_iw4::cs::csgo_blast_damage(blast.max, blast.radius, dist);
+            diag::debug!(
+                Sim,
+                "cs bomb: client {} {dist:.0} units away -> {amount:.1} damage",
+                target.0
+            );
+            amount.round() as i32
+        } else {
+            let dist = radius_damage_distance_to_aabb(blast.origin, bounds.mid(), bounds.half());
+            let vis_scale = player_radius_vis_scale(
+                world,
+                blast.origin,
+                target,
+                blast.inflictor.map(crate::AuthorityModelOwner::ScriptModel),
+            );
+            radius_damage_amount(blast.max, blast.min, blast.radius, dist, vis_scale)
+        };
         if amount <= 0 {
             continue;
         }

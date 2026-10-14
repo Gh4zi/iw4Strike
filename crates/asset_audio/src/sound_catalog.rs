@@ -1051,6 +1051,15 @@ impl SoundCatalog {
         self.ent_channels.get(channel as usize)
     }
 
+    /// The index of the entity channel named `name` (`auto2d`).
+    pub fn ent_channel_index(&mut self, name: &str) -> Option<u32> {
+        self.resolve_ent_channels();
+        self.ent_channels
+            .iter()
+            .position(|channel| channel.name == name)
+            .and_then(|index| u32::try_from(index).ok())
+    }
+
     pub fn resolve_ent_channels(&mut self) {
         if !self.ent_channels.is_empty() {
             return;

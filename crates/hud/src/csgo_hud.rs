@@ -576,14 +576,17 @@ pub(crate) fn update_csgo_hud(
     assets: Res<CsgoHudAssets>,
     feed: Res<CsKillFeed>,
     time: Res<Time>,
+    hud_input: Option<Res<frame::HudInputView>>,
     mut state: Local<CsgoHudState>,
     mut parts: PartQuery,
 ) {
     if !assets.active || !crate::cs_hud::replaces_mw2_hud() {
         return;
     }
+    // Put away under the pause menu, as CS:GO's.
+    let menu = hud_input.is_some_and(|input| input.script_menu_open);
     let ps = presented.player(local.0);
-    let Some(ps) = ps.filter(|_| surface.is_ready() && !view.in_killcam()) else {
+    let Some(ps) = ps.filter(|_| surface.is_ready() && !view.in_killcam() && !menu) else {
         for (_, mut node, ..) in &mut parts {
             adopt_display(&mut node, Display::None);
         }

@@ -591,6 +591,36 @@ fn radius_damage(
             inflictor,
             means,
             weapon,
+            cs_bomb: false,
+        });
+    Ok(Value::Undefined)
+}
+
+/// `inflictor csBombBlast( origin, attacker )`: the CS bomb mode's planted bomb going off,
+/// [`weapon_iw4::cs::CS_C4_DAMAGE`] reaching [`weapon_iw4::cs::CS_C4_RADIUS`] (see
+/// `damage::apply_script_blast` for how it falls off).
+fn cs_bomb_blast(
+    world: &mut World,
+    inflictor: Option<crate::ScriptModelId>,
+    args: &[Value],
+) -> Result<Value, String> {
+    let origin = vector(args, 0)?;
+    let attacker = match args.get(1) {
+        Some(Value::Object(id)) => runtime(world).player_client(*id).map(crate::ClientId),
+        _ => None,
+    };
+    runtime(world)
+        .blasts
+        .push(super::super::entity_damage::ScriptBlast {
+            origin,
+            radius: weapon_iw4::cs::CS_C4_RADIUS,
+            max: weapon_iw4::cs::CS_C4_DAMAGE,
+            min: 0.0,
+            attacker,
+            inflictor,
+            means: "MOD_EXPLOSIVE",
+            weapon: 0,
+            cs_bomb: true,
         });
     Ok(Value::Undefined)
 }
@@ -2102,6 +2132,10 @@ fn register_damage(registry: &mut NativeRegistry) {
     registry.register(Method, "radiusdamage", |world, receiver, args| {
         let inflictor = runtime(world).presence_of(receiver);
         radius_damage(world, inflictor, args)
+    });
+    registry.register(Method, "csbombblast", |world, receiver, args| {
+        let inflictor = runtime(world).presence_of(receiver);
+        cs_bomb_blast(world, inflictor, args)
     });
     registry.register(Function, "glassradiusdamage", |_, _, args| {
         vector(args, 0)?;

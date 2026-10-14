@@ -100,6 +100,14 @@ fn may_drop_weapon(world: &FrameWorld, ps: &PlayerState, weapon: u32) -> bool {
     if facts.inventory_type != WEAP_INVENTORY_PRIMARY {
         return false;
     }
+    // A CS knife stays with its owner: never thrown down, never left by the dead. A CS gun drops
+    // empty or not.
+    if weapon_iw4::cs::is_knife(facts.cs_weapon) {
+        return false;
+    }
+    if movement_iw4::rules::CS_RULES && weapon_iw4::cs::cs_weapon(facts.cs_weapon).is_some() {
+        return true;
+    }
     if name.contains("riotshield") {
         return true;
     }
