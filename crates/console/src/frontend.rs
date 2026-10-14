@@ -6,7 +6,7 @@ use ui::frontend::rules::{MATCH_CONFIG, host_rules, seed_rules, selected_game};
 
 use crate::{CommandSpec, ConsoleCommand, ConsoleRegistry};
 
-const PAGE_SIZE: usize = 10;
+const PAGE_SIZE: usize = 16;
 const PACK_SLOTS: usize = 16;
 const LOBBY_REOPEN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -105,7 +105,7 @@ pub(crate) fn route(
     mut party: ResMut<UiPartyState>,
     mut menus: MessageWriter<UiMenuRequest>,
     mut transition: ResMut<session::SessionSwapRequest>,
-    maps: Res<ui::MenuMapList>,
+    mut maps: ResMut<ui::MenuMapList>,
     settings: Res<frame::GameSettings>,
     localize: Option<Res<asset_game::LocalizeCatalog>>,
     catalog: Option<Res<asset_game::MenuCatalog>>,
@@ -114,6 +114,9 @@ pub(crate) fn route(
     mut state: Local<FrontendState>,
     mut echo: crate::feature_dispatch::ConsoleEcho,
 ) {
+    if maps.is_changed() || localize.as_ref().is_some_and(|loc| loc.is_changed()) {
+        sort_maps_by_name(maps.bypass_change_detection(), localize.as_deref());
+    }
     let mut returned_from_world = false;
     let mut returned_in_menu = false;
     let mut match_ended = true;
@@ -670,7 +673,10 @@ pub(crate) fn route(
             "CHEATS: OFF"
         },
     );
-    let selected_label = map_label(dvars.get("ui_mapname").unwrap_or_default());
+    let selected_label = map_name(
+        dvars.get("ui_mapname").unwrap_or_default(),
+        localize.as_deref(),
+    );
     dvars.set("ui_map_label", selected_label);
     let preview = map_preview(dvars.get("ui_mapname").unwrap_or_default());
     dvars.set("ui_lobby_preview", preview);
@@ -683,7 +689,7 @@ pub(crate) fn route(
     let hovered_map = pack.get(state.map_page * PAGE_SIZE + state.map_hover);
     dvars.set(
         "ui_map_preview_title",
-        hovered_map.map_or_else(String::new, |map| map_label(map)),
+        hovered_map.map_or_else(String::new, |map| map_name(map, localize.as_deref())),
     );
     dvars.set(
         "ui_map_preview",
@@ -693,7 +699,7 @@ pub(crate) fn route(
         dvars.set(
             &format!("ui_map_{row}"),
             pack.get(state.map_page * PAGE_SIZE + row)
-                .map(|map| map_label(map))
+                .map(|map| map_name(map, localize.as_deref()))
                 .unwrap_or_default(),
         );
     }
@@ -834,28 +840,14 @@ pub(crate) fn route(
                 };
                 let mode = sim::HostGameModeSelection::from_token(&advert.mode)
                     .map_or(advert.mode.as_str(), |mode| mode.display_name());
-                let map_key = advert
-                    .map
-                    .split_once(':')
-                    .filter(|(pack, _)| *pack == "iw4")
-                    .map(|(_, name)| {
-                        format!(
-                            "MPUI_{}",
-                            name.trim_start_matches("mp_").to_ascii_uppercase()
-                        )
-                    });
-                let fallback_map = map_label(&advert.map);
-                let map = map_key
-                    .as_ref()
-                    .and_then(|key| localize.as_ref()?.text(key))
-                    .unwrap_or(&fallback_map);
+                let map = map_name(&advert.map, localize.as_deref());
                 let assets = net::content_names(master_protocol::ContentFlags(
                     advert.available.0 & !net::CONTENT_IW4,
                 ))
                 .to_uppercase();
                 [
                     browser_cell(&advert.name, 22),
-                    browser_cell(map, 18),
+                    browser_cell(&map, 18),
                     browser_cell(mode, 20),
                     format!("{}/{}", advert.players, advert.max_players),
                     if assets.is_empty() {
@@ -882,6 +874,47 @@ fn browser_cell(text: &str, limit: usize) -> String {
         format!("{}...", plain.chars().take(limit - 3).collect::<String>())
     } else {
         plain
+    }
+}
+
+/// MW2's own name for one of its maps, by the string key its map menu uses (`mp_boneyard` →
+/// `MPUI_BONEYARD` → Scrapyard, DLC `mp_complex` → `PATCH_COMPLEX` → Bailout), else the zone
+/// name.
+fn map_name(map: &str, localize: Option<&asset_game::LocalizeCatalog>) -> String {
+    let (pack, stem) = map.split_once(':').unwrap_or(("iw4", map));
+    let name = match stem.trim_start_matches("mp_").to_ascii_uppercase().as_str() {
+        "BRECOURT" => "WASTELAND".to_owned(),
+        "NIGHTSHIFT" => "RAID".to_owned(),
+        name => name.to_owned(),
+    };
+    localize
+        .filter(|_| pack == "iw4")
+        .and_then(|loc| {
+            loc.text(&format!("PATCH_{name}"))
+                .or_else(|| loc.text(&format!("MPUI_{name}")))
+        })
+        .map_or_else(|| map_label(map), str::to_owned)
+}
+
+/// MW2's second map pack (Resurgence), listed after the first (Stimulus) as in the retail menu.
+const MW2_RESURGENCE: [&str; 5] = [
+    "iw4:mp_abandon",
+    "iw4:mp_fuel2",
+    "iw4:mp_strike",
+    "iw4:mp_trailerpark",
+    "iw4:mp_vacant",
+];
+
+/// Each pack in MW2's menu order: by shown name (Karachi after Invasion), Resurgence after
+/// Stimulus.
+fn sort_maps_by_name(maps: &mut ui::MenuMapList, localize: Option<&asset_game::LocalizeCatalog>) {
+    for pack in &mut maps.0 {
+        pack.maps.sort_by_cached_key(|map| {
+            (
+                MW2_RESURGENCE.contains(&map.as_str()),
+                map_name(map, localize).to_lowercase(),
+            )
+        });
     }
 }
 
