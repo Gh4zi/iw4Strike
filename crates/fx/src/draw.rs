@@ -180,6 +180,67 @@ pub struct FxGenerateVertsOut {
     pub spark_cloud_no_size1: u32,
 }
 
+impl FxGenerateVertsOut {
+    /// `other`'s instances after this one's, its counts added: one output for consecutive
+    /// effect ranges generated apart (`generate_verts_in`).
+    pub fn append(&mut self, other: Self) {
+        let Self {
+            sprites,
+            trail_meshes,
+            skipped_dormant,
+            skipped_no_visual,
+            skipped_null_handler,
+            skipped_unsupported_type,
+            skipped_cloud,
+            skipped_spark_cloud,
+            skipped_spark_fountain,
+            skipped_model,
+            skipped_omni_light,
+            skipped_spot_light,
+            skipped_other_type,
+            skipped_no_lookup,
+            skipped_stopped,
+            skipped_no_trail_def,
+            spark_clouds,
+            clouds,
+            fountains,
+            omni_lights,
+            spot_lights,
+            models,
+            spark_cloud_history_empty,
+            spark_cloud_no_size1,
+        } = other;
+        self.sprites.extend(sprites);
+        self.trail_meshes.extend(trail_meshes);
+        self.spark_clouds.extend(spark_clouds);
+        self.clouds.extend(clouds);
+        self.fountains.extend(fountains);
+        self.omni_lights.extend(omni_lights);
+        self.spot_lights.extend(spot_lights);
+        self.models.extend(models);
+        for (sum, add) in [
+            (&mut self.skipped_dormant, skipped_dormant),
+            (&mut self.skipped_no_visual, skipped_no_visual),
+            (&mut self.skipped_null_handler, skipped_null_handler),
+            (&mut self.skipped_unsupported_type, skipped_unsupported_type),
+            (&mut self.skipped_cloud, skipped_cloud),
+            (&mut self.skipped_spark_cloud, skipped_spark_cloud),
+            (&mut self.skipped_spark_fountain, skipped_spark_fountain),
+            (&mut self.skipped_model, skipped_model),
+            (&mut self.skipped_omni_light, skipped_omni_light),
+            (&mut self.skipped_spot_light, skipped_spot_light),
+            (&mut self.skipped_other_type, skipped_other_type),
+            (&mut self.skipped_no_lookup, skipped_no_lookup),
+            (&mut self.skipped_stopped, skipped_stopped),
+            (&mut self.skipped_no_trail_def, skipped_no_trail_def),
+            (&mut self.spark_cloud_history_empty, spark_cloud_history_empty),
+            (&mut self.spark_cloud_no_size1, spark_cloud_no_size1),
+        ] {
+            *sum = sum.saturating_add(add);
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FxCloudInstance {
     pub def_name: String,
@@ -255,9 +316,46 @@ pub fn generate_verts_with_trails(
     on_model: &mut dyn FnMut(FxDrawElemContext<'_>) -> Option<FxModelInstance>,
     camera: [f32; 3],
 ) -> FxGenerateVertsOut {
+    let (start, end) = drawn_effect_ring(host);
+    generate_verts_in(
+        host,
+        start,
+        end,
+        on_elem,
+        on_trail_def,
+        on_trail_sample,
+        on_spark_size1,
+        on_cloud,
+        on_light,
+        on_model,
+        camera,
+    )
+}
+
+/// The ring positions `generate_verts_with_trails` draws, `start..end` (wrapping).
+#[must_use]
+pub fn drawn_effect_ring(host: &FxSystemHost) -> (u32, u32) {
+    (host.first_active_effect as u32, host.first_new_effect as u32)
+}
+
+/// `generate_verts_with_trails` for the effects at ring positions `start..end` (wrapping) only.
+/// Consecutive ranges generated apart and appended in order (`FxGenerateVertsOut::append`) give
+/// the whole ring's output.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_verts_in(
+    host: &FxSystemHost,
+    start: u32,
+    end: u32,
+    on_elem: &mut dyn FnMut(FxDrawElemContext<'_>) -> Option<FxSpriteInstance>,
+    on_trail_def: &mut dyn FnMut(FxDrawTrailContext<'_>, u8) -> Option<FxTrailDrawDef>,
+    on_trail_sample: &mut dyn FnMut(FxDrawTrailSampleContext<'_>) -> Option<FxTrailSampleVisual>,
+    on_spark_size1: &mut dyn FnMut(FxSparkDrawQuery<'_>) -> Option<f32>,
+    on_cloud: &mut dyn FnMut(FxDrawElemContext<'_>) -> Option<FxCloudInstance>,
+    on_light: &mut dyn FnMut(FxDrawElemContext<'_>) -> Option<FxElemLightInstance>,
+    on_model: &mut dyn FnMut(FxDrawElemContext<'_>) -> Option<FxModelInstance>,
+    camera: [f32; 3],
+) -> FxGenerateVertsOut {
     let mut out = FxGenerateVertsOut::default();
-    let start = host.first_active_effect as u32;
-    let end = host.first_new_effect as u32;
     let mut cursor = start;
     while cursor != end {
         let handle = host.handle_at_ring(cursor);

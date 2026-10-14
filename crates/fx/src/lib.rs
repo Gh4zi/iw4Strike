@@ -19,8 +19,8 @@ pub use def::{FxEffectDefInfo, FxElemDefInfo};
 pub use draw::{
     FxCloudInstance, FxDrawElemContext, FxDrawTrailContext, FxDrawTrailSampleContext,
     FxElemLightInstance, FxFountainInstance, FxGenerateVertsOut, FxModelInstance, FxSparkDrawQuery,
-    FxSpriteInstance, FxTrailDrawDef, FxTrailMeshInstance, FxTrailSampleVisual, generate_verts,
-    generate_verts_with_trails,
+    FxSpriteInstance, FxTrailDrawDef, FxTrailMeshInstance, FxTrailSampleVisual, drawn_effect_ring,
+    generate_verts, generate_verts_in, generate_verts_with_trails,
 };
 pub use elem::FxElemSlot;
 pub use gaps::{ChildSpawn, CodeMeshStep, FxGap, FxGapCause, FxGaps};

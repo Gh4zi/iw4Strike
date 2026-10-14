@@ -12,7 +12,8 @@ use fx::{
     FxModelInstance, FxPackedLightingSrc, FxPlayPose, FxPlayRequest, FxSparkDrawQuery,
     FxSparkFillQuery, FxSparkFillVisual, FxSpriteInstance, FxSystemHost, FxTrailCollideHit,
     FxTrailDrawDef, FxTrailSampleVisual, PendingCollide, PlayResult, axis_from_hit_normal,
-    evaluate_elem_collide_motion, evaluate_elem_motion, generate_verts_with_trails, play_bolted,
+    drawn_effect_ring, evaluate_elem_collide_motion, evaluate_elem_motion, generate_verts_in,
+    play_bolted,
     play_oriented, spawn_impact_or_death_effect, spawn_looping_partial, spawn_oriented,
     update as fx_update,
 };
@@ -81,6 +82,50 @@ pub struct FxVertsGaps {
     pub catalog_index_n: u32,
 
     pub catalog_name_n: u32,
+}
+
+impl FxVertsGaps {
+    /// `other`'s counts added, its lighting gaps after this one's.
+    fn append(&mut self, other: Self) {
+        let Self {
+            lighting_frac,
+            lighting_frac_def_indices,
+            lighting_applied,
+            lighting_white,
+            lighting_atpoint,
+            lighting_miss,
+            no_def,
+            no_elem,
+            no_material_visual,
+            no_size0_sample,
+            size0_not_positive,
+            no_size1_sample,
+            size1_not_positive,
+            color_fallback,
+            catalog_index_n,
+            catalog_name_n,
+        } = other;
+        self.lighting_frac_def_indices.extend(lighting_frac_def_indices);
+        for (sum, add) in [
+            (&mut self.lighting_frac, lighting_frac),
+            (&mut self.lighting_applied, lighting_applied),
+            (&mut self.lighting_white, lighting_white),
+            (&mut self.lighting_atpoint, lighting_atpoint),
+            (&mut self.lighting_miss, lighting_miss),
+            (&mut self.no_def, no_def),
+            (&mut self.no_elem, no_elem),
+            (&mut self.no_material_visual, no_material_visual),
+            (&mut self.no_size0_sample, no_size0_sample),
+            (&mut self.size0_not_positive, size0_not_positive),
+            (&mut self.no_size1_sample, no_size1_sample),
+            (&mut self.size1_not_positive, size1_not_positive),
+            (&mut self.color_fallback, color_fallback),
+            (&mut self.catalog_index_n, catalog_index_n),
+            (&mut self.catalog_name_n, catalog_name_n),
+        ] {
+            *sum = sum.saturating_add(add);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -702,13 +747,16 @@ fn eval_pending_collide(
 const COLLIDE_JOBS_PER_WORKER: usize = 16;
 
 fn collide_worker_count(jobs: usize) -> usize {
+    pool_threads().min(jobs / COLLIDE_JOBS_PER_WORKER).max(1)
+}
+
+fn pool_threads() -> usize {
     static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    let threads = *THREADS.get_or_init(|| {
+    *THREADS.get_or_init(|| {
         std::thread::available_parallelism()
             .map(|n| n.get().saturating_sub(1).max(1))
             .unwrap_or(1)
-    });
-    threads.min(jobs / COLLIDE_JOBS_PER_WORKER).max(1)
+    })
 }
 
 fn run_collide_jobs(
@@ -1037,12 +1085,89 @@ fn tick_fx_pass(
     drain_spawn_side_effects(host, catalog, cache, world);
 }
 
+/// Effects per vertex-generation worker: with fewer, fanning out costs more than it saves.
+const VERTS_EFFECTS_PER_WORKER: u32 = 24;
+
+fn verts_worker_count(effects: u32) -> usize {
+    pool_threads().min((effects / VERTS_EFFECTS_PER_WORKER) as usize).max(1)
+}
+
+/// The drawn effects' sprites, trails, clouds, lights and models. In a firefight that is a
+/// couple of thousand particles on the main thread, so a large ring is generated in consecutive
+/// ranges on the compute pool and appended back in ring order: the same output, order and
+/// counts as one pass.
 pub fn build_fx_verts(
     host: &mut FxSystemHost,
     catalog: &FxDefinitions,
     cull: FxDrawCull<'_>,
     camera: [f32; 3],
 ) -> (FxGenerateVertsOut, FxVertsGaps) {
+    let (start, end) = drawn_effect_ring(host);
+    let effects = end.wrapping_sub(start);
+    let workers = verts_worker_count(effects);
+    let part = if workers <= 1 {
+        build_fx_verts_range(host, catalog, cull, camera, start, end)
+    } else {
+        let shared: &FxSystemHost = host;
+        let bound = |k: usize| {
+            start.wrapping_add((u64::from(effects) * k as u64 / workers as u64) as u32)
+        };
+        let mut parts = ComputeTaskPool::get()
+            .scope(|scope| {
+                for k in 0..workers {
+                    let (from, to) = (bound(k), bound(k + 1));
+                    scope.spawn(async move {
+                        build_fx_verts_range(shared, catalog, cull, camera, from, to)
+                    });
+                }
+            })
+            .into_iter();
+        let mut whole = parts.next().unwrap_or_default();
+        for part in parts {
+            whole.append(part);
+        }
+        whole
+    };
+    for (flags, origin, size0, alpha, fade_in, fade_out) in part.vis_blocker_adds {
+        vis_blocker_add_prepared(
+            &mut host.vis_blocker_read,
+            flags,
+            origin,
+            size0,
+            alpha,
+            fade_in,
+            fade_out,
+            camera,
+        );
+    }
+    (part.out, part.gaps)
+}
+
+#[derive(Default)]
+struct FxVertsPart {
+    out: FxGenerateVertsOut,
+    gaps: FxVertsGaps,
+    vis_blocker_adds: Vec<(i32, [f32; 3], f32, u8, [f32; 2], [f32; 2])>,
+}
+
+impl FxVertsPart {
+    fn append(&mut self, other: Self) {
+        self.out.append(other.out);
+        self.gaps.append(other.gaps);
+        self.vis_blocker_adds.extend(other.vis_blocker_adds);
+    }
+}
+
+/// `build_fx_verts` for the effects at ring positions `start..end`; the vis blockers they add
+/// are returned for the caller to apply in order.
+fn build_fx_verts_range(
+    host: &FxSystemHost,
+    catalog: &FxDefinitions,
+    cull: FxDrawCull<'_>,
+    camera: [f32; 3],
+    start: u32,
+    end: u32,
+) -> FxVertsPart {
     let mut gaps = FxVertsGaps::default();
     let catalog_index_n = Cell::new(0u32);
     let catalog_name_n = Cell::new(0u32);
@@ -1469,8 +1594,10 @@ pub fn build_fx_verts(
     let mut on_model = |ctx: FxDrawElemContext<'_>| {
         evaluate_fx_model_instance(catalog, ctx, &catalog_index_n, &catalog_name_n)
     };
-    let out = generate_verts_with_trails(
+    let out = generate_verts_in(
         host,
+        start,
+        end,
         &mut on_elem,
         &mut on_trail_def,
         &mut on_trail_sample,
@@ -1480,21 +1607,13 @@ pub fn build_fx_verts(
         &mut on_model,
         camera,
     );
-    for (flags, origin, size0, alpha, fade_in, fade_out) in vis_blocker_adds.into_inner() {
-        vis_blocker_add_prepared(
-            &mut host.vis_blocker_read,
-            flags,
-            origin,
-            size0,
-            alpha,
-            fade_in,
-            fade_out,
-            camera,
-        );
-    }
     gaps.catalog_index_n = catalog_index_n.get();
     gaps.catalog_name_n = catalog_name_n.get();
-    (out, gaps)
+    FxVertsPart {
+        out,
+        gaps,
+        vis_blocker_adds: vis_blocker_adds.into_inner(),
+    }
 }
 
 fn evaluate_fx_model_instance(
