@@ -268,7 +268,12 @@ pub fn trace_through_mesh_into(
     };
 
     if !mesh.aabb_trees.is_empty() {
-        walk_aabb_forest(mesh, cull_mins, cull_maxs, census, &mut |part, census| {
+        let segment = SegmentCull {
+            start,
+            delta,
+            reach: r,
+        };
+        walk_aabb_forest(mesh, cull_mins, cull_maxs, segment, census, &mut |part, census| {
             let start_ti = part.first_tri as usize;
             let end_ti = start_ti.saturating_add(part.tri_count as usize);
             let vert_base = part.first_vert_segment as usize * VERTS_PER_SEGMENT;
@@ -311,10 +316,50 @@ pub fn trace_through_mesh_into(
     }
 }
 
+/// The trace's centre path and how far from it the swept capsule reaches.
+#[derive(Clone, Copy)]
+struct SegmentCull {
+    start: [f32; 3],
+    delta: [f32; 3],
+    reach: f32,
+}
+
+impl SegmentCull {
+    /// Whether the path comes within `reach` of the box: a node it passes by holds no triangle
+    /// the trace can touch. The path's own bounding box (`node_overlaps_sweep`) is no cull for a
+    /// bullet: 8192 units corner to corner, it takes in most of a terrain mesh's tree, and every
+    /// shot tested thousands of triangles. MW2 culls tree nodes against the segment too
+    /// (`CM_CullBox`).
+    fn meets(&self, origin: [f32; 3], half: [f32; 3]) -> bool {
+        // Rounding margin: a missed node would be a missed hit, a kept one costs a test.
+        const MARGIN: f32 = 1.0;
+        let (mut enter, mut exit) = (0.0f32, 1.0f32);
+        for axis in 0..3 {
+            let lo = origin[axis] - half[axis] - self.reach - MARGIN;
+            let hi = origin[axis] + half[axis] + self.reach + MARGIN;
+            let (s, d) = (self.start[axis], self.delta[axis]);
+            if fabsf(d) < 1e-6 {
+                if s < lo || s > hi {
+                    return false;
+                }
+                continue;
+            }
+            let (a, b) = ((lo - s) / d, (hi - s) / d);
+            enter = enter.max(a.min(b));
+            exit = exit.min(a.max(b));
+            if enter > exit {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 fn walk_aabb_forest(
     mesh: &ClipMeshRef<'_>,
     cull_mins: [f32; 3],
     cull_maxs: [f32; 3],
+    segment: SegmentCull,
     census: &mut MeshWalkCensus,
     on_partition: &mut dyn FnMut(&ClipPartition, &mut MeshWalkCensus) -> bool,
 ) {
@@ -327,7 +372,9 @@ fn walk_aabb_forest(
         let Some(node) = mesh.aabb_trees.get(idx) else {
             continue;
         };
-        if !node_overlaps_sweep(node.origin, node.half_size, cull_mins, cull_maxs) {
+        if !node_overlaps_sweep(node.origin, node.half_size, cull_mins, cull_maxs)
+            || !segment.meets(node.origin, node.half_size)
+        {
             continue;
         }
         if node.child_count != 0 {
