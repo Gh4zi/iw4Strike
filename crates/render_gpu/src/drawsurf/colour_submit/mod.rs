@@ -26,7 +26,7 @@ use bevy::render::render_resource::{
     VertexStepMode,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
-use bevy::render::view::{ExtractedView, Msaa, ViewTarget};
+use bevy::render::view::{ExtractedView, Msaa, ViewTarget, ViewUniformOffset};
 use bevy::render::{Render, RenderSystems};
 
 use super::ExtractedRenderFrameProducts;

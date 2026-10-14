@@ -68,6 +68,8 @@ pub(super) fn draw_exact_colour(
         &SceneDepthTexture,
         &ExtractedView,
         Option<&Msaa>,
+        Option<&ViewUniformOffset>,
+        Option<&super::super::cs_world_model::CsWorldModelViewBind>,
     )>,
     world: Res<InstalledRenderWorld>,
     frame: Res<PublishedRenderFrame>,
@@ -92,6 +94,7 @@ pub(super) fn draw_exact_colour(
         shadow_arena,
         spot_arena,
         static_draws,
+        mut cs_models,
         (
             mut focus_submit,
             mut scratch,
@@ -110,6 +113,7 @@ pub(super) fn draw_exact_colour(
         Res<ShadowmapSunArena>,
         Res<ShadowmapSpotArena>,
         Res<ResidentShadowStaticDraws>,
+        super::super::cs_world_model::CsWorldModelDraw,
         (
             ResMut<FocusedOwnerSubmitState>,
             ResMut<ColourSubmitScratch>,
@@ -302,7 +306,7 @@ pub(super) fn draw_exact_colour(
         );
         return;
     }
-    let (target, depth, extracted_view, _msaa) = view.into_inner();
+    let (target, depth, extracted_view, msaa, view_offset, cs_view_bind) = view.into_inner();
     if !cam.active {
         emit_focused_owner_submit(
             &products,
@@ -564,6 +568,23 @@ pub(super) fn draw_exact_colour(
         });
         let encoder = context.command_encoder();
         gpu_span.end(encoder);
+
+        // CS:GO's players and dropped guns: after the solid world, before the effects, so smoke
+        // and the other see-through effects drawn next cover them.
+        if let (Some(view_offset), Some(view_bind)) = (view_offset, cs_view_bind) {
+            cs_models.record(
+                &device,
+                encoder,
+                &super::super::cs_world_model::CsWorldModelView {
+                    target,
+                    depth,
+                    extracted_view,
+                    view_offset,
+                    samples: msaa.map_or(1, Msaa::samples),
+                    view_bind,
+                },
+            );
+        }
 
         if needs_floatz {
             let gpu_span = diagnostics.time_span(encoder, GPU_SPAN_FLOATZ);

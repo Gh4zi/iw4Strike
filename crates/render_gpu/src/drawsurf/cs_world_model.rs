@@ -4,7 +4,9 @@
 //! The main world publishes a [`CsWorldModelsFrame`]: each model (vertices uploaded once, rest
 //! pose already baked into them, one draw per textured mesh) with its world placement and the
 //! light where it is. They are drawn in world space with the view's own matrices, after the
-//! world and against its depth, so walls and players in front hide them.
+//! world's solid surfaces and against their depth, so walls and players in front hide them; the
+//! colour pass draws them before its effects (see [`CsWorldModelDraw`]), so smoke and other
+//! see-through effects cover them as they cover MW2's players.
 //!
 //! A skinned instance (a CS:GO player body) brings its bones' model-space matrices: its vertices
 //! stay in bind space and blend up to four bones on the GPU before the world placement.
@@ -14,6 +16,7 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 
 use bevy::core_pipeline::{Core3d, Core3dSystems};
+use bevy::ecs::system::SystemParam;
 use bevy::mesh::VertexBufferLayout;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
@@ -24,10 +27,12 @@ use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
     BufferBinding, BufferDescriptor, BufferInitDescriptor, BufferUsages, ColorTargetState,
     ColorWrites, CompareFunction, DepthStencilState, FragmentState, FrontFace, MultisampleState,
-    PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType, ShaderStages,
+    CommandEncoder, PipelineCache, PrimitiveState, RenderPassDescriptor, RenderPipelineDescriptor,
+    SamplerBindingType, ShaderStages,
     SpecializedRenderPipeline, SpecializedRenderPipelines, StoreOp, TextureFormat,
     TextureSampleType, TextureViewId, VertexAttribute, VertexFormat, VertexState, VertexStepMode,
 };
+use bevy::render::render_phase::TrackedRenderPass;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::texture::GpuImage;
 use bevy::render::view::{
@@ -74,17 +79,17 @@ pub struct CsWorldModelsFrame {
 }
 
 #[derive(Resource, Default)]
-struct ExtractedCsWorldModels(CsWorldModelsFrame);
+pub(super) struct ExtractedCsWorldModels(CsWorldModelsFrame);
 
 #[derive(Resource)]
-struct CsWorldModelPipeline {
+pub(super) struct CsWorldModelPipeline {
     shader: Handle<Shader>,
     view_layout: BindGroupLayoutDescriptor,
     mesh_layout: BindGroupLayoutDescriptor,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct CsWorldModelPipelineKey {
+pub(super) struct CsWorldModelPipelineKey {
     target: TextureFormat,
     samples: u32,
     fullbright: bool,
@@ -95,7 +100,7 @@ struct CsWorldModelPipelineKey {
 /// offset) and their bone palettes in one storage buffer after the one-bone identity palette that
 /// rigid instances use; the mesh bind groups by texture, kept while those buffers are.
 #[derive(Resource, Default)]
-struct CsWorldModelGpu {
+pub(super) struct CsWorldModelGpu {
     vertices: HashMap<u64, Buffer>,
     /// Each extracted instance's offset into `uniforms`.
     offsets: Vec<u32>,
@@ -127,7 +132,7 @@ fn ensure_buffer(
 }
 
 #[derive(Component)]
-struct CsWorldModelViewBind(BindGroup);
+pub(super) struct CsWorldModelViewBind(BindGroup);
 
 impl SpecializedRenderPipeline for CsWorldModelPipeline {
     type Key = CsWorldModelPipelineKey;
@@ -404,6 +409,57 @@ fn prepare_views(
     }
 }
 
+/// Set once the colour pass has drawn this view's models before its effects, so
+/// [`draw_cs_world_models`] after it doesn't draw them again.
+#[derive(Resource, Default)]
+pub(super) struct CsWorldModelsDrawn(bool);
+
+/// The view parts drawing the models takes.
+pub(super) struct CsWorldModelView<'a> {
+    pub target: &'a ViewTarget,
+    pub depth: &'a SceneDepthTexture,
+    pub extracted_view: &'a ExtractedView,
+    pub view_offset: &'a ViewUniformOffset,
+    pub samples: u32,
+    pub view_bind: &'a CsWorldModelViewBind,
+}
+
+/// Drawing the models, for the colour pass to do between the world's solid surfaces and its
+/// effects (smoke, sprites, glass): those then cover a model behind them.
+#[derive(SystemParam)]
+pub(super) struct CsWorldModelDraw<'w> {
+    extracted: Res<'w, ExtractedCsWorldModels>,
+    pipeline: Option<Res<'w, CsWorldModelPipeline>>,
+    gpu: Res<'w, CsWorldModelGpu>,
+    specialized: ResMut<'w, SpecializedRenderPipelines<CsWorldModelPipeline>>,
+    cache: Res<'w, PipelineCache>,
+    images: Res<'w, RenderAssets<GpuImage>>,
+    drawn: ResMut<'w, CsWorldModelsDrawn>,
+}
+
+impl CsWorldModelDraw<'_> {
+    /// Records the models into `encoder`; the pass after the colour pass then skips them.
+    pub(super) fn record(
+        &mut self,
+        device: &RenderDevice,
+        encoder: &mut CommandEncoder,
+        view: &CsWorldModelView<'_>,
+    ) {
+        self.drawn.0 = true;
+        record_cs_world_models(
+            &self.extracted,
+            self.pipeline.as_deref(),
+            &self.gpu,
+            &mut self.specialized,
+            &self.cache,
+            &self.images,
+            device,
+            encoder,
+            view,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_cs_world_models(
     view: ViewQuery<(
@@ -420,12 +476,61 @@ fn draw_cs_world_models(
     mut specialized: ResMut<SpecializedRenderPipelines<CsWorldModelPipeline>>,
     cache: Res<PipelineCache>,
     images: Res<RenderAssets<GpuImage>>,
+    mut drawn: ResMut<CsWorldModelsDrawn>,
+    device: Res<RenderDevice>,
     mut context: RenderContext,
 ) {
+    // The colour pass drew them already, before its effects.
+    if std::mem::take(&mut drawn.0) {
+        return;
+    }
     let (target, depth, extracted_view, view_offset, msaa, view_bind) = view.into_inner();
-    let (Some(pipeline), Some(view_bind)) = (pipeline, view_bind) else {
+    let Some(view_bind) = view_bind else {
         return;
     };
+    record_cs_world_models(
+        &extracted,
+        pipeline.as_deref(),
+        &gpu,
+        &mut specialized,
+        &cache,
+        &images,
+        &device,
+        context.command_encoder(),
+        &CsWorldModelView {
+            target,
+            depth,
+            extracted_view,
+            view_offset,
+            samples: msaa.samples(),
+            view_bind,
+        },
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_cs_world_models(
+    extracted: &ExtractedCsWorldModels,
+    pipeline: Option<&CsWorldModelPipeline>,
+    gpu: &CsWorldModelGpu,
+    specialized: &mut SpecializedRenderPipelines<CsWorldModelPipeline>,
+    cache: &PipelineCache,
+    images: &RenderAssets<GpuImage>,
+    device: &RenderDevice,
+    encoder: &mut CommandEncoder,
+    view: &CsWorldModelView<'_>,
+) {
+    let Some(pipeline) = pipeline else {
+        return;
+    };
+    let &CsWorldModelView {
+        target,
+        depth,
+        extracted_view,
+        view_offset,
+        samples,
+        view_bind,
+    } = view;
     if extracted.0.instances.is_empty() || gpu.offsets.len() != extracted.0.instances.len() {
         return;
     }
@@ -439,11 +544,11 @@ fn draw_cs_world_models(
                 continue;
             };
             let id = specialized.specialize(
-                &cache,
-                &pipeline,
+                cache,
+                pipeline,
                 CsWorldModelPipelineKey {
                     target: extracted_view.target_format,
-                    samples: msaa.samples(),
+                    samples,
                     fullbright: !draw.shading.is_lit(),
                     overlay: instance.overlay,
                 },
@@ -461,15 +566,17 @@ fn draw_cs_world_models(
         return;
     }
     let attachments = [Some(target.get_color_attachment())];
-    let mut pass =
-        context.begin_tracked_render_pass(bevy::render::render_resource::RenderPassDescriptor {
+    let mut pass = TrackedRenderPass::new(
+        device,
+        encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("cs_world_model_pass"),
             color_attachments: &attachments,
             depth_stencil_attachment: Some(depth.get_attachment(StoreOp::Store)),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
-        });
+        }),
+    );
     // The world's own slice of the depth range (the viewmodel has the rest).
     let viewport = extracted_view.viewport;
     let (min_depth, max_depth) = reverse_z_viewport_depth(GFX_DEPTH_RANGE_SCENE);
@@ -502,6 +609,7 @@ pub(super) fn register(app: &mut App) {
     render_app
         .init_resource::<ExtractedCsWorldModels>()
         .init_resource::<CsWorldModelGpu>()
+        .init_resource::<CsWorldModelsDrawn>()
         .init_resource::<SpecializedRenderPipelines<CsWorldModelPipeline>>()
         .add_systems(RenderStartup, init_pipeline)
         .add_systems(ExtractSchedule, extract_cs_world_models)
