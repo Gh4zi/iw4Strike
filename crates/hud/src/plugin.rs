@@ -337,12 +337,16 @@ fn sync_frontend_camera(
             // The Bevy UI gets a 2D camera of its own, as in a match: drawn by the menu's 3D
             // camera it landed on the menus' gamma-encoded target and came out too dark (the CS2
             // console's grey window showed black).
+            // It clears to transparent every frame: its target texture is reused from the
+            // render texture cache, and right after a load that is the loading screen's, still
+            // filled with its opaque colour. Loading that (no clear) covered the menu for good,
+            // as when a join is refused while the map loads.
             commands.spawn((
                 FrontendCamera,
                 Camera2d,
                 Camera {
                     order: 0,
-                    clear_color: ClearColorConfig::None,
+                    clear_color: ClearColorConfig::Custom(Color::NONE),
                     ..default()
                 },
                 frame::UiCamera,
