@@ -80,6 +80,12 @@ impl MatchDescriptor {
 
 pub const MAX_PACKET_BYTES: u32 = 256 * 1024;
 
+/// The most a compressed snapshot may expand to. A packet stays within [`MAX_PACKET_BYTES`];
+/// what it holds can be larger: a joining player's first full snapshot of Strike (2,000 dynamic
+/// entities, 221 glass panes) decoded to more than a packet's 256 KiB and was refused, so
+/// nobody could join a Strike server. Still a bound, so a bad packet cannot ask for gigabytes.
+pub const MAX_DECODED_SNAPSHOT_BYTES: u32 = 8 * 1024 * 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProtocolLimits {
     pub authority_hz: u32,
@@ -622,7 +628,7 @@ impl ServerPacket {
                 let snapshot_seq = input.get_u32()?;
                 let decoded_len = if tag == TAG_SERVER_COMPRESSED_SNAPSHOT {
                     let len = input.get_u32()? as usize;
-                    if len > MAX_PACKET_BYTES as usize {
+                    if len > MAX_DECODED_SNAPSHOT_BYTES as usize {
                         return Err(WireError::Malformed("snapshot exceeds decoded size limit"));
                     }
                     Some(len)

@@ -340,9 +340,17 @@ pub struct RoomView {
     pub requires: ContentFlags,
     pub available: ContentFlags,
     pub password_protected: bool,
+    /// The host is a dedicated server: a member that is not a player. The master's own record
+    /// (from `CreateRoom`); not sent to clients.
+    pub dedicated: bool,
 }
 
 impl RoomView {
+    /// Members that are players: all of them, less a dedicated server hosting.
+    pub fn player_count(&self) -> usize {
+        self.members.len().saturating_sub(usize::from(self.dedicated))
+    }
+
     pub fn advert(&self) -> Advert {
         Advert {
             id: self.room_id,
@@ -353,7 +361,7 @@ impl RoomView {
                 .unwrap_or_else(|| self.name.clone()),
             map: self.map.clone(),
             mode: self.mode.clone(),
-            players: u8::try_from(self.members.len()).unwrap_or(MAX_SESSION_MEMBERS),
+            players: u8::try_from(self.player_count()).unwrap_or(MAX_SESSION_MEMBERS),
             max_players: self.max_players,
             locked: !self.joinable,
             in_match: self.phase.in_match(),
@@ -408,6 +416,9 @@ pub enum RequestBody {
         requires: ContentFlags,
         available: ContentFlags,
         password: String,
+        /// The host is a dedicated server (`serve`), not a player. Sent only when true, as one
+        /// byte after the password, so a listen host's request is what it always was.
+        dedicated: bool,
     },
     JoinRoom {
         room_id: AdvertId,
@@ -857,6 +868,7 @@ fn encode_request_body(body: &RequestBody) -> Result<Vec<u8>, ProtocolError> {
             requires,
             available,
             password,
+            dedicated,
         } => {
             validate_advert(name, map, mode, *max_players)?;
             out.u8(TAG_CREATE_ROOM);
@@ -867,6 +879,9 @@ fn encode_request_body(body: &RequestBody) -> Result<Vec<u8>, ProtocolError> {
             out.u8(requires.0);
             out.u8(available.0);
             out.string(password, MAX_PASSWORD_BYTES)?;
+            if *dedicated {
+                out.u8(1);
+            }
         }
         RequestBody::JoinRoom {
             room_id,
@@ -985,6 +1000,7 @@ fn decode_request_body(body: &mut Reader<'_>) -> Result<RequestBody, ProtocolErr
             let requires = ContentFlags(body.u8()?);
             let available = ContentFlags(body.u8()?);
             let password = body.string(MAX_PASSWORD_BYTES)?;
+            let dedicated = body.remaining() > 0 && bool_byte(body.u8()?)?;
             validate_advert(&name, &map, &mode, max_players)?;
             RequestBody::CreateRoom {
                 name,
@@ -994,6 +1010,7 @@ fn decode_request_body(body: &mut Reader<'_>) -> Result<RequestBody, ProtocolErr
                 requires,
                 available,
                 password,
+                dedicated,
             }
         }
         TAG_JOIN_ROOM => RequestBody::JoinRoom {
@@ -1248,6 +1265,7 @@ fn decode_room_view(body: &mut Reader<'_>) -> Result<RoomView, ProtocolError> {
         requires,
         available,
         password_protected,
+        dedicated: false,
     })
 }
 
@@ -1614,6 +1632,10 @@ impl<'a> Reader<'a> {
         let value =
             core::str::from_utf8(self.take(len)?).map_err(|_| ProtocolError::InvalidUtf8)?;
         Ok(value.to_owned())
+    }
+
+    fn remaining(&self) -> usize {
+        self.bytes.len() - self.cursor
     }
 
     fn finish(self) -> Result<(), ProtocolError> {

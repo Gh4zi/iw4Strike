@@ -633,6 +633,7 @@ fn gather_authority_input(
     mut reliable: ResMut<crate::ReliableEventHub>,
     gate: Res<AuthorityInputGate>,
     local: Option<Res<LocalPresentClient>>,
+    role: Res<RuntimeRole>,
     mut pending: ResMut<PendingAuthorityInput>,
     mut pending_acks: ResMut<PendingAcks>,
     trace: Option<ResMut<AuthorityPhaseTrace>>,
@@ -678,6 +679,12 @@ fn gather_authority_input(
     // `ClientCommandInbox::backlog_fault` retires the peer for a stall the
     // authority itself caused. Drain on every tick the match is live, and drop
     // only what the local client is not yet allowed to contribute.
+    inbox.set_local_client(
+        local
+            .as_ref()
+            .filter(|_| *role == RuntimeRole::Listen)
+            .map(|local| local.0),
+    );
     let gathered = inbox.take_for_tick(clock.time_ms);
 
     samples.0.clear();
@@ -761,6 +768,7 @@ fn run_step(
         sim::StepReason::AuthorityFrame,
     );
     perf::Counter::AuthorityStepMs.emit(started.elapsed().as_secs_f64() * 1000.0);
+    crate::net_graph::note_authority_step(started, started.elapsed());
     perf::Counter::AuthorityStepN.emit(1.0);
     if let Some(cpu) = cpu_started
         .zip(diag::thread_cpu_ns())

@@ -289,6 +289,8 @@ struct HostConfig {
     max_players: u8,
     requires: ContentFlags,
     have: ContentFlags,
+    /// Hosted by a dedicated server: the master does not count it as a player.
+    dedicated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -347,6 +349,7 @@ impl MasterLaunchIntent {
                     max_players: parse_max_players()?,
                     requires,
                     have,
+                    dedicated: false,
                 })))
             }
             (None, Some(advert_id)) => Ok(Self(MasterLaunchMode::Join(JoinConfig {
@@ -362,6 +365,14 @@ impl MasterLaunchIntent {
             }
             _ => Err("community master requires IW4L_MASTER_HOST_NAME or IW4L_MASTER_JOIN".into()),
         }
+    }
+
+    /// The room this process hosts is a dedicated server's (`serve`): no player of its own.
+    pub fn for_dedicated_server(mut self) -> Self {
+        if let MasterLaunchMode::Host(config) = &mut self.0 {
+            config.dedicated = true;
+        }
+        self
     }
 
     pub const fn is_join(&self) -> bool {
@@ -814,7 +825,7 @@ pub fn arm_master_bridge(
     match &intent.0 {
         MasterLaunchMode::Disabled | MasterLaunchMode::Browser(_) => {}
         MasterLaunchMode::Host(config) => {
-            if *role != frame::RuntimeRole::Listen || udp_hub.is_some() {
+            if !role.runs_authority() || udp_hub.is_some() {
                 return;
             }
             let relay = spawn_host(config.clone(), settings.player_name.clone());
@@ -996,6 +1007,7 @@ fn apply_master_menu_action(
                 },
                 requires,
                 have: browser.have,
+                dedicated: false,
             });
             *role = frame::RuntimeRole::Listen;
         }
@@ -1723,6 +1735,7 @@ async fn session_main(
                 requires: config.requires,
                 available: config.have,
                 password: config.password.clone(),
+                dedicated: config.dedicated,
             },
         }
     } else {

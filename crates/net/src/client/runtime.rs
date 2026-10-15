@@ -522,6 +522,7 @@ pub fn reconcile_prediction(
     mut entity_events: ResMut<PendingPresentedEntityEvents>,
     mut pellet_fx: ResMut<PendingPelletFx>,
     trace: Option<ResMut<ClientPhaseTrace>>,
+    mut net_graph: ResMut<crate::NetGraphStats>,
 ) {
     push_phase(trace, "Reconcile");
     last_adopted.applied_this_frame = false;
@@ -539,6 +540,7 @@ pub fn reconcile_prediction(
         let ack = tick.ack_for(local.0);
         if let Some(acked) = ack {
             pending.clear_acknowledged(acked);
+            net_graph.note_ack(acked.0);
         }
         last_adopted.applied_this_frame = true;
         if let Some(old_next) = last_adopted.next_snap.take() {
@@ -1572,6 +1574,7 @@ pub fn send_pending_commands(
     pending: Res<PendingClientSends>,
     local: Res<LocalPresentClient>,
     trace: Option<ResMut<ClientPhaseTrace>>,
+    mut net_graph: ResMut<crate::NetGraphStats>,
 ) {
     push_phase(trace, "Send");
     if let Some(mut link) = link {
@@ -1603,6 +1606,7 @@ pub fn send_pending_commands(
             diag::warn!(Net, "udp send cmds: {e}");
             return;
         }
+        net_graph.note_send(window.iter().map(|(seq, ..)| seq.0).max());
         if let Some(inbox) = action_inbox.as_deref_mut() {
             for action in &actions {
                 inbox.mark_dispatched(local.0, sim::action_request_id(action));
@@ -1627,6 +1631,7 @@ pub fn send_pending_commands(
     for (seq, cmd, sample) in pending.iter().copied() {
         inbox.push(local.0, Some(seq), cmd, Some(sample));
     }
+    net_graph.note_send(pending.newest_seq().map(|seq| seq.0));
 }
 
 pub const MAX_GAMEPLAY_SENDS_PER_SEC: i32 = 60;
@@ -2049,37 +2054,7 @@ pub fn register_client_runtime(app: &mut App) {
             .before(predict_local_move)
             .after(reconcile_prediction),
     );
-    app.init_resource::<crate::SignonState>()
-        .init_resource::<crate::ClientAdmission>()
-        .init_resource::<ClientPredictionState>()
-        .init_resource::<ClientClock>()
-        .init_resource::<FrameClock>()
-        .init_resource::<GameActive>()
-        .init_resource::<GameJoinCensus>()
-        .init_resource::<ClientRealtime>()
-        .init_resource::<ReceivedTicks>()
-        .init_resource::<LastAdoptedSnapshot>()
-        .init_resource::<PresentLocalCensus>()
-        .init_resource::<PendingPresentedEntityEvents>()
-        .init_resource::<PendingPelletFx>()
-        .init_resource::<PendingClientSends>()
-        .init_resource::<ClientCmdTemplate>()
-        .init_resource::<WeaponSelect>()
-        .init_resource::<LocationCursor>()
-        .init_resource::<ClientReliableAck>()
-        .init_resource::<GameplaySendPacer>()
-        .add_message::<ReliableControlEvent>()
-        .add_message::<frame::MatchInstalled>()
-        .add_message::<frame::MatchTornDown>()
-        .init_resource::<RemoteProxyState>()
-        .init_resource::<ClientShotSamples>()
-        .init_resource::<crate::Scoreboard>()
-        .add_message::<crate::SvcLocalSound>()
-        .add_message::<crate::SvcScriptAudio>()
-        .add_message::<crate::SvcCardSlotCmd>()
-        .add_message::<crate::SvcOpenMenuCmd>()
-        .add_message::<crate::SvcHudSplash>()
-        .add_message::<crate::SvcGameNotify>();
+    register_client_state(app);
     crate::client::frame_census::register_update_phase_census(app);
     app.configure_sets(
         Update,
@@ -2103,15 +2078,6 @@ pub fn register_client_runtime(app: &mut App) {
                 .in_set(ClientSet::Reconcile)
                 .after(reconcile_prediction),
             receive_ticks.in_set(ClientSet::Receive),
-            crate::signon::drive_client_admission_facts
-                .in_set(ClientSet::Receive)
-                .after(receive_ticks),
-            crate::signon::drive_signon
-                .in_set(ClientSet::Receive)
-                .after(crate::signon::drive_client_admission_facts),
-            crate::signon::drive_map_loaded
-                .in_set(ClientSet::Receive)
-                .after(crate::signon::drive_client_admission_facts),
             reconcile_prediction.in_set(ClientSet::Reconcile),
             flush_bootstrap_applied
                 .in_set(ClientSet::Reconcile)
@@ -2125,6 +2091,64 @@ pub fn register_client_runtime(app: &mut App) {
             publish_presented.in_set(ClientSet::Present),
         ),
     );
+    register_signon(app);
+}
+
+/// The session's sign-on steps: a joining client's admission, and a host's (listen or
+/// dedicated) "map loaded" and "world ready" to the master, which opens the room.
+pub fn register_signon(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            crate::signon::drive_client_admission_facts
+                .in_set(ClientSet::Receive)
+                .after(receive_ticks),
+            crate::signon::drive_signon
+                .in_set(ClientSet::Receive)
+                .after(crate::signon::drive_client_admission_facts),
+            crate::signon::drive_map_loaded
+                .in_set(ClientSet::Receive)
+                .after(crate::signon::drive_client_admission_facts),
+        ),
+    );
+}
+
+/// The client side's state without its systems. A dedicated server has no local player, but the
+/// session's install and admission state lives here (the server opens its room once the map is
+/// installed), and the HUD, effects and menus read the rest: empty, they idle.
+pub fn register_client_state(app: &mut App) {
+    app.init_resource::<crate::SignonState>()
+        .init_resource::<crate::ClientAdmission>()
+        .init_resource::<ClientPredictionState>()
+        .init_resource::<ClientClock>()
+        .init_resource::<FrameClock>()
+        .init_resource::<GameActive>()
+        .init_resource::<GameJoinCensus>()
+        .init_resource::<ClientRealtime>()
+        .init_resource::<ReceivedTicks>()
+        .init_resource::<LastAdoptedSnapshot>()
+        .init_resource::<PresentLocalCensus>()
+        .init_resource::<PendingPresentedEntityEvents>()
+        .init_resource::<PendingPelletFx>()
+        .init_resource::<PendingClientSends>()
+        .init_resource::<crate::NetGraphStats>()
+        .init_resource::<ClientCmdTemplate>()
+        .init_resource::<WeaponSelect>()
+        .init_resource::<LocationCursor>()
+        .init_resource::<ClientReliableAck>()
+        .init_resource::<GameplaySendPacer>()
+        .add_message::<ReliableControlEvent>()
+        .add_message::<frame::MatchInstalled>()
+        .add_message::<frame::MatchTornDown>()
+        .init_resource::<RemoteProxyState>()
+        .init_resource::<ClientShotSamples>()
+        .init_resource::<crate::Scoreboard>()
+        .add_message::<crate::SvcLocalSound>()
+        .add_message::<crate::SvcScriptAudio>()
+        .add_message::<crate::SvcCardSlotCmd>()
+        .add_message::<crate::SvcOpenMenuCmd>()
+        .add_message::<crate::SvcHudSplash>()
+        .add_message::<crate::SvcGameNotify>();
 }
 
 pub fn register_listen_prediction_arm(app: &mut App) {

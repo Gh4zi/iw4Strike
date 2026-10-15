@@ -140,7 +140,9 @@ pub fn register_local_arm_systems(app: &mut App) {
             arm_local_from_presented.after(ClassEquipResolved),
             join_local_on_class_select,
         )
-            .in_set(ClientSet::Present),
+            .in_set(ClientSet::Present)
+            // A dedicated server has no player of its own to join or arm.
+            .run_if(not(resource_exists::<frame::Headless>)),
     )
     .add_systems(
         Update,

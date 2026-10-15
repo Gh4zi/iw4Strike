@@ -1227,7 +1227,9 @@ pub fn register_fpv_present_systems(app: &mut App) {
                     .before(occupy_fpv_scene),
                 super::cs_viewmodel::cs_zoom_sound.after(PresentedPublished),
                 super::cs_scope::update_cs_scope.after(PresentedPublished),
-            ),
+            )
+                // A dedicated server has no first-person view to load models for.
+                .run_if(not(resource_exists::<frame::Headless>)),
         )
         .init_resource::<PreparedFpv>()
         .init_resource::<crate::anim::model_materials::PreparedModelMaterials>()

@@ -93,7 +93,9 @@ impl Plugin for RenderPreparePlugin {
                 Update,
                 (
                     arm_world_spawn_on_install.before(spawn_world),
-                    spawn_world,
+                    // A dedicated server never draws: no textures or shaders reach the GPU, and
+                    // with no world camera the per-frame scene work has nothing to do.
+                    spawn_world.run_if(not(resource_exists::<frame::Headless>)),
                     spawn_world_finish.after(spawn_world),
                     render_anim::prepare_fpv_compositions.after(spawn_world_finish),
                     render_anim::prepare_model_materials.after(spawn_world_finish),

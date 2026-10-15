@@ -32,19 +32,20 @@ pub fn set_smoke_mode(mode: u32) {
     SMOKE_MODE.store(mode, Ordering::Relaxed);
 }
 
-/// Tells clients this server's movement cheats (the server info `always_edgebug` and
-/// `always_pixelsurf`, "1" or "0"): theirs follow it, so their prediction moves as the server
-/// does and none turns them on for themselves.
+/// Tells clients this server's movement (the server info `mv_mode`, and its cheats
+/// `always_edgebug`, `always_pixelsurf` and `sv_autobunnyhop`, "1" or "0"): theirs follow it, so
+/// their prediction moves as the server does and none turns a cheat on for themselves.
 pub(crate) fn publish_movement_cheats(world: &mut crate::frame::FrameWorld) {
     let Some(mut runtime) = world.ecs().get_resource_mut::<crate::script::Runtime>() else {
         return;
     };
-    for (name, on) in [
-        ("always_edgebug", movement_iw4::rules::always_edgebug()),
-        ("always_pixelsurf", movement_iw4::rules::always_pixelsurf()),
-        ("sv_autobunnyhop", movement_iw4::rules::auto_bunnyhop()),
+    let on = |on: bool| if on { "1" } else { "0" };
+    for (name, value) in [
+        ("mv_mode", movement_iw4::rules::mode().name()),
+        ("always_edgebug", on(movement_iw4::rules::always_edgebug())),
+        ("always_pixelsurf", on(movement_iw4::rules::always_pixelsurf())),
+        ("sv_autobunnyhop", on(movement_iw4::rules::auto_bunnyhop())),
     ] {
-        let value = if on { "1" } else { "0" };
         if runtime.dvars.get(name).map(String::as_str) != Some(value)
             || !runtime.server_info.contains(name)
         {
@@ -81,6 +82,13 @@ pub(crate) const DESTRUCTIBLE_TARGETNAMES: [&str; 5] = [
     "explodable_barrel",
     "flammable_crate",
 ];
+
+/// Whether `name` is a destructible's targetname: one of [`DESTRUCTIBLE_TARGETNAMES`], or a
+/// map's own variant of one (the DLC maps' `destructible_vehicle_dlc2`).
+pub(crate) fn is_destructible_targetname(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    DESTRUCTIBLE_TARGETNAMES.iter().any(|t| name == *t) || name.starts_with("destructible")
+}
 
 /// Map entities MW2's scripts break that have no destructible targetname, by model: the
 /// vending machines `common_scripts/_dynamic_world` wrecks (sparks, a damaged model, a burst of

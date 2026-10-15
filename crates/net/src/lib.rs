@@ -5,6 +5,8 @@ pub use account_identity::{AccountChallenge, AccountIdentityError, AccountKey, A
 pub mod authority;
 pub mod client;
 pub mod gaps;
+pub mod net_graph;
+pub use net_graph::NetGraphStats;
 mod observe;
 pub mod plugin;
 pub mod policy;
@@ -173,4 +175,4 @@ pub use transport::wire::{WireError, WireReader, WireWriter};
 
 pub use svc_script_audio::SvcScriptAudio;
 
-pub const PROTOCOL_VERSION: u32 = 104;
+pub const PROTOCOL_VERSION: u32 = 105;

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use asset_iw4::{
@@ -801,6 +801,19 @@ impl Drop for Flight {
 /// `ComputeTaskPool` is the frame's pool, with its own thread count and its
 /// own affinity; a load stage that decodes on it runs on the frame's threads
 /// and competes with the frame for them.
+/// Set once by a process that never draws (a dedicated server): no texture pixels are read or
+/// decoded, so its map load neither waits for them nor holds them. Its materials are left
+/// without images, as a map's missing ones are.
+static SKIP_PIXELS: AtomicBool = AtomicBool::new(false);
+
+pub fn skip_pixel_decode() {
+    SKIP_PIXELS.store(true, Ordering::Relaxed);
+}
+
+fn pixels_skipped() -> bool {
+    SKIP_PIXELS.load(Ordering::Relaxed)
+}
+
 fn decode_requests_in_parallel(
     images: &[AuthoredImage],
     index: &IwdIndex,
@@ -808,7 +821,7 @@ fn decode_requests_in_parallel(
     stage: &StageHandle,
     pool: &TaskPool,
 ) -> Vec<ImageOutcome> {
-    if work.is_empty() {
+    if work.is_empty() || pixels_skipped() {
         return Vec::new();
     }
     let chunk_size = work.len().div_ceil(pool.thread_num().max(1)).clamp(1, 64);
@@ -2499,6 +2512,11 @@ impl ImageDemandPlan {
     ) -> DecodedImageBatch {
         if self.demands.is_empty() {
             return DecodedImageBatch::default();
+        }
+        if pixels_skipped() {
+            let mut batch = DecodedImageBatch::default();
+            batch.plan = Some(self.id);
+            return batch;
         }
         let (outstanding, waited) = wait_for_decode_budget();
         job.decode_started(outstanding, waited);

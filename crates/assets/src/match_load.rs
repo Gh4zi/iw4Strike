@@ -72,9 +72,11 @@ fn start_match_load(
     busy: Option<Res<MatchLoadTask>>,
     retiring: Option<Res<frame::Retiring>>,
     abort: Option<Res<MatchLoadAbort>>,
+    headless: Option<Res<frame::Headless>>,
     mut waiting_for_retirement: Local<Option<u64>>,
     mut inflight: ResMut<MatchLoadBusy>,
 ) {
+    let headless = headless.is_some();
     let Some(request) = request else {
         return;
     };
@@ -162,6 +164,16 @@ fn start_match_load(
                             release_dropped_weapon_sounds(&prepared.weapons, &mut catalog);
                         }
                         prepared.script_sound_aliases = Some(catalog.script_alias_looping());
+                        if headless {
+                            // A dedicated server plays nothing: the names stay (the scripts and
+                            // the sounds it tells clients to play use them), the audio goes.
+                            let freed = catalog.release_audio();
+                            diag::info!(
+                                Audio,
+                                "dedicated: {:.1} MiB of loaded sound freed",
+                                freed as f64 / 1048576.0
+                            );
+                        }
                         Ok(catalog)
                     }
                     _ => Err("no launch identity or map path to compose the sound bank".into()),

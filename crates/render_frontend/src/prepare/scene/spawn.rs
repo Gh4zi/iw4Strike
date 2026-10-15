@@ -950,6 +950,29 @@ pub(crate) fn despawn_fly_cameras_on_teardown(
     }
 }
 
+/// A dedicated server never spawns the world (`spawn_world` does not run there), so the map's
+/// decoded textures, lightmaps and reflection probes the install handed the scene are only
+/// memory: they are dropped as soon as they arrive.
+pub(crate) fn drop_world_images_when_headless(mut scene: ResMut<WorldScene>) {
+    if scene.exact_material_images.iter().all(Option::is_none)
+        && scene.lightmaps.iter().all(Option::is_none)
+        && scene.reflection_probes.iter().all(Option::is_none)
+    {
+        return;
+    }
+    let images = scene.exact_material_images.iter().flatten().count();
+    for image in &mut scene.exact_material_images {
+        *image = None;
+    }
+    for lightmap in &mut scene.lightmaps {
+        *lightmap = None;
+    }
+    for probe in &mut scene.reflection_probes {
+        *probe = None;
+    }
+    diag::info!(World, "dedicated: dropped {images} world textures, the lightmaps and probes");
+}
+
 pub(crate) fn arm_world_spawn_on_install(
     mut installed: MessageReader<MatchInstalled>,
     mut job: ResMut<WorldSpawnJob>,
@@ -973,6 +996,12 @@ pub(crate) fn register_world_gpu_ready(app: &mut App) {
     super::world_gpu::register_resources(app);
     app.init_resource::<super::world_images::ResidentGpuImages>();
     app.add_systems(Update, supply_requested_shaders.before(spawn_world));
+    app.add_systems(
+        Update,
+        drop_world_images_when_headless
+            .after(spawn_world)
+            .run_if(resource_exists::<frame::Headless>),
+    );
     let present_ack = WorldPresentAck::default();
     app.insert_resource(present_ack.clone());
     let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {

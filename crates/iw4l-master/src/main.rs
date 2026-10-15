@@ -804,16 +804,20 @@ async fn handle_request(
             requires,
             available,
             password,
+            dedicated,
         } => create_room(
             &mut state,
             connection_id,
-            name,
-            map,
-            mode,
-            max_players,
-            requires,
-            available,
-            password,
+            RoomRequest {
+                name,
+                map,
+                mode,
+                max_players,
+                requires,
+                available,
+                password,
+                dedicated,
+            },
         ),
         RequestBody::JoinRoom {
             room_id,
@@ -939,9 +943,8 @@ async fn handle_request(
     }
 }
 
-fn create_room(
-    state: &mut ServiceState,
-    connection_id: u64,
+/// What a host asks for in `CreateRoom`.
+struct RoomRequest {
     name: String,
     map: String,
     mode: String,
@@ -949,7 +952,24 @@ fn create_room(
     requires: master_protocol::ContentFlags,
     available: master_protocol::ContentFlags,
     password: String,
+    dedicated: bool,
+}
+
+fn create_room(
+    state: &mut ServiceState,
+    connection_id: u64,
+    request: RoomRequest,
 ) -> (ResponseBody, Vec<(u64, ControlFrame)>) {
+    let RoomRequest {
+        name,
+        map,
+        mode,
+        max_players,
+        requires,
+        available,
+        password,
+        dedicated,
+    } = request;
     if state.membership.contains_key(&connection_id) {
         return (
             ResponseBody::Error(ServiceError::AlreadyHosting),
@@ -980,6 +1000,7 @@ fn create_room(
         requires,
         available,
         password_protected: !password.is_empty(),
+        dedicated,
     };
     let mut member_of = HashMap::new();
     member_of.insert(connection_id, member_id);
@@ -1055,7 +1076,10 @@ fn join_room(
             Vec::new(),
         );
     }
-    if room.view.members.len() >= room.view.max_players as usize {
+    // A dedicated server's room holds its players besides the server itself.
+    let capacity = (room.view.max_players as usize + usize::from(room.view.dedicated))
+        .min(master_protocol::MAX_SESSION_MEMBERS as usize);
+    if room.view.members.len() >= capacity {
         return (ResponseBody::Error(ServiceError::Full), Vec::new());
     }
     let member_id = MemberId(random_bytes());

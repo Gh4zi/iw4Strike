@@ -12,16 +12,23 @@ pub(crate) fn say(world: &mut FrameWorld, id: ClientId, text: &str) {
     if text.is_empty() {
         return;
     }
-    let Some(meta) = world.client_meta(id) else {
-        return;
+    // No named player behind the line: the server's own console (a dedicated server's `say`,
+    // sent as the slot it keeps for a local player it does not have). Players and bots name
+    // themselves when they join.
+    let named = world
+        .client_meta(id)
+        .and_then(|meta| entity_iw4::client_state_name(&meta.name).map(|name| (name, meta)));
+    let (name, team) = match named {
+        Some((name, meta)) => {
+            let name = if meta.lifecycle == ClientLifecycle::Alive {
+                name.to_owned()
+            } else {
+                format!("*DEAD* {name}")
+            };
+            (name, meta.client_state_team)
+        }
+        None => ("Console".to_owned(), 0),
     };
-    let name = entity_iw4::client_state_name(&meta.name).unwrap_or("Player");
-    let name = if meta.lifecycle == ClientLifecycle::Alive {
-        name.to_owned()
-    } else {
-        format!("*DEAD* {name}")
-    };
-    let team = meta.client_state_team;
     diag::info!(Sim, "say: client {} {name}: {text}", id.0);
     world.push_print(PendingPrint {
         recipient: None,

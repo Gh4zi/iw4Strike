@@ -246,7 +246,8 @@ fn apply_actions_system(world: &mut World) {
     for (id, action) in &actions {
         if action_needs_player_row(action) {
             let _ = frame.ensure_player(*id);
-        } else {
+        } else if !matches!(action, ClientAction::Say { .. }) {
+            // A line of chat makes no client: one with no row is the server's own console.
             let _ = frame.client_meta_mut(*id);
         }
     }

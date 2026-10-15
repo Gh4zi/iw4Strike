@@ -80,6 +80,18 @@ impl Plugin for NetPlugin {
             crate::client::presentation::entities::register_client_entities(app);
             crate::client::presentation::entity_event_dispatch::register_entity_event_dispatch(app);
         }
+        if self.role == RuntimeRole::Dedicated {
+            // No local player, but the session's sign-on (which opens the room to players) and
+            // the state the HUD, effects and menus read: empty, those systems idle.
+            configure_client_sets(app);
+            app.init_resource::<crate::client::input::LookState>()
+                .init_resource::<crate::client::input::ClientActionInput>()
+                .init_resource::<crate::client::presentation::entity_event_dispatch::EntityEventCursor>()
+                .init_resource::<crate::client::presentation::entity_event_dispatch::WeaponFirePingBus>()
+                .init_resource::<crate::client::frame_census::UpdatePhaseCensus>();
+            crate::client::runtime::register_client_state(app);
+            crate::client::runtime::register_signon(app);
+        }
 
         crate::authority::runtime::register_listen_runtime(app);
         if self.role == RuntimeRole::Listen

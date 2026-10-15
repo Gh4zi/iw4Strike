@@ -27,9 +27,10 @@ use crate::transport::wire::WireReader;
 
 use super::account_wire::{AccountMessage, profile_payload};
 
-// Packets waiting each way between the master relay and the game: several seconds of a 128 tick
-// match's traffic, so a hitch on either side delays a player's commands instead of dropping a run
-// of them (the server then waited for a command that never came and dropped the player).
+// Packets waiting each way between the master relay and the game: several seconds of a match's
+// traffic (100 ticks a second), so a hitch on either side delays a player's commands instead of
+// dropping a run of them (the server then waited for a command that never came and dropped the
+// player).
 const RELAY_MAIL_CAP: usize = 1024;
 pub(crate) const CMDS_PER_PACKET: usize = 16;
 
@@ -1111,6 +1112,9 @@ pub struct UdpClientLink {
     baselines: BTreeMap<u32, Snapshot>,
     out_seq: u32,
     in_ack: u32,
+    /// Snapshot packets taken in, and those a gap in their numbers says never came (`net_graph`).
+    pub packets_in: u64,
+    pub packets_lost: u64,
     last_snapshot_seq: Option<u32>,
     required_baseline_seq: u32,
     applied_bootstrap_id: Option<u32>,
@@ -1142,6 +1146,8 @@ impl UdpClientLink {
             baselines: BTreeMap::new(),
             out_seq: 0,
             in_ack: 0,
+            packets_in: 0,
+            packets_lost: 0,
             last_snapshot_seq: None,
             required_baseline_seq: 0,
             applied_bootstrap_id: None,
@@ -1629,6 +1635,10 @@ impl UdpClientLink {
                     decoder.adopt_baseline(baseline);
                     world_decoder.adopt_baseline(baseline.meta.world_objects.clone());
                 }
+                if self.in_ack != 0 && header.sequence > self.in_ack {
+                    self.packets_lost += u64::from(header.sequence - self.in_ack - 1);
+                }
+                self.packets_in += 1;
                 self.in_ack = header.sequence;
                 let mut input = WireReader::new(&payload);
                 let mut frame = Frame::decode(

@@ -107,7 +107,9 @@ impl Plugin for HudPlugin {
                     hud_stamp_visibility,
                 )
                     .chain()
-                    .in_set(ClientSet::Ui),
+                    .in_set(ClientSet::Ui)
+                    // A dedicated server shows no HUD: none is built, warmed or updated.
+                    .run_if(not(resource_exists::<frame::Headless>)),
             )
             .add_systems(
                 Update,

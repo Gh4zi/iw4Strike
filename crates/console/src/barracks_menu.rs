@@ -309,7 +309,13 @@ pub(crate) fn sync_profile(
     mut seq: ResMut<net::ActionRequestIds>,
     mut sent: Local<Option<(frame::WorldGeneration, sim::ClientId, sim::PlayerProfile)>>,
 ) {
-    if !has_world.0 || *role == frame::RuntimeRole::Replay {
+    // A replay has no live server to tell, and a dedicated server no player of its own.
+    if !has_world.0
+        || matches!(
+            *role,
+            frame::RuntimeRole::Replay | frame::RuntimeRole::Dedicated
+        )
+    {
         *sent = None;
         return;
     }

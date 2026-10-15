@@ -278,6 +278,11 @@ fn stamp_runtime_role(
     identity: &mut Option<ResMut<LaunchIdentity>>,
     next: RuntimeRole,
 ) {
+    // A dedicated server hosts every match it loads; it never becomes a listen host.
+    let next = match (role.as_deref().copied(), next) {
+        (Some(RuntimeRole::Dedicated), RuntimeRole::Listen) => RuntimeRole::Dedicated,
+        _ => next,
+    };
     if let Some(role) = role.as_mut() {
         **role = next;
     }
@@ -758,7 +763,11 @@ fn follow_master_match(
         return;
     };
     *role = if host {
-        RuntimeRole::Listen
+        if *role == RuntimeRole::Dedicated {
+            RuntimeRole::Dedicated
+        } else {
+            RuntimeRole::Listen
+        }
     } else {
         RuntimeRole::Client
     };

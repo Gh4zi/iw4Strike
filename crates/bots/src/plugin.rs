@@ -140,14 +140,31 @@ impl Plugin for BotsPlugin {
     }
 }
 
+/// A match's bots leave with it. A dedicated server keeps its count: the bots its config added
+/// (`bot add` in server.cfg runs once, at start) join the next map too, as a bot quota would.
 fn reset_roster_on_match_torn_down(
     mut torn: MessageReader<MatchTornDown>,
     mut roster: ResMut<BotRoster>,
     mut nav: ResMut<BotNav>,
     mut ready: ResMut<BotNavigationReady>,
+    mut queue: ResMut<BotAddQueue>,
+    role: Res<RuntimeRole>,
 ) {
     if torn.read().len() == 0 {
         return;
+    }
+    if *role == RuntimeRole::Dedicated {
+        let thinking = roster.bots.iter().filter(|bot| bot.brain.is_some()).count() as u32;
+        let dummies = roster.bots.len() as u32 - thinking;
+        if thinking > 0 {
+            queue.push(thinking);
+        }
+        if dummies > 0 {
+            queue.push_dummy(dummies);
+        }
+        if thinking + dummies > 0 {
+            diag::info!(Sim, "bots: {thinking} bots and {dummies} dummies carry over to the next map");
+        }
     }
     *roster = BotRoster::default();
     *nav = BotNav::default();
@@ -261,6 +278,7 @@ fn boot_bots(
     installed: Option<Res<HasWorld>>,
     world: Option<ResMut<AuthorityWorld>>,
     local: Res<LocalPresentClient>,
+    role: Res<RuntimeRole>,
     mut last_boot: Local<Option<(sim::ClientId, std::time::Instant)>>,
 ) {
     let Some(mut world) = world else {
@@ -269,6 +287,13 @@ fn boot_bots(
     if !installed.is_some_and(|installed| installed.0) {
         return;
     }
+    // A bot's player data needs the scripts' player-data layout, which their first tick
+    // installs. A listen host's bots wait for the player's team, long after that; a dedicated
+    // server has no player to wait for, so it waits for the layout itself.
+    if world.0.persistent_data().schemas().is_empty() {
+        return;
+    }
+    let dedicated = *role == RuntimeRole::Dedicated;
     let seed = roster.seed;
     let team_based = world.0.game_mode_kind() != gamemode_iw4::GameModeKind::FreeForAll;
     let local_team = match world.0.client_state_team(local.0) {
@@ -304,7 +329,8 @@ fn boot_bots(
         }
         // A sided bot answers the team menu itself; until the player has a team there is
         // no side to take, so it waits.
-        let team = match bot.side.filter(|_| team_based) {
+        // On a dedicated server there is no player to side with: every bot auto-assigns.
+        let team = match bot.side.filter(|_| team_based && !dedicated) {
             None => None,
             Some(side) => {
                 let Some((mine, theirs)) = local_team else {

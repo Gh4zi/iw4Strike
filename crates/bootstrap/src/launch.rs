@@ -505,10 +505,18 @@ fn run_map(
         );
         net::MasterLaunchIntent::disabled()
     } else {
-        net::MasterLaunchIntent::from_env_for_map(&zone, have, requires).unwrap_or_else(|error| {
-            diag::warn!(Net, "master launch disabled: {error}");
-            net::MasterLaunchIntent::disabled()
-        })
+        net::MasterLaunchIntent::from_env_for_map(&zone, have, requires)
+            .map(|intent| {
+                if role == Role::Dedicated {
+                    intent.for_dedicated_server()
+                } else {
+                    intent
+                }
+            })
+            .unwrap_or_else(|error| {
+                diag::warn!(Net, "master launch disabled: {error}");
+                net::MasterLaunchIntent::disabled()
+            })
     };
 
     let config = LaunchConfig {
@@ -536,14 +544,28 @@ fn run_map(
         .or_else(|| AcceptanceRun::from_env(zone.clone()));
     let present_mode = launch_present_mode(acceptance_run.is_some());
     let mut app = App::new();
+    // Dev switch: a system that cannot run (a missing resource) logs and is skipped instead of
+    // stopping the game, so one run lists them all.
+    if std::env::var_os("IW4L_SYSTEM_ERRORS").is_some_and(|value| value == "warn") {
+        app.set_error_handler(bevy::ecs::error::warn);
+    }
     if acceptance_run.is_some() || std::env::var_os("IW4L_PRESENT_MODE").is_some() {
         app.insert_resource(ui::PresentModeOverride(present_mode));
     }
     app.insert_resource(master_intent);
     let dedicated = config.role == Role::Dedicated;
     if dedicated {
-        app.insert_resource(bevy::winit::WinitSettings::continuous())
-            .insert_resource(frame::Headless);
+        // Nothing to draw: no texture pixels are read at all.
+        asset_material::material_images::skip_pixel_decode();
+        // Nothing to draw: the loop sleeps until the next server tick is due instead of spinning
+        // a core (`pace_dedicated_loop`; winit waits on a high-resolution timer).
+        let tick = bevy::winit::UpdateMode::reactive(std::time::Duration::from_millis(1));
+        app.insert_resource(bevy::winit::WinitSettings {
+            focused_mode: tick,
+            unfocused_mode: tick,
+        })
+        .insert_resource(frame::Headless)
+        .add_systems(Last, pace_dedicated_loop);
     }
     app.add_plugins(crate::plugins::default_plugins_with_quiet_log(
         WindowPlugin {
@@ -618,7 +640,9 @@ fn run_map(
     }
     match config.role {
         Role::Replay => add_runtime_plugins_with_role(&mut app, frame::RuntimeRole::Replay),
-        Role::Listen | Role::Dedicated => add_runtime_plugins(&mut app),
+        Role::Listen => add_runtime_plugins(&mut app),
+        // No local player: no prediction, presentation or hidden "Player" in the room.
+        Role::Dedicated => add_runtime_plugins_with_role(&mut app, frame::RuntimeRole::Dedicated),
         Role::Client => add_runtime_plugins_with_role(&mut app, frame::RuntimeRole::Client),
     }
     // The demo, before the playback moves into the world: it names the workload
@@ -695,6 +719,23 @@ const fn role_name(role: Role) -> &'static str {
         Role::Client => "client",
         Role::Replay => "replay",
     }
+}
+
+/// A dedicated server wakes when its next 100 Hz tick is due, so every update runs one tick:
+/// the frame work around the ticks (the runtime's per-frame systems) runs 100 times a second,
+/// not 1000. Messages from players wait at most until that tick, which is when they would be
+/// read anyway.
+fn pace_dedicated_loop(
+    fixed: Res<Time<bevy::time::Fixed>>,
+    mut winit: ResMut<bevy::winit::WinitSettings>,
+) {
+    let wait = fixed
+        .timestep()
+        .saturating_sub(fixed.overstep())
+        .max(std::time::Duration::from_micros(500));
+    let mode = bevy::winit::UpdateMode::reactive(wait);
+    winit.focused_mode = mode;
+    winit.unfocused_mode = mode;
 }
 
 fn launch_present_mode(acceptance: bool) -> PresentMode {

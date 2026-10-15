@@ -832,6 +832,19 @@ impl SoundCatalog {
         (before - self.by_alias.len(), freed)
     }
 
+    /// Frees every loaded sound's audio and keeps all that names it (aliases, their indices,
+    /// curves): for a process that never plays a sound, a dedicated server. Returns the bytes
+    /// freed.
+    pub fn release_audio(&mut self) -> usize {
+        let mut freed = 0;
+        for loaded in &mut self.loaded {
+            freed += loaded.pcm.bytes().len();
+            loaded.pcm = crate::encoded_audio::EncodedAudio::default();
+            loaded.seek_table = Vec::new();
+        }
+        freed
+    }
+
     pub fn index_in(&self, ns: AssetNamespace, alias: &str) -> Option<usize> {
         if let Some(&i) = self.by_alias.get(&(ns, alias.to_owned())) {
             return Some(i);
