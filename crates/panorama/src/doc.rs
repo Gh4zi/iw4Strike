@@ -293,7 +293,14 @@ impl Doc {
                 .map(|(_, v)| v.as_str())
         };
         classes.extend(attr("class").unwrap_or("").split_whitespace().map(str::to_owned));
-        let size = |key: &str| attr(key).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0).max(0) as u32;
+        // `48`, or `20px` (the armour shield's: read as nothing, the shield drew at its own 32).
+        let size = |key: &str| {
+            attr(key)
+                .and_then(|v| v.trim().trim_end_matches("px").trim().parse::<f32>().ok())
+                .unwrap_or(0.0)
+                .max(0.0)
+                .round() as u32
+        };
         let panel = Panel {
             attrs: attrs.clone(),
             tag: element.name.clone(),
@@ -954,8 +961,10 @@ impl Doc {
             } else {
                 Display::Flex
             },
-            flex_direction: match s.flow {
-                Flow::Down | Flow::DownWrap => FlexDirection::Column,
+            flex_direction: match (s.flow, s.reversed) {
+                (Flow::Down | Flow::DownWrap, false) => FlexDirection::Column,
+                (Flow::Down | Flow::DownWrap, true) => FlexDirection::ColumnReverse,
+                (_, true) => FlexDirection::RowReverse,
                 _ => FlexDirection::Row,
             },
             flex_wrap: match s.flow {
@@ -1136,8 +1145,10 @@ impl Doc {
         // The first flowed child aligned to the far end of its flow (or its middle) takes the
         // free space before it, which packs it and those after it there, as Panorama does.
         let parent_style = p.parent.map(|q| &self.panels[q].style);
+        // A flow from the far end (`left`, `up`) packs its children there already.
+        let parent_reversed = parent_style.is_some_and(|ps| ps.reversed);
         let first_along = |along_end: &dyn Fn(&Style) -> Option<Align>| {
-            p.parent.is_some_and(|q| {
+            !parent_reversed && p.parent.is_some_and(|q| {
                 self.panels[q]
                     .children
                     .iter()
@@ -1272,7 +1283,8 @@ impl Doc {
         } else {
             e.insert(UiTransform {
                 translation: Val2::new(along(px.0, shift.0), along(px.1, shift.1)),
-                scale: Vec2::new(s.scale.0, s.scale.1),
+                // A negative scale mirrors the panel's picture instead (`flip_x`/`flip_y`).
+                scale: Vec2::new(s.scale.0.abs(), s.scale.1.abs()),
                 rotation: Rot2::radians(s.rotate),
             });
         }
@@ -1350,15 +1362,37 @@ impl Doc {
                 let size = [want(s.width, p.texture_size[0]), want(s.height, p.texture_size[1])];
                 if let Some((handle, px)) = files.image(&src, size, images) {
                     let mut image = ImageNode::new(handle);
+                    image.flip_x = s.scale.0 < 0.0;
+                    image.flip_y = s.scale.1 < 0.0;
                     image.color = style::tint(Color::WHITE, wash, opacity);
                     if tag == "image" {
                         // Without a size of its own, the image's (drawn at the asked scale).
                         let svg_scale = if src.ends_with(".svg") { 1.0 } else { self.scale };
-                        if matches!(s.width, Len::Fit) {
-                            node.width = Val::Px(px[0] as f32 * svg_scale);
+                        // `scaling="none"`: drawn at its own size, a share of its parent never
+                        // stretching it (the armour shield, 20 px wide, in a panel as tall as the
+                        // health strip, was drawn as tall as the strip).
+                        let unscaled = node.position_type != PositionType::Absolute
+                            && p.attrs.iter().any(|(k, v)| {
+                                k.eq_ignore_ascii_case("scaling") && v.eq_ignore_ascii_case("none")
+                            });
+                        let own = |len: Len| {
+                            matches!(len, Len::Fit) || (unscaled && matches!(len, Len::Percent(_)))
+                        };
+                        // Panorama's padding is outside the picture (here a size includes it).
+                        let pad = |a: Len, b: Len| match (a, b) {
+                            (Len::Px(a), Len::Px(b)) => (a + b) * self.scale,
+                            (Len::Px(a), _) | (_, Len::Px(a)) => a * self.scale,
+                            _ => 0.0,
+                        };
+                        if own(s.width) {
+                            node.width = Val::Px(
+                                px[0] as f32 * svg_scale + pad(s.padding[0], s.padding[2]),
+                            );
                         }
-                        if matches!(s.height, Len::Fit) {
-                            node.height = Val::Px(px[1] as f32 * svg_scale);
+                        if own(s.height) {
+                            node.height = Val::Px(
+                                px[1] as f32 * svg_scale + pad(s.padding[1], s.padding[3]),
+                            );
                         }
                     } else {
                         image.image_mode = NodeImageMode::Stretch;

@@ -360,6 +360,10 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
             "togglemenu",
             "togglemenu — open the script main menu (g_scriptMainMenu), or escape the top menu",
         ),
+        (
+            "vid_restart",
+            "vid_restart — set the window up again and close every menu: back in the match, or at the main menu with none (a screen stuck where it shouldn't be)",
+        ),
         ("openmenu", "openmenu <menu> — open an in-game menuDef"),
         (
             "menutext",

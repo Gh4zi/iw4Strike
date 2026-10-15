@@ -98,6 +98,7 @@ pub(crate) fn register_diagnostics_mirror(app: &mut App) {
             drain_pending_console_lines,
             finish_replay_playback,
             update_showpos_overlay,
+            crate::net_graph::update_net_graph,
         )
             .in_set(ClientSet::Diag),
     );

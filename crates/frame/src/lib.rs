@@ -30,7 +30,7 @@ pub use session::{
     AdmissionKey, AppScreen, BotNavigationReady, CacWeaponOffer, ClassSelectHandoff, HasWorld,
     Headless, HostClassLoadouts, HostClassSlot, HudInputView, LaunchIdentity, LaunchReport,
     LifeEndCause, LifeEnded, LifeStartReason, LifeStarted, LocalLoadKey, MapLoadApproved,
-    MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, MenuSceneCamera, ReturnedToMenu,
+    MapLoadFailed, MatchInstalled, MatchKey, MatchTornDown, MenuSceneCamera, ReturnedToMenu, VidRestart,
     RuntimeRole, ShowHitboxes, TeardownReason, UiCamera, UiDraw, ViewSubject, WorldGeneration,
     WorldProducts,
 };

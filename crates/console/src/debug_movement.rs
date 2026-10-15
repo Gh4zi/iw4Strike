@@ -98,6 +98,16 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "_vgui_menus [0|1] — buy menu: 1 the window you click (CS:S / CS 1.6 VGUI), 0 CS 1.6's old numbered text menu",
         ));
     }
+    if registry.resolve("net_graph").is_none() {
+        registry.register(crate::CommandSpec::new("net_graph").usage(
+            "net_graph [0|1] — CS:GO's fps, ping, loss, tick and server frame time over the ammo",
+        ));
+    }
+    if registry.resolve("cl_hud_playercount_showcount").is_none() {
+        registry.register(crate::CommandSpec::new("cl_hud_playercount_showcount").usage(
+            "cl_hud_playercount_showcount [0|1] — CS:GO team counter: 0 each side's players' avatars, 1 how many are alive",
+        ));
+    }
     if registry.resolve("cl_roundbanner").is_none() {
         registry.register(crate::CommandSpec::new("cl_roundbanner").usage(
             "cl_roundbanner [css|cs16|mw2] — round-end banner: CS:S win panel, CS 1.6 centre message or MW2's round outcome",
@@ -223,24 +233,40 @@ pub(crate) fn sync_movement_mode(game: Res<frame::GameSettings>) {
     }
 }
 
-/// The movement cheats in play (`always_edgebug`, `always_pixelsurf`, `sv_autobunnyhop`): server settings, off
-/// unless the host turns them on. Hosting, they are this player's own; on another's server, the
-/// server's, which it tells its clients in the server info, so their prediction moves as it does
-/// and none turns them on for themselves.
+/// The movement in play (`mv_mode`) and its cheats (`always_edgebug`, `always_pixelsurf`,
+/// `sv_autobunnyhop`, off unless the host turns them on). Hosting, they are this player's own; on
+/// another's server, the server's, which it tells its clients in the server info, so their
+/// prediction moves as it does (a different `mv_mode` corrected them all the time while
+/// bunnyhopping) and none turns a cheat on for themselves. Back off the server, the player's own
+/// `mv_mode` returns.
 pub(crate) fn follow_server_movement_cheats(
     game: Res<frame::GameSettings>,
     presented: Res<net::PresentedSnapshot>,
     authority: Option<Res<net::AuthorityWorld>>,
 ) {
-    let server = |name: &str| {
-        presented.snapshot().is_some_and(|snap| {
+    let server_value = |name: &str| {
+        presented.snapshot().and_then(|snap| {
             snap.meta
                 .objectives
                 .server_info
                 .iter()
-                .any(|(key, value)| key == name && value == "1")
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
         })
     };
+    let server = |name: &str| server_value(name).is_some_and(|value| value == "1");
+    let mode = authority
+        .is_none()
+        .then(|| server_value("mv_mode"))
+        .flatten()
+        .and_then(|name| movement_iw4::rules::MovementMode::from_name(&name))
+        .or_else(|| movement_iw4::rules::MovementMode::from_name(&game.mv_mode));
+    if let Some(mode) = mode
+        && mode != movement_iw4::rules::mode()
+    {
+        movement_iw4::rules::set_mode(mode);
+        diag::info!(Console, "mv_mode = {} — {}", mode.name(), mode.describe());
+    }
     let (edgebug, pixelsurf, autohop) = if authority.is_some() {
         (
             game.always_edgebug,
@@ -471,7 +497,11 @@ pub(crate) fn route_movement_commands(
                             set_mode(next);
                             next.name().clone_into(&mut game.mv_mode);
                             game.touch();
-                            format!("mv_mode = {} — {}", next.name(), next.describe())
+                            format!(
+                                "mv_mode = {} — {} (on someone else's server, theirs applies)",
+                                next.name(),
+                                next.describe()
+                            )
                         }
                         None => "usage: mv_mode [csgo|csgo64|csgo128|css|surf|mmod|cs16]".to_owned(),
                     },
@@ -538,6 +568,27 @@ pub(crate) fn route_movement_commands(
                     format!("_vgui_menus = {arg}")
                 }
                 _ => "usage: _vgui_menus [0|1]".to_owned(),
+            },
+            "net_graph" => match cmd.args.as_slice() {
+                [] => format!("net_graph = {}", game.net_graph),
+                [arg] if arg == "0" || arg == "1" => {
+                    game.net_graph = u8::from(arg == "1");
+                    game.touch();
+                    format!("net_graph = {arg}")
+                }
+                _ => "usage: net_graph [0|1]".to_owned(),
+            },
+            "cl_hud_playercount_showcount" => match cmd.args.as_slice() {
+                [] => format!(
+                    "cl_hud_playercount_showcount = {}",
+                    u8::from(game.hud_playercount_showcount)
+                ),
+                [arg] if arg == "0" || arg == "1" => {
+                    game.hud_playercount_showcount = arg == "1";
+                    game.touch();
+                    format!("cl_hud_playercount_showcount = {arg}")
+                }
+                _ => "usage: cl_hud_playercount_showcount [0|1]".to_owned(),
             },
             "cl_roundbanner" => match cmd.args.as_slice() {
                 [] => format!("cl_roundbanner = {}", game.round_banner),

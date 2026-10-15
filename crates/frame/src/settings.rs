@@ -112,6 +112,11 @@ pub struct GameSettings {
     /// `cl_roundbanner`: the round-end banner, `csgo` (CS:GO's win panel), `css` (CS:S win
     /// panel), `cs16` (CS 1.6 centre message) or `mw2` (MW2's round outcome).
     pub round_banner: String,
+    /// `cl_hud_playercount_showcount`: CS:GO's team counter shows each side's alive count (true)
+    /// instead of its players' avatars.
+    pub hud_playercount_showcount: bool,
+    /// `net_graph`: 1 shows CS:GO's network and frame numbers over the ammo.
+    pub net_graph: u8,
     pub brightness: f32,
     /// `shadows`: 0 off, 1 the sun's shadow only, 2 sun and spot-light shadows.
     pub shadows: u8,
@@ -205,6 +210,8 @@ impl Default for GameSettings {
             hrtf: false,
             vgui_menus: true,
             round_banner: "csgo".to_owned(),
+            hud_playercount_showcount: false,
+            net_graph: 0,
             brightness: 0.0,
             shadows: Self::SHADOWS_ALL,
             depth_of_field: true,

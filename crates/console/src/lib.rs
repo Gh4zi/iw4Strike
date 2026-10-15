@@ -30,6 +30,7 @@ mod gamepad;
 pub mod input;
 mod local_account;
 mod local_profile;
+mod net_graph;
 pub mod plugin;
 pub mod registry;
 mod startup;

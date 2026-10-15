@@ -59,6 +59,9 @@ pub struct Style {
     pub max_width: Option<Len>,
     pub max_height: Option<Len>,
     pub flow: Flow,
+    /// `flow-children: left`/`up`: laid out from the far end (right, bottom), the first child
+    /// there.
+    pub reversed: bool,
     pub halign: Option<Align>,
     pub valign: Option<Align>,
     pub x: Len,
@@ -101,6 +104,7 @@ impl Default for Style {
             max_width: None,
             max_height: None,
             flow: Flow::None,
+            reversed: false,
             halign: None,
             valign: None,
             x: Len::Px(0.0),
@@ -305,6 +309,8 @@ fn parse_transform(value: &str, style: &mut Style) {
         let num = |i: usize| args.get(i).and_then(|a| a.parse::<f32>().ok());
         match name.as_str() {
             "translatex" => style.translate.0 = px(0),
+            "scalex" => style.scale.0 = num(0).unwrap_or(1.0),
+            "scaley" => style.scale.1 = num(0).unwrap_or(1.0),
             "translatey" => style.translate.1 = px(0),
             "translate3d" | "translate" => style.translate = (px(0), px(1)),
             "scale3d" | "scale" => {
@@ -336,7 +342,9 @@ impl Style {
             "max-width" => self.max_width = parse_len(v),
             "max-height" => self.max_height = parse_len(v),
             "flow-children" => {
-                self.flow = match v.to_ascii_lowercase().as_str() {
+                let v = v.to_ascii_lowercase();
+                self.reversed = v.starts_with("left") || v.starts_with("up");
+                self.flow = match v.as_str() {
                     "right" | "left" => Flow::Right,
                     "down" | "up" => Flow::Down,
                     "right-wrap" | "left-wrap" => Flow::RightWrap,

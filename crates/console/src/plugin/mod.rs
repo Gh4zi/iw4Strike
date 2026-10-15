@@ -93,6 +93,7 @@ impl Plugin for ConsolePlugin {
             .init_resource::<crate::local_account::AccountPersistence>()
             .add_message::<ConsoleCommand>()
             .add_message::<frame::TestControllerRumble>()
+            .add_message::<frame::VidRestart>()
             .add_systems(
                 Startup,
                 (
@@ -898,6 +899,7 @@ fn setup_console(
     commands.insert_resource(window::ConsoleScroll::default());
     // The saved `console_style` is read after start-up; `style::apply_console_style` swaps
     // the panel then if it asks for the other look.
+    let net_graph_font = cs2_font.clone();
     let mut look = style::new_look(classic_font.clone(), cs2_font, cs2_title_font);
     let spawned = style::spawn_panel(
         &mut commands,
@@ -911,6 +913,7 @@ fn setup_console(
     commands.insert_resource(ConsoleLog(spawned.log));
     commands.insert_resource(look);
     crate::debug_move::spawn_showpos_hud(&mut commands, classic_font);
+    crate::net_graph::spawn_net_graph_hud(&mut commands, net_graph_font);
 }
 
 /// The CS2 console's face is Valve's licensed Stratum2 Mono, which CS2 ships encrypted; its

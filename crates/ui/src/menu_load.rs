@@ -240,12 +240,55 @@ fn install_menu_strings_prepare(
     *loc = built;
 }
 
+/// `vid_restart`: the screen back where the game is. In a match, a loading screen left up goes
+/// and, with your player alive, the game is shown; with no match, the main menu. A map still
+/// loading keeps its screen.
+pub(crate) fn vid_restart_screen(
+    mut commands: Commands,
+    mut restart: MessageReader<frame::VidRestart>,
+    mut class_overlay: ResMut<ClassSelectOverlayOpen>,
+    mut app_screen: ResMut<AppScreen>,
+    world: (Option<Res<frame::HasWorld>>, Option<Res<LoadingScreen>>),
+    player: (Option<Res<net::PresentedSnapshot>>, Option<Res<net::LocalPresentClient>>),
+    chrome: Query<Entity, Or<(With<LoadingRoot>, With<LoadingCamera>)>>,
+    overlay_cams: Query<Entity, With<OverlayUiCamera>>,
+) {
+    if restart.read().count() == 0 {
+        return;
+    }
+    let (has_world, loading) = world;
+    let (presented, local) = player;
+    if has_world.is_some_and(|world| world.0) {
+        let alive = presented
+            .zip(local)
+            .is_some_and(|(presented, local)| presented.alive_player(local.0).is_some());
+        dismiss_loading_overlay(&mut commands, chrome.iter(), std::iter::empty(), true);
+        if alive {
+            class_overlay.0 = false;
+            *app_screen = AppScreen::InGame;
+        }
+        diag::info!(
+            Ui,
+            "vid_restart: back in the match ({})",
+            if alive { "playing" } else { "not spawned" }
+        );
+    } else if loading.is_some() && *app_screen == AppScreen::Loading {
+        diag::info!(Ui, "vid_restart: a map is still loading; its screen stays");
+    } else {
+        class_overlay.0 = false;
+        *app_screen = AppScreen::MainMenu;
+        dismiss_loading_overlay(&mut commands, chrome.iter(), overlay_cams.iter(), false);
+        diag::info!(Ui, "vid_restart: back at the main menu");
+    }
+}
+
 pub(crate) fn register_menu_load_systems(app: &mut App) {
-    app.add_message::<ReturnedToMenu>().add_systems(
+    app.add_message::<ReturnedToMenu>().add_message::<frame::VidRestart>().add_systems(
         Update,
         (
             begin_load_from_session,
             restore_menu_on_return.after(begin_load_from_session),
+            vid_restart_screen.after(restore_menu_on_return),
             start_menu_strings_prepare,
             install_menu_strings_prepare.after(start_menu_strings_prepare),
         )

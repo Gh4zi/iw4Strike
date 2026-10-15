@@ -24,6 +24,7 @@ pub(crate) fn route_ui_commands(
         Option<Res<PresentedSnapshot>>,
     ),
     mut menu_requests: MessageWriter<frame::UiMenuRequest>,
+    mut vid_restart: MessageWriter<frame::VidRestart>,
 ) {
     let (console, settings, line) = &mut output;
     let capacity = settings.log_capacity;
@@ -88,6 +89,13 @@ pub(crate) fn route_ui_commands(
             }
             "togglemenu" => {
                 menu_requests.write(frame::UiMenuRequest::Toggle);
+            }
+            "vid_restart" => {
+                for name in menus.open_names() {
+                    menu_requests.write(frame::UiMenuRequest::Close(name));
+                }
+                vid_restart.write(frame::VidRestart);
+                echo("vid_restart".into(), console, line);
             }
             "openmenu" | "closemenu" => match cmd.args.as_slice() {
                 [name] => {

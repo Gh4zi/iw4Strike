@@ -50,7 +50,18 @@ pub(crate) fn apply_window_settings(
     mut exclusive_away: Local<ExclusiveAway>,
     mut applied: Local<Option<(frame::DisplayResolution, bool, bool, PresentMode, bool)>>,
     mut listed: Local<bool>,
+    mut restart: MessageReader<frame::VidRestart>,
 ) {
+    // `vid_restart`: the window leaves its mode for a frame and the settings put it back the
+    // next (its surface made again, as IW4 makes its device again).
+    if restart.read().count() > 0 {
+        if let Ok(mut window) = windows.single_mut() {
+            window.mode = bevy::window::WindowMode::Windowed;
+        }
+        *applied = None;
+        diag::info!(Ui, "vid_restart: the window is set up again");
+        return;
+    }
     let now = time.elapsed_secs_f64();
     let exclusive_wanted = settings.fullscreen && settings.exclusive_fullscreen;
     for event in focus.read() {

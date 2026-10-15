@@ -11,6 +11,8 @@ use net::{LocalPresentClient, PresentedSnapshot};
 use playerstate_iw4::PM_TYPE_DEAD;
 
 const HUD_LAYOUT: &str = "file://{resources}/layout/hud/hud.xml";
+/// CS:GO's `cl_hud_background_alpha` default.
+const HUD_BACKGROUND_ALPHA: &str = "0.5";
 /// `g_LowHealthPercent`: at or under this share of health the panel turns critical.
 const LOW_HEALTH: f32 = 0.2;
 /// A CS player's full health, which the health bar is a share of.
@@ -30,6 +32,7 @@ fn sublayout(tag: &str) -> Option<&'static str> {
         "csgohudhealtharmor" => "file://{resources}/layout/hud/hudhealtharmor.xml",
         "csgohudmoney" => "file://{resources}/layout/hud/hudmoney.xml",
         "csgohudweaponpanel" => "file://{resources}/layout/hud/hudweaponpanel.xml",
+        "csgohudweaponselection" => "file://{resources}/layout/hud/hudweaponselection.xml",
         "csgohudteamcounter" => "file://{resources}/layout/hud/hudteamcounter.xml",
         "csgohuddeathnotice" => "file://{resources}/layout/hud/huddeathnotice.xml",
         "csgobuymenu" => "file://{resources}/layout/buymenu.xml",
@@ -594,6 +597,180 @@ pub(crate) struct CsgoPanorama {
     ping_markers: Vec<usize>,
     /// The radar's memory of each player, by client number.
     radar_tracks: std::collections::HashMap<u32, RadarTrack>,
+    /// The weapon list's rows (`WeaponRow` snippets) and what they show: each weapon's slot,
+    /// icon and whether it is the one in hand.
+    weapon_rows: Vec<usize>,
+    weapon_list: Vec<(u8, &'static str, bool)>,
+}
+
+/// CS:GO's name of the weapon an equipment icon shows (`SFUI_WPNHUD_*` in its strings).
+fn weapon_name_token(icon: &str) -> Option<&'static str> {
+    Some(match icon {
+        "ak47" => "SFUI_WPNHUD_AK47",
+        "aug" => "SFUI_WPNHUD_Aug",
+        "awp" => "SFUI_WPNHUD_AWP",
+        "deagle" => "SFUI_WPNHUD_Deagle",
+        "elite" => "SFUI_WPNHUD_Elite",
+        "famas" => "SFUI_WPNHUD_Famas",
+        "fiveseven" => "SFUI_WPNHUD_FiveSeven",
+        "flashbang" => "SFUI_WPNHUD_Flashbang",
+        "g3sg1" => "SFUI_WPNHUD_G3SG1",
+        "galilar" => "SFUI_WPNHUD_GalilAR",
+        "glock" => "SFUI_WPNHUD_Glock18",
+        "hegrenade" => "SFUI_WPNHUD_HEGrenade",
+        "knife" | "knife_t" => "SFUI_WPNHUD_Knife",
+        "m249" => "SFUI_WPNHUD_M249",
+        "m4a1" => "SFUI_WPNHUD_M4A1",
+        "m4a1_silencer" => "SFUI_WPNHUD_M4A1_silencer",
+        "mac10" => "SFUI_WPNHUD_MAC10",
+        "p90" => "SFUI_WPNHUD_P90",
+        "smokegrenade" => "SFUI_WPNHUD_SmokeGrenade",
+        "ump45" => "SFUI_WPNHUD_UMP45",
+        "xm1014" => "SFUI_WPNHUD_xm1014",
+        "c4" => "SFUI_WPNHUD_C4",
+        "bizon" => "SFUI_WPNHUD_Bizon",
+        "mag7" => "SFUI_WPNHUD_Mag7",
+        "negev" => "SFUI_WPNHUD_Negev",
+        "sawedoff" => "SFUI_WPNHUD_Sawedoff",
+        "tec9" => "SFUI_WPNHUD_Tec9",
+        "taser" => "SFUI_WPNHUD_Taser",
+        "molotov" => "SFUI_WPNHUD_Molotov",
+        "incgrenade" => "SFUI_WPNHUD_IncGrenade",
+        "decoy" => "SFUI_WPNHUD_Decoy",
+        "hkp2000" => "SFUI_WPNHUD_HKP2000",
+        "mp7" => "SFUI_WPNHUD_MP7",
+        "mp5sd" => "SFUI_WPNHUD_MP5SD",
+        "mp9" => "SFUI_WPNHUD_MP9",
+        "nova" => "SFUI_WPNHUD_Nova",
+        "p250" => "SFUI_WPNHUD_P250",
+        "cz75a" => "SFUI_WPNHUD_CZ75",
+        "scar20" => "SFUI_WPNHUD_SCAR20",
+        "sg556" => "SFUI_WPNHUD_SG556",
+        "ssg08" => "SFUI_WPNHUD_SSG08",
+        "revolver" => "SFUI_WPNHUD_REVOLVER",
+        "usp_silencer" => "SFUI_WPNHUD_USP_SILENCER",
+        _ => return None,
+    })
+}
+
+/// What the weapon list shows for `ps`'s weapons: each one's slot (1 primary, 2 pistol, 3
+/// knife, 4 grenades, 5 the bomb), its equipment icon and whether it is in hand, in slot order.
+fn weapon_list(
+    ps: &playerstate_iw4::PlayerState,
+    weapons: &PreparedWeapons,
+    terrorist: bool,
+) -> Vec<(u8, &'static str, bool)> {
+    use weapon_iw4::cs;
+    let held = weapon_iw4::get_viewmodel_weapon_index(ps);
+    let mut list: Vec<(u8, &'static str, bool)> = ps
+        .weapons
+        .iter()
+        .filter_map(|&id| u32::try_from(id).ok().filter(|&id| id != 0))
+        .filter_map(|id| {
+            let name = weapons.0.script_name_of(id);
+            let index = cs::cs_weapon_index_for(&name)?;
+            let (slot, icon) = if cs::is_knife(index) {
+                (3, if terrorist { "knife_t" } else { "knife" })
+            } else if let Some(grenade) = cs::cs_grenade(index) {
+                (4, grenade.name)
+            } else if cs::is_c4(index) {
+                (5, "c4")
+            } else {
+                let gun = cs::cs_weapon(index)?;
+                (gun.slot(), crate::csgo_hud::kill_icon(Some(name.as_str())))
+            };
+            Some((slot, icon, id == held))
+        })
+        .collect();
+    list.sort_by_key(|(slot, ..)| *slot);
+    list.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    list
+}
+
+/// CS:GO's unselected weapon icons (`WEAPONSELECTION_UNSELECTED_HSV_TRANSFORM` on the HUD
+/// colour), measured on its HUD at 1080p.
+const WEAPON_ICON_UNSELECTED: &str = "#707070";
+/// The weapon list's rows' height (the distance between its slot numbers in CS:GO at 1080p).
+const WEAPON_ROW_HEIGHT: &str = "80px";
+/// Where the list ends above the ammo panel.
+const WEAPON_LIST_BOTTOM: &str = "40px";
+
+/// Builds the weapon list (`CCSGO_HudWeaponSelection`): a row per slot with its number, each
+/// weapon's icon in it, the one in hand white with its name under it, the others grey.
+fn build_weapon_list(
+    doc: &mut panorama::Doc,
+    files: &panorama::Files,
+    rows: &mut Vec<usize>,
+    list: &[(u8, &'static str, bool)],
+) {
+    for row in rows.drain(..) {
+        doc.remove(row);
+    }
+    let Some(container) = doc.find("weapon-selection-list") else {
+        return;
+    };
+    // CS:GO's list ends 40 px above the ammo (measured at 1080p: room the defuse kit's icon
+    // keeps there).
+    doc.set_style(container, "padding-bottom", Some(WEAPON_LIST_BOTTOM));
+    // The list flows up from the bottom: the last slot's row first.
+    let mut slots: Vec<u8> = list.iter().map(|(slot, ..)| *slot).collect();
+    slots.dedup();
+    for slot in slots.into_iter().rev() {
+        let Some(row) = doc.add_snippet(files, container, "WeaponRow") else {
+            continue;
+        };
+        rows.push(row);
+        // Stacked rather than overlaid: as an overlay the row stayed as tall as its number and
+        // the next row's icons drew over this one's. Its background is see-through in CS:GO.
+        doc.set_style(row, "flow-children", Some("down"));
+        if let Some(&background) = doc.find_class_in(row, "weapon-row-background").first() {
+            doc.set_style(background, "visibility", Some("collapse"));
+        }
+        doc.set_var(row, "WeaponRow--binding", &slot.to_string());
+        // The slot number sits beside its icon's top in CS:GO (10 px higher than its style
+        // puts it here: centred, a margin moves it half as far).
+        for number in doc.find_class_in(row, "weapon-row-number") {
+            doc.set_style(number, "margin-top", Some("-40px"));
+        }
+        let selected_row = list.iter().any(|(s, _, held)| *s == slot && *held);
+        doc.set_class(row, "weapon-row--active", true);
+        doc.set_class(row, "weapon-row--selected", selected_row);
+        let Some(icons) = doc.find_in(row, "icon-container") else {
+            continue;
+        };
+        for &(_, icon, held) in list.iter().filter(|(s, ..)| *s == slot) {
+            let Some(item) = doc.add_snippet(files, icons, "WeaponIcon") else {
+                continue;
+            };
+            doc.set_class(item, "weapon-selection-item--active", true);
+            // A column, not an overlay: measured as an overlay, its icon counted for nothing and
+            // the row came out as tall as the name alone.
+            for icon_box in doc.find_class_in(item, "weapon-selection-item-icon") {
+                doc.set_style(icon_box, "flow-children", Some("down"));
+            }
+            // CS:GO's rows are 80 px apart at 1080p (icon, name, gap); measured, the row here
+            // took the name's height alone.
+            doc.set_style(item, "height", Some(WEAPON_ROW_HEIGHT));
+            doc.set_class(item, "weapon-selection-item--selected", held);
+            let name = weapon_name_token(icon)
+                .and_then(|token| files.token(token))
+                .unwrap_or_default();
+            doc.set_var(item, "WeaponIcon--name", &name);
+            for label in doc.find_class_in(item, "weapon-selection-item-name") {
+                // Its 1-pixel width is Panorama's way to right-align a name wider than it.
+                doc.set_style(label, "width", Some("fit-children"));
+            }
+            if let Some(&image) = doc.find_class_in(item, "weapon-selection-item-icon-main").first() {
+                doc.set_image(
+                    image,
+                    Some(&format!("file://{{images}}/icons/equipment/{icon}.svg")),
+                );
+                if !held {
+                    doc.set_style(image, "wash-color", Some(WEAPON_ICON_UNSELECTED));
+                }
+            }
+        }
+    }
 }
 
 /// Reads CS:GO's HUD; `None` without CS:GO (or its packed UI and fonts).
@@ -622,7 +799,7 @@ pub(crate) fn load(fonts: &mut Assets<Font>) -> Option<CsgoPanorama> {
     }
     // The team counter as `CCSGO_HudTeamCounter` sets it up for a classic match: no bomb
     // status, join banner or small player strips; the clock, the scores and each side's players'
-    // avatars (`cl_hud_playercount_showcount 0`), not the alive counts, at the top.
+    // avatars or alive counts (`cl_hud_playercount_showcount`, set each frame), at the top.
     if let Some(counter) = doc.find("HudTeamCounter") {
         for id in [
             "BombStatus",
@@ -642,6 +819,11 @@ pub(crate) fn load(fonts: &mut Assets<Font>) -> Option<CsgoPanorama> {
         }
         doc.set_class(counter, "TeamCounter__Align--Top", true);
         doc.set_class(counter, "TeamCounter__Flow--Down", true);
+    }
+    // buymenu.css pads the buy menu's own `HudBottomRight` (`padding-bottom: 96px`); here every
+    // sheet styles every panel, and that rule lifted the ammo 96 px off the screen's bottom.
+    if let Some(corner) = doc.find("HudBottomRight") {
+        doc.set_style(corner, "padding-bottom", Some("0px"));
     }
     let buy = build_buy_wheels(&mut doc, &files);
     if let Some(menu) = doc.find("BuyMenu") {
@@ -764,6 +946,14 @@ pub(crate) fn update_csgo_panorama(
         return;
     }
     doc.set_scale(surface.height() / 1080.0);
+    // `cl_hud_background_alpha` (0.5 by default): the game draws these panels' backgrounds at
+    // that opacity over what their styles say (measured on CS:GO at 1080p: the health strip
+    // darkens the scene ~37%, its style's ~75% halved).
+    for id in ["HudHealthArmorBG", "MoneyBG", "WeaponPanelBottomBG"] {
+        if let Some(bg) = doc.find(id) {
+            doc.set_style(bg, "opacity", Some(HUD_BACKGROUND_ALPHA));
+        }
+    }
     let snap = presented.snapshot();
     let ps = presented.player(local.0).filter(|_| !view.in_killcam());
     let alive = ps.is_some_and(|ps| ps.pm_type < PM_TYPE_DEAD);
@@ -811,6 +1001,22 @@ pub(crate) fn update_csgo_panorama(
                 ps.cs_buy & playerstate_iw4::cs_buy::ZONE != 0,
             );
         }
+    }
+
+    // The weapon list (`CCSGO_HudWeaponSelection`): rebuilt when what is carried or held changes.
+    let list = living
+        .zip(weapons.as_deref())
+        .map(|(ps, w)| {
+            let team = snap
+                .and_then(|snap| snap.meta.for_client(local.0))
+                .map_or(0, |meta| meta.client_state_team);
+            let terrorist = crate::cs_hud::is_terrorist(snap, team).unwrap_or(false);
+            weapon_list(ps, w, terrorist)
+        })
+        .unwrap_or_default();
+    if list != state.weapon_list {
+        build_weapon_list(doc, files, &mut state.weapon_rows, &list);
+        state.weapon_list = list;
     }
 
     // The weapon panel (`CCSGO_HudWeaponPanel`): magazine and reserve, the bullets, the kit.
@@ -878,6 +1084,10 @@ pub(crate) fn update_csgo_panorama(
         if let Some(label) = doc.find_in(panel, "TimerText") {
             let text = crate::cs_hud::round_seconds_left(snap).map_or_else(String::new, clock);
             doc.set_text(label, &text);
+            // Our Stratum2 sits ~3 px higher in its line than Panorama's, and the timer's rule
+            // lifts it 2 px more (`margin-bottom: 4px`, middled): its digits touched the box's
+            // top edge. 6 px down sits them in the middle of the box, as in the game.
+            doc.set_style(label, "y", Some("6px"));
         }
         let [ct, t] = crate::csgo_hud::scores(snap).unwrap_or([0, 0]);
         if let Some(label) = doc.find_in(panel, "ScoreCT") {
@@ -895,6 +1105,16 @@ pub(crate) fn update_csgo_panorama(
                 {
                     alive_counts[usize::from(terrorist)] += 1;
                 }
+            }
+        }
+        // `cl_hud_playercount_showcount`: each side's players' avatars, or how many are alive.
+        let counts = settings.hud_playercount_showcount;
+        for side in ["CT", "T"] {
+            if let Some(avatars) = doc.find_in(panel, &format!("TeamLarge{side}")) {
+                doc.set_visible(avatars, !counts);
+            }
+            if let Some(alive) = doc.find_in(panel, &format!("AliveBackground{side}")) {
+                doc.set_visible(alive, counts);
             }
         }
         // The avatars (`UpdateAvatarSlot`).
@@ -916,10 +1136,12 @@ pub(crate) fn update_csgo_panorama(
 
     // The kill feed (`CCSGO_HudDeathNotice`): one notice per kill, gone after its lifetime.
     if let Some(list) = doc.find("VisibleNotices") {
-        let newest = feed.lines.back().map_or(state.feed_seen, |l| l.start_ms);
+        // The HUD's first look: the lines already up are passed over. With none up, every line
+        // after is new (taking the first kill as already seen hid the match's first kill).
         if state.feed_seen == i32::MAX {
-            state.feed_seen = newest;
+            state.feed_seen = feed.lines.back().map_or(i32::MIN, |l| l.start_ms);
         }
+        let newest = feed.lines.back().map_or(state.feed_seen, |l| l.start_ms);
         for line in feed.lines.iter().filter(|l| l.start_ms > state.feed_seen) {
             let Some(notice) = doc.add_snippet(files, list, "DeathNotice") else {
                 continue;
@@ -937,6 +1159,8 @@ pub(crate) fn update_csgo_panorama(
             if let Some(label) = doc.find_in(notice, "Attacker") {
                 doc.set_var(label, "name", &attacker_name);
                 doc.set_class(label, side(attacker_color), true);
+                // A suicide has no killer: the skull and the victim only, as in CS:GO.
+                doc.set_visible(label, !suicide);
             }
             if let Some(label) = doc.find_in(notice, "Victim") {
                 doc.set_var(label, "name", &line.victim.0);

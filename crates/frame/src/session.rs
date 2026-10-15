@@ -228,6 +228,11 @@ pub struct MatchTornDown {
     pub match_epoch: u32,
 }
 
+/// `vid_restart`: the window is set up again and the screen put back where the game is (in the
+/// match, or the main menu with none), as IW4's restarts its renderer and UI.
+#[derive(Message, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VidRestart;
+
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReturnedToMenu {
     pub swap_id: u64,

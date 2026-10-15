@@ -311,7 +311,13 @@ pub(crate) fn sync_player_name(
     mut seq: ResMut<net::ActionRequestIds>,
     mut sent: Local<Option<(frame::WorldGeneration, sim::ClientId, [u8; 16])>>,
 ) {
-    if !has_world.0 || *role == frame::RuntimeRole::Replay {
+    // A replay has no live server to tell, and a dedicated server no player of its own.
+    if !has_world.0
+        || matches!(
+            *role,
+            frame::RuntimeRole::Replay | frame::RuntimeRole::Dedicated
+        )
+    {
         *sent = None;
         return;
     }
@@ -445,6 +451,11 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         ),
         format!("_vgui_menus={}", u8::from(settings.vgui_menus)),
         format!("cl_roundbanner={}", settings.round_banner),
+        format!(
+            "cl_hud_playercount_showcount={}",
+            u8::from(settings.hud_playercount_showcount)
+        ),
+        format!("net_graph={}", settings.net_graph),
         format!("brightness={:.3}", settings.brightness),
         format!("fov={:.0}", settings.fov),
         format!("viewmodel_fov={:.0}", settings.viewmodel_fov),
@@ -644,6 +655,10 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             // Server cheats, off at every launch: not kept (older settings files have them).
             "always_edgebug" | "always_pixelsurf" | "sv_autobunnyhop" => {}
             "_vgui_menus" => settings.vgui_menus = value.trim() != "0",
+            "cl_hud_playercount_showcount" => {
+                settings.hud_playercount_showcount = value.trim() != "0";
+            }
+            "net_graph" => settings.net_graph = u8::from(value.trim() != "0"),
             "cl_roundbanner" => {
                 if hud::RoundBanner::parse(value).is_some() {
                     settings.round_banner = value.trim().to_ascii_lowercase();
