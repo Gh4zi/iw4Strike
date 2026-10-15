@@ -609,7 +609,13 @@ fn run_entity_types_system(ecs: &mut World) {
         }
 
         crate::remote_missile::advance(&mut world, tick);
-        crate::entity_run::phase_run_entity_thinks(&mut world, tick);
+        let predicting = !world
+            .ecs()
+            .resource::<StepRequest>()
+            .reason
+            .advances_authority_world()
+            && !predict_all_thinks();
+        crate::entity_run::phase_run_entity_thinks(&mut world, tick, predicting);
         if world.publishes_snapshot() {
             crate::equipment::refire_cs_smokes(&mut world, tick);
             world.world_objects_mut().glass_update(
@@ -630,6 +636,15 @@ fn run_entity_types_system(ecs: &mut World) {
             crate::cs_settings::publish_movement_cheats(&mut world);
         }
     }
+}
+
+/// `IW4L_PREDICT_ALL_THINKS=1`: a client's prediction steps think every entity, as the server's
+/// do (see `entity_run::phase_run_entity_thinks`).
+fn predict_all_thinks() -> bool {
+    static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ALL.get_or_init(|| {
+        std::env::var("IW4L_PREDICT_ALL_THINKS").is_ok_and(|value| value.trim() == "1")
+    })
 }
 
 fn dispatch_touches_system(ecs: &mut World) {

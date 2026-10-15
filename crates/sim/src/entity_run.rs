@@ -7,17 +7,22 @@ use entity_iw4::{
 };
 use math_iw4::snap_angles;
 
-pub(crate) fn phase_run_entity_thinks(world: &mut FrameWorld, tick: Tick) {
+/// `predicting`: a client's prediction step, where only what can move its own player counts
+/// (movers, items, parent links): projectiles and corpses are the server's, and what the client
+/// shows of them comes from its snapshots.
+pub(crate) fn phase_run_entity_thinks(world: &mut FrameWorld, tick: Tick, predicting: bool) {
     let time_ms = crate::corpse::level_time_ms(tick);
-    crate::corpse::phase_run_corpse_move(world, time_ms);
-    crate::corpse::phase_sync_corpse_info(world);
-    let WalkedThinks { order, dispatch } = walk_thinks(world, tick, time_ms, true);
+    if !predicting {
+        crate::corpse::phase_run_corpse_move(world, time_ms);
+        crate::corpse::phase_sync_corpse_info(world);
+    }
+    let WalkedThinks { order, dispatch } = walk_thinks(world, tick, time_ms, true, predicting);
     world.stamp_think_order_rows(order);
     world.stamp_think_dispatch(dispatch);
 }
 
 pub(crate) fn phase_walk_entity_thinks(world: &mut FrameWorld) {
-    let WalkedThinks { order, .. } = walk_thinks(world, Tick(0), 0, false);
+    let WalkedThinks { order, .. } = walk_thinks(world, Tick(0), 0, false, false);
     world.stamp_think_order_rows(order);
     world.stamp_think_dispatch(Vec::new());
 }
@@ -33,6 +38,11 @@ struct WalkCtx<'a> {
     order: &'a mut Vec<crate::EntityRef>,
     dispatch: &'a mut Vec<(i32, EntityRunKind)>,
     dispatch_machines: bool,
+    /// A client's prediction step: projectiles and corpses are not thought, nor a mover whose
+    /// rotation can't change (the snapshot just placed it; its think would find nothing to do).
+    predicting: bool,
+    /// While predicting: the movers whose rotation changes with time, sorted.
+    turning: Vec<i32>,
     /// The collision rows' owner keys, copied once per walk: each script mover finds its rows
     /// by searching this instead of the rows themselves (every probe of those missed the cache).
     owners: Vec<crate::AuthorityModelOwner>,
@@ -43,6 +53,7 @@ fn walk_thinks(
     tick: Tick,
     time_ms: i32,
     dispatch_machines: bool,
+    predicting: bool,
 ) -> WalkedThinks {
     let mut order = Vec::new();
     let mut dispatch = Vec::new();
@@ -53,6 +64,12 @@ fn walk_thinks(
             order: &mut order,
             dispatch: &mut dispatch,
             dispatch_machines,
+            predicting,
+            turning: if predicting {
+                world.turning_script_mover_numbers()
+            } else {
+                Vec::new()
+            },
             owners: world
                 .entity_collision_capabilities()
                 .iter()
@@ -91,6 +108,7 @@ fn run_think(world: &mut FrameWorld, number: i32, ctx: &mut WalkCtx<'_>) {
     }
     ctx.dispatch.push((entity.number(), kind));
     match kind {
+        EntityRunKind::Missile | EntityRunKind::PlayerCorpse if ctx.predicting => {}
         EntityRunKind::Missile => {
             crate::equipment::think_projectile(world, ctx.tick, entity.number());
         }
@@ -103,6 +121,10 @@ fn run_think(world: &mut FrameWorld, number: i32, ctx: &mut WalkCtx<'_>) {
                 crate::item::think_item_move(world, ctx.time_ms, entity.number());
             }
         }
+        EntityRunKind::ScriptMover | EntityRunKind::PrimaryLight
+            if ctx.predicting
+                && view.relations.parent.is_none()
+                && ctx.turning.binary_search(&entity.number()).is_err() => {}
         EntityRunKind::ScriptMover | EntityRunKind::PrimaryLight => {
             think_script_mover(world, ctx.tick, entity, &ctx.owners);
         }
@@ -156,13 +178,15 @@ fn think_script_mover(
         return;
     }
     let at_time = i32::try_from(tick.0.saturating_mul(crate::MATCH_TICK_MS)).unwrap_or(i32::MAX);
-    let Some(mover) = world.script_mover_by_number(entity.number()) else {
+    let Some((apos, id)) = world
+        .script_mover_ref_by_number(entity.number())
+        .map(|mover| (apos_from_entity_state(&mover.state), mover.id))
+    else {
         return;
     };
-    let apos = apos_from_entity_state(&mover.state);
     // The rows stay sorted by owner (install sorts them, inserts binary-search), so a mover's
     // rows are one run: a search, not a scan of every row for every mover on every step.
-    let owner = crate::AuthorityModelOwner::ScriptModel(mover.id);
+    let owner = crate::AuthorityModelOwner::ScriptModel(id);
     let rows = world.entity_collision_capabilities();
     let range = if owners.len() == rows.len() {
         let start = owners.partition_point(|have| *have < owner);

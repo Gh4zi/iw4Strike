@@ -126,8 +126,32 @@ impl FrameWorld<'_> {
     }
 
     pub(crate) fn script_mover_by_number(&self, number: i32) -> Option<ScriptMoverGentity> {
+        self.script_mover_ref_by_number(number).copied()
+    }
+
+    /// The entity numbers of the script movers whose rotation changes with time, sorted: in one
+    /// pass over the movers, not a lookup per number.
+    pub(crate) fn turning_script_mover_numbers(&mut self) -> Vec<i32> {
+        let mut numbers: Vec<i32> = self
+            .ecs
+            .query::<&ScriptMoverRow>()
+            .iter(self.ecs)
+            .filter(|row| {
+                !entity_iw4::trajectory_is_static(&crate::gentity::apos_from_entity_state(
+                    &row.0.state,
+                ))
+            })
+            .map(|row| row.0.state.number)
+            .collect();
+        numbers.sort_unstable();
+        numbers
+    }
+
+    /// [`Self::script_mover_by_number`] without the copy (its entity state is large; a think
+    /// reading two fields of every mover on every step copied it all).
+    pub(crate) fn script_mover_ref_by_number(&self, number: i32) -> Option<&ScriptMoverGentity> {
         let entity = entity_by_number(self.ecs, number)?;
-        Some(self.ecs.get::<ScriptMoverRow>(entity)?.0)
+        Some(&self.ecs.get::<ScriptMoverRow>(entity)?.0)
     }
 
     pub(crate) fn remove_script_mover_by_number(&mut self, number: i32) -> bool {

@@ -35,6 +35,12 @@ pub struct Trajectory {
     pub tr_base: [f32; 3],
 }
 
+/// Whether `tr` is the same at every time (what [`evaluate_trajectory`] returns is its base).
+#[must_use]
+pub fn trajectory_is_static(tr: &Trajectory) -> bool {
+    matches!(tr.tr_type, 0 | 1 | 9 | 0xc)
+}
+
 pub fn evaluate_trajectory(tr: &Trajectory, at_time: i32) -> [f32; 3] {
     match tr.tr_type {
         0 | 1 | 9 | 0xc => tr.tr_base,
