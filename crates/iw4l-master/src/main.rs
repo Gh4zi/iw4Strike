@@ -1091,15 +1091,30 @@ fn join_room(
         .member_names
         .insert(member_id, state.peers[&connection_id].player_name.clone());
     room.view.revision = room.view.revision.wrapping_add(1).max(1);
+    // A dedicated server's admins see where its players join from (player history, bans): the
+    // address goes to that host alone, never into the room's view every member gets.
+    let address = room.view.dedicated.then(|| {
+        (
+            room.host_connection_id,
+            state.peers[&connection_id].connection.remote_address().ip().to_string(),
+        )
+    });
     state.membership.insert(connection_id, room_id);
     state.generation = state.generation.wrapping_add(1);
     let view = room.view.clone();
+    let mut frames = state.publish_view(room_id);
+    if let Some((host, address)) = address {
+        frames.push((
+            host,
+            ControlFrame::PeerEvent(PeerEvent::MemberAddress { member_id, address }),
+        ));
+    }
     (
         ResponseBody::RoomJoined {
             member_id,
             view: view.clone(),
         },
-        state.publish_view(room_id),
+        frames,
     )
 }
 
@@ -1317,8 +1332,10 @@ fn admission_failed(
             let Some(room) = state.rooms.get(&room_id) else {
                 return (ResponseBody::Error(ServiceError::UnknownAdvert), Vec::new());
             };
+            // A member who already left (dropped, or refused and gone) has nothing to be told:
+            // an error here would end the host's session, closing the room for everyone.
             let Some(&target) = room.connection_of.get(&member_id) else {
-                return (ResponseBody::Error(ServiceError::NotMember), Vec::new());
+                return (ResponseBody::Ack, Vec::new());
             };
             (
                 ResponseBody::Ack,

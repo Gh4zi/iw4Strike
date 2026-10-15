@@ -1,3 +1,5 @@
+mod admin_hooks;
+pub use admin_hooks::RosterRow;
 pub mod adopt;
 pub mod bullet;
 mod shield;

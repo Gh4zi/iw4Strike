@@ -1,0 +1,27 @@
+[package]
+name = "admin"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "A dedicated server's admins: admin list and flags, player history, bans, commands from the console and chat, votes, and a web panel."
+
+[dependencies]
+bevy.workspace = true
+bots.workspace = true
+console.workspace = true
+diag.workspace = true
+frame.workspace = true
+master_protocol.workspace = true
+net.workspace = true
+sim.workspace = true
+serde_json.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The player history: one local file, no server to run.
+rusqlite = { version = "0.37", features = ["bundled"] }
+# The web panel.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1.47", features = ["net", "rt", "sync", "time"] }
+ring = "0.17"
+
+[lints]
+workspace = true

@@ -247,8 +247,20 @@ pub(crate) fn update_cs_chat(
             column
                 .spawn(text_bundle(&font, size, String::new(), [255, 255, 255]))
                 .with_children(|spans| {
-                    spans.spawn(span(&font, size, line.name.clone(), name_color));
-                    spans.spawn(span(&font, size, format!(" : {}", line.text), [255, 255, 255]));
+                    if line.text.is_empty() {
+                        // A line from the server itself (its admins): no name, white.
+                        for (piece, color) in color_pieces(&line.name, [255, 255, 255]) {
+                            spans.spawn(span(&font, size, piece, color));
+                        }
+                        return;
+                    }
+                    for (piece, color) in color_pieces(&line.name, name_color) {
+                        spans.spawn(span(&font, size, piece, color));
+                    }
+                    spans.spawn(span(&font, size, " : ".to_owned(), [255, 255, 255]));
+                    for (piece, color) in color_pieces(&line.text, [255, 255, 255]) {
+                        spans.spawn(span(&font, size, piece, color));
+                    }
                 });
         }
         if let Some(input) = &key.1 {
@@ -267,6 +279,42 @@ pub(crate) fn update_cs_chat(
         }
     });
     chat.shown = Some(key);
+}
+
+/// MW2's `^0`-`^9` colour codes: the pieces of `text` with their colours. `^7` (white) and `^8`
+/// go back to `base`, so a name keeps its team's colour after a coloured tag.
+fn color_pieces(text: &str, base: [u8; 3]) -> Vec<(String, [u8; 3])> {
+    let mut pieces = Vec::new();
+    let mut color = base;
+    let mut piece = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '^'
+            && let Some(code) = chars.peek().and_then(|code| code.to_digit(10))
+        {
+            chars.next();
+            if !piece.is_empty() {
+                pieces.push((std::mem::take(&mut piece), color));
+            }
+            color = match code {
+                0 => [0, 0, 0],
+                1 => [255, 77, 77],
+                2 => [110, 255, 110],
+                3 => [255, 225, 80],
+                4 => [90, 140, 255],
+                5 => [90, 230, 255],
+                6 => [255, 100, 220],
+                9 => [150, 150, 150],
+                _ => base,
+            };
+            continue;
+        }
+        piece.push(ch);
+    }
+    if !piece.is_empty() {
+        pieces.push((piece, color));
+    }
+    pieces
 }
 
 /// Whether MW2's allies play the Terrorists (the bomb mode's attackers, as the server says).
@@ -309,4 +357,20 @@ fn span(font: &Handle<Font>, size: f32, value: String, color: [u8; 3]) -> impl B
         },
         TextColor(Color::srgb_u8(color[0], color[1], color[2])),
     )
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::color_pieces;
+
+    #[test]
+    fn colour_codes_split_a_line() {
+        let white = [255, 255, 255];
+        assert_eq!(
+            color_pieces("^3[Admin]^7 hi", white),
+            [("[Admin]".to_owned(), [255, 225, 80]), (" hi".to_owned(), white)]
+        );
+        assert_eq!(color_pieces("plain", white), [("plain".to_owned(), white)]);
+        assert_eq!(color_pieces("50^ off", white), [("50^ off".to_owned(), white)]);
+    }
 }

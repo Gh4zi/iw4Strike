@@ -135,6 +135,9 @@ const EVENT_MAP_LOADED: u8 = 2;
 const EVENT_BOOTSTRAP_APPLIED: u8 = 3;
 const EVENT_ENTER_MATCH: u8 = 4;
 const EVENT_VOTE_TO_SKIP: u8 = 5;
+const EVENT_MEMBER_ADDRESS: u8 = 7;
+/// The longest member address the master sends (an IPv6 address with its zone fits).
+pub const MAX_MEMBER_ADDRESS_BYTES: usize = 64;
 const EVENT_ADMISSION_FAILED: u8 = 6;
 
 macro_rules! id_type {
@@ -642,6 +645,12 @@ pub enum PeerEvent {
     },
     VoteToSkip {
         member_id: MemberId,
+    },
+    /// The address a member connects from (an IP, no port), to a dedicated server's host only:
+    /// for its admins (player history, bans). Never sent to players, nor to a listen host.
+    MemberAddress {
+        member_id: MemberId,
+        address: String,
     },
 }
 
@@ -1340,6 +1349,16 @@ fn encode_peer_event(event: &PeerEvent) -> Vec<u8> {
             out.u8(EVENT_VOTE_TO_SKIP);
             out.bytes(&member_id.0);
         }
+        PeerEvent::MemberAddress { member_id, address } => {
+            out.u8(EVENT_MEMBER_ADDRESS);
+            out.bytes(&member_id.0);
+            let mut end = address.len().min(MAX_MEMBER_ADDRESS_BYTES);
+            while !address.is_char_boundary(end) {
+                end -= 1;
+            }
+            out.string(&address[..end], MAX_MEMBER_ADDRESS_BYTES)
+                .expect("a member address is cut to its bound");
+        }
     }
     out.0
 }
@@ -1380,6 +1399,10 @@ fn decode_peer_event(body: &mut Reader<'_>) -> Result<PeerEvent, ProtocolError> 
         },
         EVENT_VOTE_TO_SKIP => PeerEvent::VoteToSkip {
             member_id: MemberId(body.array()?),
+        },
+        EVENT_MEMBER_ADDRESS => PeerEvent::MemberAddress {
+            member_id: MemberId(body.array()?),
+            address: body.string(MAX_MEMBER_ADDRESS_BYTES)?,
         },
         tag => return Err(ProtocolError::UnknownTag(tag)),
     })

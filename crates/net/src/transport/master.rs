@@ -218,7 +218,7 @@ impl fmt::Display for TransportFault {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MasterLifecycleFact {
     MemberLeft {
         member_id: MemberId,
@@ -231,7 +231,48 @@ pub enum MasterLifecycleFact {
         member_id: MemberId,
         reason: AdmissionFailure,
     },
+    /// Where a member connects from: the master tells a dedicated server's host alone.
+    MemberAddress {
+        member_id: MemberId,
+        address: String,
+    },
 }
+
+/// The address each member of a dedicated server's room connects from (an IP), by member.
+#[derive(Resource, Debug, Default)]
+pub struct MemberAddresses(pub std::collections::HashMap<MemberId, String>);
+
+/// Who may not enter this server, with the line each is told: accounts and addresses. The
+/// admin layer keeps it; admission checks it before a player enters the match.
+#[derive(Resource, Debug, Default)]
+pub struct AdmissionBans {
+    pub accounts: std::collections::BTreeMap<sim::AccountId, String>,
+    pub addresses: std::collections::HashMap<String, String>,
+}
+
+impl AdmissionBans {
+    /// The refusal for a player with `account` joining from `address`, if they are banned.
+    #[must_use]
+    pub fn refusal(&self, account: Option<sim::AccountId>, address: Option<&str>) -> Option<&str> {
+        account
+            .and_then(|account| self.accounts.get(&account))
+            .or_else(|| address.and_then(|address| self.addresses.get(address)))
+            .map(String::as_str)
+    }
+}
+
+/// A player refused at admission (banned): who, from where, and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefusedAdmission {
+    pub member: MemberId,
+    pub account: Option<sim::AccountId>,
+    pub address: Option<String>,
+    pub reason: String,
+}
+
+/// Admissions refused since the admin layer last read them.
+#[derive(Resource, Debug, Default)]
+pub struct RefusedAdmissions(pub Vec<RefusedAdmission>);
 
 fn observe_live_start(in_match: bool, start_nonce: u32) -> bool {
     in_match && start_nonce != 0
@@ -1241,6 +1282,11 @@ fn apply_master_lifecycle(
     mut hub: Option<ResMut<UdpAuthorityHub>>,
     mut authority: Option<ResMut<AuthorityWorld>>,
     mut pending_notify: Option<ResMut<crate::PendingGameNotify>>,
+    (mut addresses, bans, mut refused): (
+        ResMut<MemberAddresses>,
+        Res<AdmissionBans>,
+        ResMut<RefusedAdmissions>,
+    ),
 ) {
     let Some(bridge) = bridge else {
         return;
@@ -1291,12 +1337,41 @@ fn apply_master_lifecycle(
                     authority.0.retire_client(client);
                 }
             }
+            MasterLifecycleFact::MemberAddress { member_id, address } => {
+                addresses.0.insert(member_id, address);
+            }
             MasterLifecycleFact::SessionClosed { .. } => {}
         }
+    }
+    // Members gone from the room take their addresses with them.
+    if matches!(state, MasterBridgeState::Hosting { .. }) && !addresses.0.is_empty() {
+        let members = state.members();
+        addresses.0.retain(|member, _| members.contains(member));
     }
     if let Some(hub) = hub.as_mut() {
         for admission in hub.take_committed_admissions() {
             let client = hub.client_of_member(admission.member_id);
+            let account = hub.account_of_connection(crate::transport::protocol::ConnectionId(
+                admission.connection_id,
+            ));
+            let address = addresses.0.get(&admission.member_id).cloned();
+            if let Some(reason) = bans.refusal(account, address.as_deref()) {
+                let reason = reason.to_owned();
+                diag::info!(Net, "admission refused for member {}: {reason}", admission.member_id);
+                if let Some(client) = client {
+                    hub.retire_client_with_reason(client, &reason);
+                    if let Some(authority) = authority.as_mut() {
+                        authority.0.retire_client(client);
+                    }
+                }
+                refused.0.push(RefusedAdmission {
+                    member: admission.member_id,
+                    account,
+                    address,
+                    reason,
+                });
+                continue;
+            }
             bridge.admit_enter(
                 admission.member_id,
                 admission.epoch,
@@ -1310,6 +1385,9 @@ fn apply_master_lifecycle(
 
 pub fn register_master_bridge(app: &mut App) {
     app.init_resource::<PendingMasterMenuAction>()
+        .init_resource::<MemberAddresses>()
+        .init_resource::<AdmissionBans>()
+        .init_resource::<RefusedAdmissions>()
         .add_systems(
             Update,
             (arm_master_browser, apply_master_menu_action)
@@ -2751,6 +2829,9 @@ fn apply_peer_event(
                     diag::info!(Net, "session-transition {}", applied.transition);
                 }
             }
+        }
+        master_protocol::PeerEvent::MemberAddress { member_id, address } if is_host => {
+            push_fact(facts, MasterLifecycleFact::MemberAddress { member_id, address });
         }
         master_protocol::PeerEvent::VoteToSkip { member_id } => {
             skip_voters.insert(member_id);

@@ -7,6 +7,7 @@ quinn-proto = { git = "https://github.com/quinn-rs/quinn", rev = "f650e0f213b01e
 [workspace]
 resolver = "3"
 members = [
+    "crates/admin",
     "crates/anim_iw4",
     "crates/approved_tests",
     "crates/asset_core",
@@ -114,6 +115,7 @@ serde_json = "1"
 async-lock = "3"
 sha2 = "0.10"
 png = "0.18"
+admin = { path = "crates/admin" }
 anim_iw4 = { path = "crates/anim_iw4" }
 asset_iw4 = { path = "crates/asset_iw4" }
 asset_core = { path = "crates/asset_core" }

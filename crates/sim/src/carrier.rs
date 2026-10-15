@@ -307,6 +307,88 @@ impl SimWorld {
             .collect()
     }
 
+    /// Chat lines starting `!`, `/` or `@` become commands for the admin layer (a server's
+    /// admins), taken with [`Self::take_chat_commands`]. Off: every line is said.
+    pub fn set_chat_commands(&mut self, on: bool) {
+        self.ecs
+            .get_resource_or_insert_with(crate::admin_hooks::AdminHooks::default)
+            .chat_commands = on;
+    }
+
+    /// The command lines said since the last call: who said what.
+    pub fn take_chat_commands(&mut self) -> Vec<(ClientId, String)> {
+        self.ecs
+            .get_resource_mut::<crate::admin_hooks::AdminHooks>()
+            .map(|mut hooks| std::mem::take(&mut hooks.lines))
+            .unwrap_or_default()
+    }
+
+    /// Kills `id` at the next step, as an admin's slay (no cheats needed, unlike `kill`).
+    pub fn admin_slay(&mut self, id: ClientId) {
+        self.ecs
+            .get_resource_or_insert_with(crate::admin_hooks::AdminHooks::default)
+            .slays
+            .push(id);
+    }
+
+    /// Gags `id` (their chat is not said) or lets them speak again.
+    pub fn set_gagged(&mut self, id: ClientId, gagged: bool) {
+        let mut hooks = self
+            .ecs
+            .get_resource_or_insert_with(crate::admin_hooks::AdminHooks::default);
+        if gagged {
+            hooks.gagged.insert(id);
+        } else {
+            hooks.gagged.remove(&id);
+        }
+    }
+
+    /// The lines said since the last call (with chat commands on): who said what.
+    pub fn take_said(&mut self) -> Vec<(ClientId, String)> {
+        self.ecs
+            .get_resource_mut::<crate::admin_hooks::AdminHooks>()
+            .map(|mut hooks| std::mem::take(&mut hooks.said))
+            .unwrap_or_default()
+    }
+
+    /// A game script setting (dvar) as the scripts see it.
+    pub fn gsc_dvar(&self, name: &str) -> Option<String> {
+        self.ecs
+            .get_resource::<crate::script::Runtime>()?
+            .dvars
+            .get(&name.to_ascii_lowercase())
+            .cloned()
+    }
+
+    /// A line in the chat box: to `recipient` alone, or to everyone.
+    pub fn print_chat(&mut self, recipient: Option<ClientId>, text: &str) {
+        let text: String = text.chars().filter(|c| !c.is_control()).collect();
+        self.frame().push_print(crate::PendingPrint {
+            recipient,
+            bold: false,
+            chat: true,
+            template: format!("{}&&1", crate::HUD_STRING_PLAIN),
+            arg: text,
+        });
+    }
+
+    /// A bold line in the middle of everyone's screen.
+    pub fn print_center(&mut self, text: &str) {
+        let text: String = text.chars().filter(|c| !c.is_control()).collect();
+        self.frame().push_print(crate::PendingPrint {
+            recipient: None,
+            bold: true,
+            chat: false,
+            template: format!("{}&&1", crate::HUD_STRING_PLAIN),
+            arg: text,
+        });
+    }
+
+    /// The account `id` proved when it joined (none for bots).
+    pub fn account_of(&self, id: ClientId) -> Option<crate::AccountId> {
+        self.ecs.resource::<crate::PersistentDataStore>().account(id)
+    }
+
     pub fn retire_client(&mut self, id: ClientId) {
         let mut runtime = self.ecs.resource_mut::<crate::script::Runtime>();
         if runtime.players.contains_key(&id.0) {

@@ -378,6 +378,17 @@ impl ClientCommandInbox {
         }
     }
 
+    /// `id`'s round trip as its commands show it (ms): the quickest age a command arrived at
+    /// over the last second (the server time the client had seen when sending, to now).
+    pub fn latency_ms(&self, id: ClientId) -> Option<i32> {
+        self.playout
+            .get(&id)?
+            .arrivals
+            .iter()
+            .map(|(_, quickest, _)| *quickest)
+            .min()
+    }
+
     pub fn pending(&self, id: ClientId) -> usize {
         self.queued.get(&id).map_or(0, VecDeque::len)
     }

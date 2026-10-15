@@ -140,6 +140,15 @@ fn relay_send_error(message: &'static str) -> UdpSendError {
     UdpSendError::Io(io::Error::new(io::ErrorKind::WouldBlock, message))
 }
 
+/// A connected player as a server's admins see them: their slot, relay member and the account
+/// they proved (none until proven).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectedPeer {
+    pub client: ClientId,
+    pub member: MemberId,
+    pub account: Option<sim::AccountId>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommittedAdmission {
     pub member_id: MemberId,
@@ -382,6 +391,29 @@ impl UdpAuthorityHub {
             !bound
         });
         ready
+    }
+
+    /// Every connected player with a slot.
+    pub fn connected_peers(&self) -> Vec<ConnectedPeer> {
+        self.member_by_conn
+            .iter()
+            .filter_map(|(conn, member)| {
+                let client = self.connections.client_of(*conn)?;
+                Some(ConnectedPeer {
+                    client: ClientId(client),
+                    member: *member,
+                    account: self.account_of_connection(*conn),
+                })
+            })
+            .collect()
+    }
+
+    /// The account the player on `conn` proved.
+    pub fn account_of_connection(&self, conn: ConnectionId) -> Option<sim::AccountId> {
+        self.replication
+            .get(&conn)
+            .and_then(|peer| peer.account.as_ref())
+            .and_then(|account| account.owner)
     }
 
     pub fn client_of_member(&self, member_id: master_protocol::MemberId) -> Option<ClientId> {

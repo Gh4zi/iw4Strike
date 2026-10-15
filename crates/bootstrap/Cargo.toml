@@ -21,6 +21,7 @@ bevy-trace = ["bevy/trace", "bevy/trace_chrome"]
 bevy-profile = ["bevy/trace", "bevy/debug", "dep:profiling"]
 
 [dependencies]
+admin.workspace = true
 # Only for `bevy-profile`: turns wgpu's `profiling::scope!` markers into tracing spans.
 profiling = { version = "1.0.18", optional = true, features = ["profile-with-tracing"] }
 bevy.workspace = true

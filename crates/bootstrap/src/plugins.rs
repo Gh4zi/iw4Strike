@@ -46,6 +46,10 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
         .add_plugins(ReplayPlugin)
         .add_plugins(RenderPlugin)
         .add_plugins(SessionPlugin);
+    // A dedicated server's admins, player history, bans and web panel.
+    if role == RuntimeRole::Dedicated {
+        app.add_plugins(admin::AdminPlugin);
+    }
 
     // Bevy lays the whole UI tree out, and rebuilds its draw order, every frame. With none of
     // what they read changed, that is last frame's result again, and walking the HUD's tree for

@@ -404,6 +404,68 @@ fn emit_raw(
     }
 }
 
+/// Recent log lines (info and above) kept in memory for a viewer in the process (a server's web
+/// panel): off until [`enable_log_tap`].
+struct LogTap {
+    next: u64,
+    capacity: usize,
+    /// (number, unix seconds, line).
+    lines: std::collections::VecDeque<(u64, u64, String)>,
+}
+
+static LOG_TAP: std::sync::Mutex<Option<LogTap>> = std::sync::Mutex::new(None);
+
+/// Keeps the last `capacity` log lines of info level and above for [`log_tap_since`].
+pub fn enable_log_tap(capacity: usize) {
+    if let Ok(mut tap) = LOG_TAP.lock()
+        && tap.is_none()
+    {
+        *tap = Some(LogTap {
+            next: 1,
+            capacity: capacity.max(1),
+            lines: std::collections::VecDeque::new(),
+        });
+    }
+}
+
+/// The kept lines after `seq` (0: all of them), each with its number and unix time, and the next
+/// number.
+pub fn log_tap_since(seq: u64) -> (Vec<(u64, u64, String)>, u64) {
+    let Ok(tap) = LOG_TAP.lock() else {
+        return (Vec::new(), seq);
+    };
+    let Some(tap) = tap.as_ref() else {
+        return (Vec::new(), seq);
+    };
+    let lines = tap
+        .lines
+        .iter()
+        .filter(|(n, _, _)| *n > seq)
+        .cloned()
+        .collect();
+    (lines, tap.next)
+}
+
+fn tap_line(ch: Channel, lvl: Level, msg: &str) {
+    if matches!(lvl, Level::Debug) {
+        return;
+    }
+    if let Ok(mut tap) = LOG_TAP.lock()
+        && let Some(tap) = tap.as_mut()
+    {
+        let n = tap.next;
+        tap.next += 1;
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        tap.lines
+            .push_back((n, at, format!("{}  {}  {msg}", ch.as_str(), lvl.as_str())));
+        while tap.lines.len() > tap.capacity {
+            tap.lines.pop_front();
+        }
+    }
+}
+
 pub fn write_event(
     ch: Channel,
     lvl: Level,
@@ -411,6 +473,7 @@ pub fn write_event(
     ev: Option<&str>,
     fields: Option<&serde_json::Value>,
 ) {
+    tap_line(ch, lvl, msg);
     let Some(sink) = SINK.get() else {
         eprintln!("{}  {}  {msg}", ch.as_str(), lvl.as_str());
         return;

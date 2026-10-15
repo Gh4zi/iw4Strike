@@ -254,6 +254,17 @@ fn apply_actions_system(world: &mut World) {
 
     frame.enter_kernel_phase(crate::gentity::KernelPhase::ApplyActions);
     apply_actions(&mut frame, tick, &actions);
+    // An admin's slays, on the server's own steps only.
+    if frame.publishes_snapshot() {
+        let slays = frame
+            .ecs()
+            .get_resource_mut::<crate::admin_hooks::AdminHooks>()
+            .map(|mut hooks| std::mem::take(&mut hooks.slays))
+            .unwrap_or_default();
+        for id in slays {
+            crate::script::force_death(frame.ecs(), tick, id.0);
+        }
+    }
 }
 
 fn run_players_system(ecs: &mut World) {
@@ -1040,7 +1051,19 @@ fn apply_actions(world: &mut FrameWorld, tick: Tick, actions: &[(ClientId, Clien
                 );
             }
             ClientAction::Say { text, .. } => {
-                crate::cs_chat::say(world, *id, crate::chat_text(&text));
+                let text = crate::chat_text(&text);
+                // A server with admins: `!`, `/` and `@` lines are commands, a gagged player
+                // says nothing, and what is said is kept for the chat log.
+                let said = match world
+                    .ecs()
+                    .get_resource_mut::<crate::admin_hooks::AdminHooks>()
+                {
+                    Some(mut hooks) if hooks.chat_commands => hooks.take_line(*id, text),
+                    _ => true,
+                };
+                if said {
+                    crate::cs_chat::say(world, *id, text);
+                }
             }
             ClientAction::ToggleNoclip { .. } => {
                 // MW2's `noclip` without its cheat check: any living player, on or off.

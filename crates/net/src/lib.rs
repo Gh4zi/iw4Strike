@@ -35,6 +35,7 @@ pub use authority::runtime::{
     AuthorityInputGate, AuthorityLoadHold, AuthorityPhaseCensus, AuthorityPhaseTrace,
     AuthorityWorld, ClientShotSamples, DumpConfigurationChangeLog, DumpDeathLog, DumpGiveLog,
     FixedUpdateCensus, ListenFanoutCensus, NetDiagnostics, PendingAcks, PendingAuthorityInput,
+    PendingConnectionFaults,
     PendingStepResult, ServerTick, ServerTickData, authority_bookkeeping, authority_should_tick,
 };
 pub use client::frame_census::{ClientPhaseCensus, HUD_STAGE_N, UpdatePhaseCensus};
@@ -147,7 +148,8 @@ pub use transport::frame::{
 };
 pub use transport::loopback_live::{ListenLoopback, ReceivedTick};
 pub use transport::master::{
-    CONTENT_IW4, CONTENT_IW5, CONTENT_T5, MasterAdvert, MasterBridge, MasterBridgeState,
+    AdmissionBans, CONTENT_IW4, CONTENT_IW5, CONTENT_T5, MasterAdvert, MasterBridge, MasterBridgeState,
+    MemberAddresses, RefusedAdmission, RefusedAdmissions,
     MasterBrowser, MasterBrowserSnapshot, MasterLaunchIntent, MasterLifecycleFact,
     MasterMatchOffer, MasterMatchStart, MasterMenuAction, PendingMasterMenuAction, SessionIdentity,
     TransportFault, content_inventory, content_names, content_required_by_map,
@@ -169,7 +171,7 @@ pub use transport::reliable::{
     ActionVerdict, MAX_PENDING_RELIABLE, ReliableEventHub, ReliableEventQueue, ReliablePayload,
     ReliableRow, decode_reliable_payload, encode_reliable_payload,
 };
-pub use transport::udp_session::{CommittedAdmission, UdpAuthorityHub, UdpClientLink};
+pub use transport::udp_session::{CommittedAdmission, ConnectedPeer, UdpAuthorityHub, UdpClientLink};
 pub use transport::udp_socket::UdpSendError;
 pub use transport::wire::{WireError, WireReader, WireWriter};
 

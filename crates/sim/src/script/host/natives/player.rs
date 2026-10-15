@@ -259,15 +259,33 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let client = player(world, receiver)?;
         Ok(Value::Int((client == 0).into()))
     });
+    // A player's proven account (bots and unbound slots: their slot number, as before).
     registry.register(Method, "getguid", |world, receiver, _| {
         let client = player(world, receiver)?;
+        let account = world
+            .resource::<crate::PersistentDataStore>()
+            .account(crate::ClientId(client));
         Ok(Value::String(
-            format!("{:016x}", u64::from(client) + 1).into(),
+            match account {
+                Some(account) => account.0.iter().map(|b| format!("{b:02x}")).collect(),
+                None => format!("{:016x}", u64::from(client) + 1),
+            }
+            .into(),
         ))
     });
+    // MW2's XUID is 64 bits: the account's first eight bytes.
     registry.register(Method, "getxuid", |world, receiver, _| {
         let client = player(world, receiver)?;
-        Ok(Value::String(format!("{:x}", u64::from(client) + 1).into()))
+        let account = world
+            .resource::<crate::PersistentDataStore>()
+            .account(crate::ClientId(client));
+        Ok(Value::String(
+            match account {
+                Some(account) => account.0[..8].iter().map(|b| format!("{b:02x}")).collect(),
+                None => format!("{:x}", u64::from(client) + 1),
+            }
+            .into(),
+        ))
     });
     registry.register(Method, "isusingonlinedataoffline", |world, receiver, _| {
         player(world, receiver)?;

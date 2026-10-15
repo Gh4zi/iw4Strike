@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server Panel</title>
+<style>
+:root {
+  --bg: #0f1013;
+  --side: #15161a;
+  --card: #1a1b20;
+  --card2: #202228;
+  --line: #2a2c33;
+  --text: #e7e8ec;
+  --muted: #8c909a;
+  --accent: #8cc63f;
+  --accent2: #a8dc5c;
+  --on-accent: #0f1608;
+  --good: #22c55e;
+  --warn: #f59e0b;
+  --bad: #ef4444;
+  --info: #3b82f6;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent2); text-decoration: none; }
+button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--card2);
+  color: var(--text); padding: 6px 12px; border-radius: 6px; }
+button:hover { border-color: #3a3d46; background: #262830; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.primary:hover { background: var(--accent2); border-color: var(--accent2); }
+button.danger { color: #fff; background: #b4232c; border-color: #b4232c; }
+button.small { padding: 3px 8px; font-size: 12px; }
+input, select, textarea { font: inherit; color: var(--text); background: #121317; border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; outline: none; width: 100%; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+[hidden] { display: none !important; }
+
+/* Login */
+#login { min-height: 100%; display: grid; place-items: center; padding: 16px; }
+.login-card { width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 28px; }
+.brand { font-weight: 700; font-size: 20px; letter-spacing: .3px; }
+.brand b { color: var(--accent); }
+.login-card .brand { font-size: 24px; margin-bottom: 2px; }
+.login-card p { color: var(--muted); margin: 0 0 20px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.error { color: var(--bad); min-height: 20px; font-size: 13px; margin-top: 8px; }
+
+/* Layout */
+#app { display: grid; grid-template-columns: 220px 1fr; min-height: 100%; }
+aside { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  position: sticky; top: 0; height: 100vh; }
+aside .brand { padding: 18px 18px 14px; border-bottom: 1px solid var(--line); }
+nav { padding: 10px 8px; flex: 1; }
+nav a { display: flex; align-items: center; gap: 10px; color: var(--muted); padding: 9px 12px;
+  border-radius: 8px; margin-bottom: 2px; }
+nav a:hover { color: var(--text); background: #1d1f24; }
+nav a.on { color: #fff; background: #19230f; box-shadow: inset 3px 0 0 var(--accent); }
+nav svg { width: 17px; height: 17px; flex: none; }
+.me { padding: 14px 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.me b { color: var(--text); }
+main { min-width: 0; }
+header.top { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line);
+  background: var(--bg); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
+header.top h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px;
+  background: var(--card2); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 8px var(--good); }
+.dot.off { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+#view { padding: 22px 24px 40px; }
+h2 { font-size: 18px; margin: 0 0 14px; font-weight: 600; }
+h3 { font-size: 14px; margin: 0 0 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+.card .v { font-size: 22px; font-weight: 650; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.panel.flush { padding: 0; overflow: hidden; }
+.panel.flush > h3 { padding: 14px 16px 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; background: #17181c; }
+tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: #1e2025; }
+tr.click { cursor: pointer; }
+td.wrap { white-space: normal; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.muted { color: var(--muted); }
+.actions { display: flex; gap: 6px; }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 5px; font-size: 11.5px; border: 1px solid var(--line); color: var(--muted); }
+.tag.good { color: var(--good); border-color: #1d5a35; background: #102418; }
+.tag.bad { color: #ff8080; border-color: #6b1f24; background: #2a1214; }
+.tag.warn { color: var(--warn); border-color: #6a4a10; background: #2a1f0c; }
+.tag.admin { color: var(--accent2); border-color: #3c5a1c; background: #182210; }
+.empty { color: var(--muted); padding: 22px; text-align: center; }
+.toolbar { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; flex-wrap: wrap; }
+.toolbar input { max-width: 360px; }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; }
+.kv div:nth-child(odd) { color: var(--muted); }
+.list { margin: 0; padding: 0; list-style: none; }
+.list li { padding: 7px 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; }
+.list li:last-child { border-bottom: 0; }
+
+/* Console */
+#console-out { background: #0b0c0e; border: 1px solid var(--line); border-radius: 10px; height: calc(100vh - 230px);
+  min-height: 260px; overflow-y: auto; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+#console-out .ll .t { color: #5d616b; margin-right: 10px; }
+#console-out .chat { color: #f1f2f5; }
+#console-out .players { color: #7fd4e8; }
+#console-out .admin { color: var(--accent2); }
+#console-out .log { color: #8c909a; }
+#console-out .warn { color: var(--warn); }
+#console-out .error { color: #ff7070; }
+#console-out .cmd { color: var(--accent2); }
+#console-out .reply { color: #9fd3ff; }
+.filters { display: flex; gap: 14px; flex-wrap: wrap; }
+.check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; cursor: pointer; user-select: none; }
+.check input { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+.console-in { display: flex; gap: 8px; margin-top: 10px; }
+.console-in input { font-family: var(--mono); }
+
+/* Modal and toasts */
+#modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: grid; place-items: center; z-index: 10; padding: 16px; }
+.modal-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: 100%; max-width: 420px; }
+.modal-card h2 { margin-bottom: 14px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+#toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 20; max-width: min(460px, calc(100vw - 32px)); }
+.toast { background: var(--card2); border: 1px solid var(--line); border-left: 3px solid var(--info); border-radius: 8px;
+  padding: 10px 14px; white-space: pre-wrap; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.toast.bad { border-left-color: var(--bad); }
+
+@media (max-width: 760px) {
+  #app { grid-template-columns: 1fr; }
+  aside { position: static; height: auto; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; }
+  nav a { margin: 0; }
+  .me { display: none; }
+  #view, header.top { padding-left: 16px; padding-right: 16px; }
+}
+</style>
+</head>
+<body>
+
+<div id="login" hidden>
+  <form class="login-card" id="login-form" autocomplete="on">
+    <div class="brand">iw4<b>Strike</b></div>
+    <p>Server panel</p>
+    <div class="field"><label for="login-name">Name</label><input id="login-name" autocomplete="username" required></div>
+    <div class="field"><label for="login-pass">Password</label><input id="login-pass" type="password" autocomplete="current-password" required></div>
+    <button class="primary" style="width:100%;margin-top:6px" type="submit">Sign in</button>
+    <div class="error" id="login-error"></div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <aside>
+    <div class="brand">iw4<b>Strike</b> <span class="muted" style="font-weight:400;font-size:13px">panel</span></div>
+    <nav id="nav">
+      <a href="#/dashboard" data-page="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Dashboard</a>
+      <a href="#/players" data-page="players"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6"/><path d="M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5-4-6"/></svg>Players</a>
+      <a href="#/console" data-page="console"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-5-6-5M12 19h8"/></svg>Console</a>
+      <a href="#/bans" data-page="bans"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>Bans</a>
+      <a href="#/audit" data-page="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Admin log</a>
+    </nav>
+    <div class="me"><span>Signed in as <b id="me-name"></b></span><button class="small" id="logout">Sign out</button></div>
+  </aside>
+  <main>
+    <header class="top">
+      <span class="dot" id="live-dot"></span>
+      <h1 id="host">Server</h1>
+      <span class="pill" id="pill-map">-</span>
+      <span class="pill" id="pill-players">0 players</span>
+      <span class="pill" id="pill-vote" hidden></span>
+    </header>
+    <section id="view"></section>
+  </main>
+</div>
+
+<div id="modal" hidden></div>
+<div id="toasts"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+let me = null, status = null, timer = null, consoleSince = 0, consoleTimer = null;
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+
+async function api(path, body) {
+  const opts = { credentials: "same-origin", headers: {} };
+  if (body !== undefined) {
+    opts.method = "POST";
+    opts.headers["content-type"] = "application/json";
+    opts.headers["x-panel"] = "1";
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  let data = {};
+  try { data = await res.json(); } catch (_) {}
+  if (res.status === 401 && path !== "/api/login") { showLogin(); throw new Error("sign in"); }
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function toast(text, bad) {
+  const t = h("div", { class: "toast" + (bad ? " bad" : "") }, text);
+  $("#toasts").append(t);
+  setTimeout(() => t.remove(), bad ? 7000 : 4500);
+}
+
+const q = (s) => '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+async function run(line, quiet) {
+  try {
+    const r = await api("/api/command", { line });
+    if (!quiet && r.lines && r.lines.length) toast(r.lines.join("\n"));
+    return r.lines || [];
+  } catch (e) { toast(e.message, true); return null; }
+}
+
+const isRoot = () => me && me.root;
+const can = (flag) => me && (me.root || me.flags.includes(flag));
+function when(sec) { return sec ? new Date(sec * 1000).toLocaleString() : "-"; }
+function ago(sec) {
+  if (!sec) return "-";
+  const d = Math.max(0, Date.now() / 1000 - sec);
+  if (d < 60) return "just now";
+  if (d < 3600) return Math.floor(d / 60) + " min ago";
+  if (d < 86400) return Math.floor(d / 3600) + " h ago";
+  return Math.floor(d / 86400) + " days ago";
+}
+function span(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h " + Math.floor(sec % 3600 / 60) + "m";
+  return Math.floor(sec / 86400) + "d " + Math.floor(sec % 86400 / 3600) + "h";
+}
+const teamName = (t) => ({ 1: "T", 2: "CT", 3: "Spec" }[t] || "-");
+
+/* ---- Modal ---- */
+function modal(title, fields, submitText, onSubmit, danger) {
+  const m = $("#modal");
+  m.replaceChildren();
+  const inputs = {};
+  const form = h("form", { class: "modal-card" },
+    h("h2", {}, title),
+    fields.map((f) => {
+      let input;
+      if (f.options) input = h("select", { id: "m-" + f.name }, f.options.map(([v, l]) => h("option", { value: v, selected: v === f.value }, l)));
+      else input = h("input", { id: "m-" + f.name, value: f.value || "", placeholder: f.placeholder || "" });
+      inputs[f.name] = input;
+      return h("div", { class: "field" }, h("label", { for: "m-" + f.name }, f.label), input);
+    }),
+    h("div", { class: "modal-actions" },
+      h("button", { type: "button", onclick: () => (m.hidden = true) }, "Cancel"),
+      h("button", { type: "submit", class: danger ? "danger" : "primary" }, submitText)));
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const values = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value.trim()]));
+    m.hidden = true;
+    await onSubmit(values);
+  });
+  m.append(form);
+  m.hidden = false;
+  const first = form.querySelector("input,select");
+  if (first) first.focus();
+}
+$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") e.target.hidden = true; });
+
+const banLengths = [["60", "1 hour"], ["1440", "1 day"], ["10080", "1 week"], ["43200", "30 days"], ["0", "Forever"]];
+function kickPlayer(p) {
+  modal("Kick " + p.name, [{ name: "reason", label: "Reason", placeholder: "Kicked by an admin" }], "Kick",
+    async (v) => { await run(`kick #${p.slot} ${q(v.reason || "Kicked by an admin")}`); refresh(); }, true);
+}
+function banPlayer(p) {
+  modal("Ban " + p.name, [
+    { name: "minutes", label: "Length", options: banLengths, value: "1440" },
+    { name: "reason", label: "Reason", placeholder: "Banned by an admin" }], "Ban",
+    async (v) => {
+      const who = p.slot != null ? "#" + p.slot : p.account;
+      const cmd = p.slot != null ? "ban" : "addban";
+      await run(`${cmd} ${who} ${v.minutes} ${q(v.reason || "Banned by an admin")}`); refresh();
+    }, true);
+}
+function messagePlayer(p) {
+  modal("Message " + p.name, [{ name: "text", label: "Message" }], "Send",
+    async (v) => { if (v.text) await run(`psay #${p.slot} ${q(v.text)}`); });
+}
+
+/* ---- Pages ---- */
+function playerActions(p) {
+  if (p.slot == null) return [];
+  return h("div", { class: "actions" },
+    can("j") && h("button", { class: "small", onclick: (e) => { e.stopPropagation(); messagePlayer(p); } }, "Message"),
+    can("f") && p.alive && h("button", { class: "small", onclick: (e) => { e.stopPropagation(); run("slay #" + p.slot); } }, "Slay"),
+    can("c") && h("button", { class: "small", onclick: (e) => { e.stopPropagation(); kickPlayer(p); } }, "Kick"),
+    can("d") && !p.bot && h("button", { class: "small danger", onclick: (e) => { e.stopPropagation(); banPlayer(p); } }, "Ban"));
+}
+
+// The online table: rebuilt when who is on (or their state) changes; numbers update in place,
+// so a button is never swapped out under the pointer.
+function onlineTable(players, cells) {
+  if (!players.length) return h("div", { class: "empty" }, "Nobody is on the server.");
+  return h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, ["#", "Name", "Team", "K / D", "Score", "Ping", isRoot() && "Address", "Online", ""].filter((x) => x !== false).map((x) => h("th", {}, x)))),
+    h("tbody", {}, players.map((p) => {
+      const c = cells[p.slot] = {
+        team: h("td", {}), kd: h("td", {}), score: h("td", {}), ping: h("td", {}), online: h("td", { class: "muted" }),
+      };
+      fillCells(c, p);
+      return h("tr", { class: p.account ? "click" : "", onclick: () => p.account && (location.hash = "#/player/" + p.account) },
+        h("td", { class: "muted" }, p.slot),
+        h("td", {}, p.name || "(connecting)", " ", p.bot && h("span", { class: "tag" }, "bot"), " ", p.admin && h("span", { class: "tag admin", title: "admin flags" }, p.admin), " ", !p.alive && !p.bot && h("span", { class: "tag" }, "dead")),
+        c.team, c.kd, c.score, c.ping,
+        isRoot() && h("td", { class: "mono" }, p.ip || "-"),
+        c.online,
+        h("td", {}, playerActions(p)));
+    }))));
+}
+function fillCells(c, p) {
+  c.team.textContent = teamName(p.team);
+  c.kd.textContent = p.kills + " / " + p.deaths;
+  c.score.textContent = p.score;
+  c.ping.textContent = p.ping != null ? p.ping + " ms" : "-";
+  c.online.textContent = p.bot ? "-" : span(Date.now() / 1000 - p.joined);
+}
+
+async function pageDashboard(view) {
+  const cards = h("div", { class: "cards" });
+  const online = h("div", { class: "panel flush" });
+  let shape = null, cells = {};
+  view.replaceChildren(cards, online,
+    can("j") && h("div", { class: "panel" }, h("h3", {}, "Message everyone"),
+      h("form", { class: "console-in", onsubmit: async (e) => { e.preventDefault(); const i = e.target.querySelector("input"); if (i.value.trim()) { await run("say " + q(i.value.trim()), true); toast("Sent."); i.value = ""; } } },
+        h("input", { placeholder: "Text for the chat" }), h("button", { class: "primary" }, "Send"))));
+  const draw = () => {
+    const s = status || {};
+    const players = s.players || [];
+    const humans = players.filter((p) => !p.bot).length;
+    cards.replaceChildren(
+        h("div", { class: "card" }, h("div", { class: "k" }, "Players"), h("div", { class: "v" }, `${humans}${s.max ? " / " + s.max : ""}`), h("div", { class: "muted" }, `${players.length - humans} bot(s)`)),
+        h("div", { class: "card" }, h("div", { class: "k" }, "Map"), h("div", { class: "v" }, s.map || "-"), h("div", { class: "muted" }, s.gametype || "")),
+        h("div", { class: "card" }, h("div", { class: "k" }, "Uptime"), h("div", { class: "v" }, span(s.uptime)), h("div", { class: "muted" }, "since " + when(s.started))),
+        h("div", { class: "card" }, h("div", { class: "k" }, "Bans in force"), h("div", { class: "v" }, s.bans ?? 0), h("div", { class: "muted" }, `${s.admins ?? 0} admin(s) in the admins file`)));
+    const key = players.map((p) => [p.slot, p.name, p.bot, p.alive, p.admin, p.account, p.ip].join("|")).join(";") + isRoot();
+    if (key !== shape) {
+      shape = key; cells = {};
+      online.replaceChildren(h("h3", {}, "Online now"), onlineTable(players, cells));
+    } else {
+      for (const p of players) if (cells[p.slot]) fillCells(cells[p.slot], p);
+    }
+  };
+  draw();
+  timer = setInterval(async () => { await refreshStatus(); draw(); }, 2000);
+}
+
+async function pagePlayers(view) {
+  const input = h("input", { placeholder: isRoot() ? "Name, account id or address" : "Name or account id", value: sessionStorage.getItem("q") || "" });
+  const out = h("div", { class: "panel flush" });
+  view.replaceChildren(h("h2", {}, "Players"), h("div", { class: "toolbar" }, input), out);
+  let t = null;
+  const search = async () => {
+    sessionStorage.setItem("q", input.value);
+    try {
+      const r = await api("/api/players?q=" + encodeURIComponent(input.value.trim()));
+      if (!r.players.length) { out.replaceChildren(h("div", { class: "empty" }, "No player found.")); return; }
+      out.replaceChildren(h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Name", "Account", isRoot() && "Last address", "Last seen", "Sessions", "Played", ""].filter((x) => x !== false).map((x) => h("th", {}, x)))),
+        h("tbody", {}, r.players.map((p) => h("tr", { class: "click", onclick: () => (location.hash = "#/player/" + p.account) },
+          h("td", {}, p.name),
+          h("td", { class: "mono muted" }, p.account.slice(0, 12) + "…"),
+          isRoot() && h("td", { class: "mono" }, p.ip || "-"),
+          h("td", { title: when(p.last_seen) }, ago(p.last_seen)),
+          h("td", {}, p.sessions),
+          h("td", {}, span(p.playtime)),
+          h("td", {}, p.online != null && h("span", { class: "tag good" }, "online #" + p.online))))))));
+    } catch (e) { out.replaceChildren(h("div", { class: "empty" }, e.message)); }
+  };
+  input.addEventListener("input", () => { clearTimeout(t); t = setTimeout(search, 250); });
+  input.focus();
+  search();
+}
+
+async function pagePlayer(view, account) {
+  view.replaceChildren(h("div", { class: "empty" }, "Loading…"));
+  let p;
+  try { p = await api("/api/player/" + encodeURIComponent(account)); }
+  catch (e) { view.replaceChildren(h("div", { class: "empty" }, e.message)); return; }
+  const live = (status && status.players || []).find((x) => x.account === p.account);
+  const activeBans = p.bans.filter((b) => b.state === "active");
+  const notes = h("ul", { class: "list" }, p.notes.length ? p.notes.map((n) => h("li", {}, h("span", { class: "wrap" }, n.text), h("span", { class: "muted" }, n.author + ", " + ago(n.created)))) : h("li", { class: "muted" }, "No notes."));
+  view.replaceChildren(
+    h("div", { class: "toolbar" },
+      h("h2", { style: "margin:0" }, p.name), live ? h("span", { class: "tag good" }, "online #" + live.slot) : h("span", { class: "tag" }, "offline"),
+      activeBans.length > 0 && h("span", { class: "tag bad" }, "banned"),
+      h("span", { style: "flex:1" }),
+      live && playerActions(live),
+      !live && can("d") && !activeBans.length && h("button", { class: "small danger", onclick: () => banPlayer({ name: p.name, account: p.account }) }, "Ban"),
+      can("e") && activeBans.length > 0 && h("button", { class: "small", onclick: async () => { await run("unban " + p.account); route(); } }, "Unban")),
+    h("div", { class: "grid2" },
+      h("div", { class: "panel" }, h("h3", {}, "Player"), h("div", { class: "kv" },
+        h("div", {}, "Account"), h("div", { class: "mono" }, p.account),
+        h("div", {}, "First seen"), h("div", {}, when(p.first_seen)),
+        h("div", {}, "Last seen"), h("div", {}, when(p.last_seen)),
+        h("div", {}, "Sessions"), h("div", {}, p.sessions_count),
+        h("div", {}, "Played"), h("div", {}, span(p.playtime)),
+        isRoot() && h("div", {}, "Last address"), isRoot() && h("div", { class: "mono" }, p.ip || "-"))),
+      h("div", { class: "panel" }, h("h3", {}, "Names used"), h("ul", { class: "list" }, p.names.map((n) => h("li", {}, h("span", {}, n.value), h("span", { class: "muted" }, ago(n.last))))))),
+    isRoot() && h("div", { class: "grid2" },
+      h("div", { class: "panel" }, h("h3", {}, "Addresses"), h("ul", { class: "list" }, p.ips.length ? p.ips.map((n) => h("li", {}, h("span", { class: "mono" }, n.value), h("span", { class: "muted" }, when(n.first) + " → " + ago(n.last)))) : h("li", { class: "muted" }, "None kept."))),
+      h("div", { class: "panel" }, h("h3", {}, "Other accounts on these addresses"), h("ul", { class: "list" }, p.alts.length ? p.alts.map((a) => h("li", {}, h("a", { href: "#/player/" + a.account }, a.name), h("span", { class: "mono muted" }, a.ip))) : h("li", { class: "muted" }, "None.")))),
+    h("div", { class: "panel flush" }, h("h3", {}, "Sessions"), p.sessions.length ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Joined", "Name", "Map", "Length", isRoot() && "Address", "Left"].filter((x) => x !== false).map((x) => h("th", {}, x)))),
+      h("tbody", {}, p.sessions.map((s) => h("tr", {},
+        h("td", {}, when(s.joined)), h("td", {}, s.name), h("td", {}, s.map || "-"),
+        h("td", {}, s.left ? span(s.left - s.joined) : h("span", { class: "tag good" }, "on now")),
+        isRoot() && h("td", { class: "mono" }, s.ip || "-"),
+        h("td", { class: "muted wrap" }, s.reason || "")))))) : h("div", { class: "empty" }, "No sessions kept.")),
+    h("div", { class: "panel flush" }, h("h3", {}, "Bans"), p.bans.length ? bansTable(p.bans) : h("div", { class: "empty" }, "No bans.")),
+    h("div", { class: "panel" }, h("h3", {}, "Notes"), notes,
+      can("b") && h("form", { class: "console-in", onsubmit: async (e) => {
+        e.preventDefault(); const i = e.target.querySelector("input"); if (!i.value.trim()) return;
+        try { await api("/api/player/" + encodeURIComponent(p.account) + "/note", { text: i.value.trim() }); route(); } catch (err) { toast(err.message, true); }
+      } }, h("input", { placeholder: "A note other admins will see" }), h("button", { class: "primary" }, "Add"))));
+}
+
+function bansTable(bans) {
+  return h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, ["#", "Player", "Reason", "By", "Made", "Ends", "State", ""].map((x) => h("th", {}, x)))),
+    h("tbody", {}, bans.map((b) => h("tr", {},
+      h("td", { class: "muted" }, b.id),
+      h("td", {}, b.account ? h("a", { href: "#/player/" + b.account }, b.name || b.account.slice(0, 12) + "…") : h("span", { class: "mono" }, b.ip || "-"), b.account && b.ip ? "" : ""),
+      h("td", { class: "wrap" }, b.reason),
+      h("td", {}, b.admin),
+      h("td", { title: when(b.created) }, ago(b.created)),
+      h("td", {}, b.expires ? when(b.expires) : "never"),
+      h("td", {}, h("span", { class: "tag " + (b.state === "active" ? "bad" : "") }, b.state === "lifted" ? "lifted by " + (b.removed_by || "?") : b.state)),
+      h("td", {}, b.state === "active" && can("e") && h("button", { class: "small", onclick: async () => { await run("unban #" + b.id); route(); } }, "Unban")))))));
+}
+
+async function pageBans(view) {
+  view.replaceChildren(h("h2", {}, "Bans"), h("div", { class: "empty" }, "Loading…"));
+  try {
+    const r = await api("/api/bans");
+    const add = can("d") && h("button", { class: "primary", onclick: () => modal("Ban an address", [
+      { name: "ip", label: "Address" }, { name: "minutes", label: "Length", options: banLengths, value: "1440" },
+      { name: "reason", label: "Reason", placeholder: "Banned by an admin" }], "Ban",
+      async (v) => { if (v.ip) { await run(`banip ${v.ip} ${v.minutes} ${q(v.reason || "Banned by an admin")}`); route(); } }, true) }, "Ban an address");
+    view.replaceChildren(h("div", { class: "toolbar" }, h("h2", { style: "margin:0;flex:1" }, "Bans"), isRoot() && add),
+      h("div", { class: "panel flush" }, r.bans.length ? bansTable(r.bans) : h("div", { class: "empty" }, "No bans yet.")));
+  } catch (e) { view.replaceChildren(h("h2", {}, "Bans"), h("div", { class: "empty" }, e.message)); }
+}
+
+async function pageAudit(view) {
+  view.replaceChildren(h("h2", {}, "Admin log"), h("div", { class: "empty" }, "Loading…"));
+  try {
+    const r = await api("/api/audit");
+    view.replaceChildren(h("h2", {}, "Admin log"), h("div", { class: "panel flush" }, r.audit.length ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["When", "Admin", "Action", "Target", "Detail"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, r.audit.map((a) => h("tr", {}, h("td", {}, a.when), h("td", {}, a.admin), h("td", {}, h("span", { class: "tag" }, a.action)),
+        h("td", { class: "mono" }, a.target || ""), h("td", { class: "wrap" }, a.detail || "")))))) : h("div", { class: "empty" }, "Nothing yet.")));
+  } catch (e) { view.replaceChildren(h("h2", {}, "Admin log"), h("div", { class: "empty" }, e.message)); }
+}
+
+/* Console: every line is sorted into a kind; the boxes above it pick which kinds show. */
+const LOG_KINDS = [["chat", "Chat"], ["players", "Joins & leaves"], ["admin", "Admin actions"], ["warn", "Warnings & errors"], ["log", "Server log"]];
+const LOG_DEFAULT = { chat: true, players: true, admin: true, warn: false, log: false };
+let logLines = [], logShow = { ...LOG_DEFAULT };
+try { Object.assign(logShow, JSON.parse(localStorage.getItem("consoleShow") || "{}")); } catch (_) {}
+
+function classify(at, raw) {
+  const m = /^(\S+)  (\S+)  ([\s\S]*)$/.exec(raw);
+  const [ch, lvl, msg] = m ? [m[1], m[2], m[3]] : ["", "info", raw];
+  const line = (kind, text, cls) => ({ at, kind, text, cls: cls || kind });
+  if (ch === "sim" && msg.startsWith("say: ")) return line("chat", msg.replace(/^say: client \d+ /, ""));
+  if (msg.startsWith("admin chat: ")) return line("chat", "(to admins) " + msg.slice(12));
+  if (/^admin: (JOIN|LEAVE|NAME|refused)/.test(msg)) return line("players", msg.slice(7));
+  if (msg.startsWith("admin: ")) return line("admin", msg.slice(7));
+  if (lvl === "warn" || lvl === "error") return line("warn", `${ch} ${lvl}: ${msg}`, lvl);
+  return line("log", `${ch}  ${msg}`);
+}
+const clock = (at) => at ? new Date(at * 1000).toLocaleTimeString([], { hour12: false }) : "";
+
+function drawLine(out, l) {
+  out.append(h("div", { class: "ll " + l.cls }, h("span", { class: "t" }, clock(l.at)), l.text));
+}
+function consoleLine(l) {
+  const out = $("#console-out");
+  if (!out) return;
+  logLines.push(l);
+  if (logLines.length > 5000) logLines.splice(0, logLines.length - 5000);
+  if (l.kind && !logShow[l.kind]) return;
+  const stick = out.scrollTop + out.clientHeight >= out.scrollHeight - 30;
+  drawLine(out, l);
+  while (out.childElementCount > 3000) out.firstChild.remove();
+  if (stick) out.scrollTop = out.scrollHeight;
+}
+function redrawConsole() {
+  const out = $("#console-out");
+  if (!out) return;
+  out.replaceChildren();
+  for (const l of logLines) if (!l.kind || logShow[l.kind]) drawLine(out, l);
+  out.scrollTop = out.scrollHeight;
+}
+
+async function pageConsole(view) {
+  const input = h("input", { placeholder: can("m") ? "admin command, or a server console line" : "admin command (help lists yours)", autocomplete: "off" });
+  const history = []; let cursor = -1;
+  const boxes = h("div", { class: "filters" }, LOG_KINDS.map(([kind, label]) => h("label", { class: "check" },
+    h("input", { type: "checkbox", checked: logShow[kind], onchange: (e) => {
+      logShow[kind] = e.target.checked;
+      try { localStorage.setItem("consoleShow", JSON.stringify(logShow)); } catch (_) {}
+      redrawConsole();
+    } }), label)));
+  view.replaceChildren(h("div", { class: "toolbar" }, h("h2", { style: "margin:0;flex:1" }, "Console"), boxes), h("div", { id: "console-out" }),
+    h("form", { class: "console-in", onsubmit: async (e) => {
+      e.preventDefault(); const line = input.value.trim(); if (!line) return;
+      history.push(line); cursor = -1; input.value = "";
+      const now = Date.now() / 1000;
+      consoleLine({ at: now, text: "> " + line, cls: "cmd" });
+      const lines = await run(line, true);
+      if (lines) lines.forEach((l) => consoleLine({ at: now, text: l, cls: "reply" }));
+    } }, input, h("button", { class: "primary" }, "Run")));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" && history.length) { cursor = cursor < 0 ? history.length - 1 : Math.max(0, cursor - 1); input.value = history[cursor]; e.preventDefault(); }
+    if (e.key === "ArrowDown" && cursor >= 0) { cursor = Math.min(history.length, cursor + 1); input.value = history[cursor] || ""; if (cursor >= history.length) cursor = -1; e.preventDefault(); }
+  });
+  consoleSince = 0; logLines = [];
+  const poll = async () => {
+    try {
+      const r = await api("/api/console?since=" + consoleSince);
+      for (const [n, at, text] of r.lines) consoleLine(classify(at, text));
+      consoleSince = Math.max(consoleSince, r.next - 1);
+    } catch (e) { if (e.message !== "sign in") consoleLine({ at: Date.now() / 1000, text: e.message, cls: "error" }); clearInterval(consoleTimer); }
+  };
+  await poll();
+  consoleTimer = setInterval(poll, 1000);
+  input.focus();
+}
+
+/* ---- Shell ---- */
+async function refreshStatus() {
+  try {
+    status = await api("/api/status");
+    $("#live-dot").className = "dot";
+    $("#host").textContent = status.host || "Server";
+    document.title = (status.host || "Server") + " · Panel";
+    $("#pill-map").textContent = (status.map || "-") + (status.gametype ? " · " + status.gametype : "");
+    const humans = (status.players || []).filter((p) => !p.bot).length;
+    $("#pill-players").textContent = humans + (status.max ? " / " + status.max : "") + " players";
+    const vote = $("#pill-vote"); vote.hidden = !status.vote; vote.textContent = "Vote: " + (status.vote || "");
+  } catch (e) { $("#live-dot").className = "dot off"; }
+}
+function refresh() { setTimeout(async () => { await refreshStatus(); route(); }, 400); }
+
+async function route() {
+  clearInterval(timer); clearInterval(consoleTimer); timer = null;
+  const [, page = "dashboard", arg] = location.hash.split("/");
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("on", a.dataset.page === (page === "player" ? "players" : page)));
+  const view = $("#view");
+  if (page === "players") return pagePlayers(view);
+  if (page === "player" && arg) return pagePlayer(view, arg);
+  if (page === "console") return pageConsole(view);
+  if (page === "bans") return pageBans(view);
+  if (page === "audit") return pageAudit(view);
+  return pageDashboard(view);
+}
+
+function showLogin() {
+  clearInterval(timer); clearInterval(consoleTimer); timer = null;
+  $("#app").hidden = true; $("#login").hidden = false;
+  setTimeout(() => $("#login-name").focus(), 0);
+}
+async function showApp() {
+  $("#login").hidden = true; $("#app").hidden = false;
+  $("#me-name").textContent = me.user + " [" + me.flags + "]";
+  await refreshStatus();
+  route();
+}
+
+$("#login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#login-error").textContent = "";
+  try {
+    await api("/api/login", { name: $("#login-name").value.trim(), password: $("#login-pass").value });
+    $("#login-pass").value = "";
+    me = await api("/api/me");
+    showApp();
+  } catch (err) { $("#login-error").textContent = err.message; }
+});
+$("#logout").addEventListener("click", async () => { try { await api("/api/logout", {}); } catch (_) {} me = null; showLogin(); });
+window.addEventListener("hashchange", () => me && route());
+setInterval(() => me && !timer && refreshStatus(), 5000);
+
+(async () => {
+  try { me = await api("/api/me"); showApp(); } catch (_) { showLogin(); }
+})();
+</script>
+</body>
+</html>

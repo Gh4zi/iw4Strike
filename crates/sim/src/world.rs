@@ -3147,6 +3147,27 @@ impl SimState {
         ids
     }
 
+    /// Every player in the match with their name, side, life and score.
+    pub fn roster(&self) -> Vec<crate::RosterRow> {
+        let mut rows: Vec<crate::RosterRow> = self
+            .clients
+            .iter()
+            .map(|(id, meta)| crate::RosterRow {
+                id: *id,
+                name: entity_iw4::client_state_name(&meta.name)
+                    .unwrap_or("")
+                    .to_owned(),
+                team: meta.client_state_team,
+                alive: meta.lifecycle == crate::ClientLifecycle::Alive,
+                kills: meta.kills,
+                deaths: meta.deaths,
+                score: meta.score,
+            })
+            .collect();
+        rows.sort_by_key(|row| row.id.0);
+        rows
+    }
+
     pub fn client_meta(&self, id: ClientId) -> Option<&ClientMatchState> {
         self.clients.iter().find(|(c, _)| *c == id).map(|(_, m)| m)
     }
