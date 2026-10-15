@@ -427,6 +427,7 @@ dependencies = [
  "flate2",
  "lnk",
  "miniz_oxide",
+ "sv_pure",
  "windows",
  "windows-sys 0.61.2",
  "zip",
@@ -2302,6 +2303,7 @@ dependencies = [
  "replay",
  "session",
  "sim",
+ "sv_pure",
  "ui",
  "weapon_iw4",
  "windows-sys 0.61.2",
@@ -4194,6 +4196,7 @@ name = "mdl_source"
 version = "0.1.0"
 dependencies = [
  "mdl_goldsrc",
+ "sv_pure",
 ]
 
 [[package]]
@@ -4384,6 +4387,7 @@ dependencies = [
  "rustls",
  "sim",
  "structured_data_iw4",
+ "sv_pure",
  "tokio",
  "tokio-util",
  "updater",
@@ -6099,12 +6103,14 @@ dependencies = [
  "frame",
  "gamemode_iw4",
  "hud_iw4",
+ "mdl_source",
  "movement_iw4",
  "net",
  "perf",
  "render_frontend",
  "render_fx",
  "sim",
+ "sv_pure",
  "weapon_iw4",
  "xmodel_runtime",
 ]
@@ -6155,6 +6161,7 @@ dependencies = [
  "playerstate_iw4",
  "sha2",
  "structured_data_iw4",
+ "sv_pure",
  "trace_iw4",
  "weapon_iw4",
  "xmodel_runtime",
@@ -6348,6 +6355,13 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "sv_pure"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+]
 
 [[package]]
 name = "svg_fmt"

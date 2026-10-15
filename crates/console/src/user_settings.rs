@@ -472,6 +472,7 @@ fn serialize_settings(settings: &frame::GameSettings, binds: &KeyBinds) -> Strin
         format!("smoke_mode={}", settings.smoke_mode),
         format!("smoke_quality={}", settings.smoke_quality),
         format!("sv_destructibles={}", u8::from(settings.destructibles)),
+        format!("sv_pure={}", settings.pure),
         format!("third_person={}", settings.third_person),
         format!("console_style={}", settings.console_style),
         format!("fsr_mode={}", settings.fsr_mode),
@@ -652,6 +653,11 @@ fn parse_settings(source: &str, settings: &mut frame::GameSettings, binds: &mut 
             }
             "snd_hrtf" => settings.hrtf = value.trim() == "1",
             "sv_destructibles" => settings.destructibles = value.trim() == "1",
+            "sv_pure" => {
+                if let Ok(mode) = value.trim().parse::<u8>() {
+                    settings.pure = mode.min(2);
+                }
+            }
             // Server cheats, off at every launch: not kept (older settings files have them).
             "always_edgebug" | "always_pixelsurf" | "sv_autobunnyhop" => {}
             "_vgui_menus" => settings.vgui_menus = value.trim() != "0",

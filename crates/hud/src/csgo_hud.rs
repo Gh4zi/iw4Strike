@@ -246,7 +246,7 @@ pub(crate) fn load(fonts: &mut Assets<Font>, images: &mut Assets<Image>) -> Opti
     let pak = asset_transport::find_csgo_pak()?;
     let dir = pak.parent()?;
     let font = |name: &str| {
-        std::fs::read(dir.join("panorama").join("fonts").join(format!("{name}.vfont")))
+        asset_transport::read_cs_file(dir.join("panorama").join("fonts").join(format!("{name}.vfont")))
             .ok()
             .and_then(decode_vfont)
     };

@@ -24,6 +24,9 @@ pub struct Vpk {
     /// Where data stored in the directory file starts (header + tree).
     data_start: u64,
     entries: HashMap<String, Entry>,
+    /// The CS game this pack is part of and its path in the install: every file read from it is
+    /// noted for the server's file check (`sv_pure`).
+    pure: Option<(sv_pure::Game, String)>,
 }
 
 impl Vpk {
@@ -99,7 +102,21 @@ impl Vpk {
             dir: dir.to_owned(),
             data_start: (header + tree_size) as u64,
             entries,
+            pure: sv_pure::locate_pack(dir),
         })
+    }
+
+    fn note(&self, path: &str, bytes: &[u8]) {
+        if let Some((game, pack)) = &self.pure {
+            sv_pure::note(
+                sv_pure::FileKey {
+                    game: *game,
+                    pack: pack.clone(),
+                    path: path.to_owned(),
+                },
+                bytes,
+            );
+        }
     }
 
     #[must_use]
@@ -114,12 +131,16 @@ impl Vpk {
 
     /// The bytes of `path`, read from whichever archive holds them.
     pub fn read(&self, path: &str) -> Option<Vec<u8>> {
-        let entry = self.entries.get(&normalize(path))?;
-        if entry.length == 0 {
-            return Some(entry.preload.clone());
-        }
-        let (file, offset) = self.located(entry)?;
-        read_entry(&mut File::open(file).ok()?, entry, offset)
+        let path = normalize(path);
+        let entry = self.entries.get(&path)?;
+        let bytes = if entry.length == 0 {
+            entry.preload.clone()
+        } else {
+            let (file, offset) = self.located(entry)?;
+            read_entry(&mut File::open(file).ok()?, entry, offset)?
+        };
+        self.note(&path, &bytes);
+        Some(bytes)
     }
 
     /// The bytes of each of `paths` the pack holds, by path. Read in archive order with one open
@@ -137,6 +158,7 @@ impl Vpk {
         let mut out = Vec::with_capacity(wanted.len());
         for (path, entry) in wanted {
             if entry.length == 0 {
+                self.note(path, &entry.preload);
                 out.push((path.to_owned(), entry.preload.clone()));
                 continue;
             }
@@ -150,6 +172,7 @@ impl Vpk {
                 continue;
             };
             if let Some(bytes) = read_entry(f, entry, offset) {
+                self.note(path, &bytes);
                 out.push((path.to_owned(), bytes));
             }
         }

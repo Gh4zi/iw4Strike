@@ -416,7 +416,7 @@ fn read_goldsrc() -> Option<(&'static str, [Option<HoldClip>; HoldAction::COUNT]
     } else {
         "CS 1.6"
     };
-    let model = mdl_goldsrc::StudioModel::parse(&std::fs::read(path).ok()?).ok()?;
+    let model = mdl_goldsrc::StudioModel::parse(&asset_transport::read_cs_file(path).ok()?).ok()?;
     Some((
         game,
         complete(GOLDSRC_SEQUENCES.map(|label| goldsrc_clip(&model, label, blade)))?,
@@ -426,7 +426,7 @@ fn read_goldsrc() -> Option<(&'static str, [Option<HoldClip>; HoldAction::COUNT]
 /// Where the GoldSrc world knife at `path` points its blade in the right hand's frame: toward
 /// its point farthest from the hand.
 fn goldsrc_blade_in_hand(path: &std::path::Path) -> Option<Vec3> {
-    let knife = mdl_goldsrc::StudioModel::parse(&std::fs::read(path).ok()?).ok()?;
+    let knife = mdl_goldsrc::StudioModel::parse(&asset_transport::read_cs_file(path).ok()?).ok()?;
     let mut world = Vec::new();
     knife.pose(0, 0.0, &mut world);
     let hand = world.get(knife.bones.iter().position(|b| b.name == GOLDSRC_HAND)?)?;

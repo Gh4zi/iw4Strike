@@ -93,6 +93,11 @@ pub(crate) fn register_movement_commands(registry: &mut ConsoleRegistry) {
             "sv_destructibles [0|1] — cars, barrels and breakable walls take damage (default 0)",
         ));
     }
+    if registry.resolve("sv_pure").is_none() {
+        registry.register(crate::CommandSpec::new("sv_pure").usage(
+            "sv_pure [0|1|2] — the server's file check: players' Counter-Strike game files (models, sounds, sprites, HUD art from CS:GO, CS2, CS:S, CS 1.6, CZ) must match the server's own; 0 off, 1 log who differs, 2 remove them (default)",
+        ));
+    }
     if registry.resolve("_vgui_menus").is_none() {
         registry.register(crate::CommandSpec::new("_vgui_menus").usage(
             "_vgui_menus [0|1] — buy menu: 1 the window you click (CS:S / CS 1.6 VGUI), 0 CS 1.6's old numbered text menu",
@@ -212,6 +217,10 @@ pub(crate) fn sync_movement_mode(game: Res<frame::GameSettings>) {
     if sim::cs_settings::destructibles_enabled() != game.destructibles {
         sim::cs_settings::set_destructibles(game.destructibles);
         diag::info!(Console, "sv_destructibles = {}", u8::from(game.destructibles));
+    }
+    if sv_pure::mode() != game.pure {
+        sv_pure::set_mode(game.pure);
+        diag::info!(Console, "sv_pure = {}", game.pure);
     }
     if let Some(wanted) = weapon_iw4::csgo::shooting_mode_from_name(&game.shooting_mode)
         && wanted != sim::cs_settings::shooting_mode()
@@ -559,6 +568,20 @@ pub(crate) fn route_movement_commands(
                     format!("sv_destructibles = {arg}")
                 }
                 _ => "usage: sv_destructibles [0|1]".to_owned(),
+            },
+            "sv_pure" => match cmd.args.as_slice() {
+                [] => format!(
+                    "sv_pure = {} (0 off, 1 log players whose game files differ from the server's, 2 remove them)",
+                    sv_pure::mode()
+                ),
+                [arg] if matches!(arg.as_str(), "0" | "1" | "2") => {
+                    let mode = arg.parse().unwrap_or(sv_pure::MODE_KICK);
+                    sv_pure::set_mode(mode);
+                    game.pure = mode;
+                    game.touch();
+                    format!("sv_pure = {mode}")
+                }
+                _ => "usage: sv_pure [0|1|2]".to_owned(),
             },
             "_vgui_menus" => match cmd.args.as_slice() {
                 [] => format!("_vgui_menus = {}", u8::from(game.vgui_menus)),

@@ -384,6 +384,7 @@ Your movement mode, `always_edgebug` and `always_pixelsurf` are saved, so you on
 | `bot_mimic_yaw_offset <degrees>` | Turns the bots' copied view: `180` faces you (default), `0` moves the way you do |
 | `bot ride` | Puts you on a bot's head |
 | `force_match_start` | 🔧 Skip the pre-match countdown |
+| `sv_pure 2` / `1` / `0` | The server's file check. Players' Counter-Strike game files (models, sounds, sprites, HUD art from CS:GO, CS2, CS:S, CS 1.6 and CZ) must match the server's own copies. `2` removes a player whose files differ and tells them which file (default), `1` only logs it, `0` is off. Each player is checked in the games they have; a game the server doesn't have installed can't be checked |
 | `snd_ambient_volume <0-1>` | How loud the map's own ambience is (wind, engines, hum). Default `0.35` |
 | `game_paths` | Close the game and open the game folders window |
 | `disconnect` | Leave the match and go back to the main menu |
@@ -561,6 +562,12 @@ Known issues with CS2 on:
   on screen). The knife's animations are still being worked on; grenades are experimental
 - [ ] No camera shake from the hidden MW2 weapon animations when you swap or reload a CS gun
   (`cl_camera_anim 1` brings it back)
+- [x] Server file check (`sv_pure`, on by default): players' Counter-Strike game files (models,
+  sounds, sprites, HUD art from CS:GO, CS2, CS:S, CS 1.6 and CZ) must match the server's own
+  copies. Each player is checked in the games they use; a player whose files differ is removed
+  and told which file (`sv_pure 1` only logs it, `sv_pure 0` turns it off)
+- [x] Fixed: a player refused at join (banned, files that differ, any failed join) was left on
+  a blank window; they are back at the main menu with the reason
 
 **Counter-Strike 2 roadmap** (experimental), in this order. See
 [Counter-Strike 2 (experimental)](#counter-strike-2-experimental) for what works today.
@@ -654,6 +661,13 @@ Known issues with CS2 on:
 - [ ] Bots that play Defusal: carry, plant and defuse the bomb themselves
 - [ ] Movement mode (`mv_mode`) as a server-side setting that clients can't change, so every
   player moves the same way
+- [ ] Which games a server lets in (`sv_games`):
+  - [ ] `sv_games all`: players of every CS game play together (CS:GO, CS2, CS:S, CS 1.6, CZ),
+    all on CS 1.6's rules (its spray and recoil). Each player sees the player models and buy
+    menu of the game they have
+  - [ ] `sv_games cs2go`: CS:GO and CS2 players only, on CS:GO's rules. A player with only an
+    older CS game is refused at join with the reason; one who also has CS:GO or CS2 uses only
+    their CS:GO / CS2 files on that server
 - [ ] Valve-style menus (CS:S look, read from your install), step by step: the panel system,
   main and pause menu, loading screen, scoreboard, a "Start Server" dialog with gamemode and
   map dropdowns (where the server-side settings like `mv_mode` and `sv_tickrate` live), then

@@ -313,11 +313,11 @@ impl GoldSrcDirs {
             .find(|path| path.is_file())
     }
 
-    /// `relative`'s bytes from the first folder holding it.
+    /// `relative`'s bytes from the first folder holding it (noted for the server's file check).
     #[must_use]
     pub fn read(&self, relative: &str) -> Option<Vec<u8>> {
         self.file(relative)
-            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|path| sv_pure::read_file(path).ok())
     }
 
     /// Whether Condition Zero is among them.
@@ -327,6 +327,65 @@ impl GoldSrcDirs {
             .first()
             .is_some_and(|dir| crate::game_paths::is_condition_zero(dir))
     }
+}
+
+/// Where `game` is installed on this machine, for the server's file check (`sv_pure`): the
+/// folder holding `csgo` (CS:GO), `game/csgo` (CS2) or `cstrike` (CS:S), or the Half-Life folder
+/// holding `cstrike` / `czero` (CS 1.6 / CZ). The game folders window's "Use" boxes don't count
+/// here: a server that doesn't draw a game itself still checks its players' files of it.
+#[must_use]
+pub fn install_root(game: sv_pure::Game) -> Option<PathBuf> {
+    use sv_pure::Game;
+    let pick = |env: Option<String>, folder: GameFolder, holds: fn(&Path) -> bool| {
+        env.map(PathBuf::from)
+            .filter(|dir| holds(dir))
+            .or_else(|| saved(folder))
+    };
+    let goldsrc = |dir: &Path| dir.join("models").is_dir();
+    let parent = |dir: PathBuf| dir.parent().map(Path::to_path_buf);
+    let half_life = |game: &str| {
+        steam_libraries().into_iter().find_map(|library| {
+            let root = library.join("steamapps").join("common").join("Half-Life");
+            goldsrc(&root.join(game)).then_some(root)
+        })
+    };
+    match game {
+        Game::Csgo => pick(
+            csgo_env_override(),
+            GameFolder::Csgo,
+            crate::game_paths::is_csgo_game_folder,
+        )
+        .or_else(|| steam_csgo_pak().and_then(parent))
+        .and_then(parent),
+        Game::Cs2 => pick(
+            cs2_env_override(),
+            GameFolder::Cs2,
+            crate::game_paths::is_cs2_game_folder,
+        )
+        .or_else(|| steam_cs2_pak().and_then(parent))
+        .and_then(parent)
+        .and_then(parent),
+        Game::Css => pick(css_env_override(), GameFolder::Css, |dir| {
+            dir.join(CSS_PAK).is_file()
+        })
+        .or_else(|| steam_css_pak().and_then(parent))
+        .and_then(parent),
+        Game::Cs16 => pick(cstrike_env_override(), GameFolder::Cs16, goldsrc)
+            .and_then(parent)
+            .or_else(|| {
+                install_root(Game::Cz).filter(|root| goldsrc(&root.join("cstrike")))
+            })
+            .or_else(|| half_life("cstrike")),
+        Game::Cz => pick(czero_env_override(), GameFolder::Cz, goldsrc)
+            .and_then(parent)
+            .or_else(|| half_life("czero")),
+    }
+}
+
+/// `std::fs::read` for a file of a Counter-Strike game's folder: the file is noted for the
+/// server's file check (`sv_pure`), which compares it with the server's own copy.
+pub fn read_cs_file(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
+    sv_pure::read_file(path)
 }
 
 /// The GoldSrc folders to read (see [`GoldSrcDirs`]); `None` with CS:S found or neither GoldSrc

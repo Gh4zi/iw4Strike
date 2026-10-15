@@ -1512,7 +1512,7 @@ fn decode_model(
     let path = dirs
         .file(&relative)
         .ok_or_else(|| format!("{relative}: in none of {:?}", dirs.0))?;
-    std::fs::read(&path)
+    asset_transport::read_cs_file(&path)
         .map_err(|e| e.to_string())
         .and_then(|bytes| mdl_goldsrc::StudioModel::parse(&bytes).map_err(|e| e.to_string()))
         .map(DecodedModel::GoldSrc)

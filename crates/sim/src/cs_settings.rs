@@ -34,17 +34,20 @@ pub fn set_smoke_mode(mode: u32) {
 
 /// Tells clients this server's movement (the server info `mv_mode`, and its cheats
 /// `always_edgebug`, `always_pixelsurf` and `sv_autobunnyhop`, "1" or "0"): theirs follow it, so
-/// their prediction moves as the server does and none turns a cheat on for themselves.
+/// their prediction moves as the server does and none turns a cheat on for themselves. Also its
+/// file check (`sv_pure`, "0" to "2"): with it on, clients report the game files they read.
 pub(crate) fn publish_movement_cheats(world: &mut crate::frame::FrameWorld) {
     let Some(mut runtime) = world.ecs().get_resource_mut::<crate::script::Runtime>() else {
         return;
     };
     let on = |on: bool| if on { "1" } else { "0" };
+    let pure = sv_pure::mode().to_string();
     for (name, value) in [
         ("mv_mode", movement_iw4::rules::mode().name()),
         ("always_edgebug", on(movement_iw4::rules::always_edgebug())),
         ("always_pixelsurf", on(movement_iw4::rules::always_pixelsurf())),
         ("sv_autobunnyhop", on(movement_iw4::rules::auto_bunnyhop())),
+        ("sv_pure", pure.as_str()),
     ] {
         if runtime.dvars.get(name).map(String::as_str) != Some(value)
             || !runtime.server_info.contains(name)

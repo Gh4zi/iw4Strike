@@ -10,5 +10,6 @@ impl Plugin for SessionPlugin {
         crate::local_arm::register_local_arm_systems(app);
         crate::life_front::register_life_front(app);
         crate::view_subject::register_view_subject(app);
+        crate::pure::register_pure_check(app);
     }
 }

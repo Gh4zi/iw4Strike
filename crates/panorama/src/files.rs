@@ -14,7 +14,7 @@ use bevy::text::Font;
 
 /// The packed files of `code.pbin`, by lowercase path (`panorama/layout/hud/hud.xml`).
 fn read_code_pack(path: &Path) -> Option<HashMap<String, Vec<u8>>> {
-    let data = std::fs::read(path).ok()?;
+    let data = asset_transport::read_cs_file(path).ok()?;
     let mut files = HashMap::new();
     let mut i = 0;
     while i + 30 <= data.len() {
@@ -176,7 +176,7 @@ impl Files {
         let dir = pak.parent()?.to_path_buf();
         let code = read_code_pack(&dir.join("panorama").join("code.pbin"))?;
         let pak = Arc::new(mdl_source::Vpk::open(&pak).ok()?);
-        let tokens = std::fs::read(dir.join("resource").join("csgo_english.txt"))
+        let tokens = asset_transport::read_cs_file(dir.join("resource").join("csgo_english.txt"))
             .map(|bytes| read_tokens(&decode_text(&bytes)))
             .unwrap_or_default();
         diag::info!(
@@ -216,7 +216,7 @@ impl Files {
     pub fn fonts(&self, fonts: &mut Assets<Font>) -> Option<Fonts> {
         let dir = self.dir.join("panorama").join("fonts");
         let mut face = |name: &str| -> Option<Handle<Font>> {
-            let bytes = std::fs::read(dir.join(format!("{name}.vfont"))).ok()?;
+            let bytes = asset_transport::read_cs_file(dir.join(format!("{name}.vfont"))).ok()?;
             let font = Font::from_bytes(decode_vfont(bytes)?);
             Some(fonts.add(font))
         };

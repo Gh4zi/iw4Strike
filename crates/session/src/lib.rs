@@ -8,6 +8,7 @@ pub mod loadout;
 pub mod local_arm;
 pub mod match_apply;
 pub mod plugin;
+mod pure;
 pub mod startup;
 pub mod view_subject;
 

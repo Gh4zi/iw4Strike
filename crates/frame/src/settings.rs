@@ -68,6 +68,9 @@ pub struct GameSettings {
     pub smoke_quality: String,
     /// Map destructibles (cars, barrels) take damage (`sv_destructibles`); off for CS play.
     pub destructibles: bool,
+    /// The file check when this game is the server (`sv_pure`): 0 off, 1 players whose
+    /// Counter-Strike game files differ from the server's are logged, 2 (the default) removed.
+    pub pure: u8,
     /// Every landing at an edge is an edgebug (`always_edgebug`).
     pub always_edgebug: bool,
     /// Falling while pushing into any wall and moving along it pixelsurfs (`always_pixelsurf`).
@@ -190,6 +193,7 @@ impl Default for GameSettings {
             smoke_mode: "csgo".to_owned(),
             smoke_quality: "high".to_owned(),
             destructibles: false,
+            pure: 2,
             always_edgebug: false,
             always_pixelsurf: false,
             auto_bunnyhop: false,

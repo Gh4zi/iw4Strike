@@ -22,6 +22,7 @@ weapon_iw4.workspace = true
 gamemode_iw4.workspace = true
 killcam_iw4.workspace = true
 sim.workspace = true
+sv_pure.workspace = true
 hud_iw4.workspace = true
 perf.workspace = true
 bevy.workspace = true

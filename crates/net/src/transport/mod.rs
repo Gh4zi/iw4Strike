@@ -10,6 +10,7 @@ pub mod master;
 pub mod meta_wire;
 pub mod netfields;
 pub mod protocol;
+pub(crate) mod pure_wire;
 pub mod reliable;
 pub mod udp_session;
 pub mod udp_socket;

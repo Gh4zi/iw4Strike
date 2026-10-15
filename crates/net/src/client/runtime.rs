@@ -2088,10 +2088,43 @@ pub fn register_client_runtime(app: &mut App) {
             sample_client_input.in_set(ClientSet::Input),
             predict_local_move.in_set(ClientSet::Predict),
             send_pending_commands.in_set(ClientSet::Send),
+            send_pure_reports
+                .in_set(ClientSet::Send)
+                .after(send_pending_commands),
             publish_presented.in_set(ClientSet::Present),
         ),
     );
     register_signon(app);
+}
+
+/// Reports the Counter-Strike game files this client read to the server's file check, when the
+/// server has one (its server info `sv_pure` is 1 or 2): every file read so far once in the
+/// match, then each new one, a report at most every 100 ms.
+fn send_pure_reports(
+    link: Option<ResMut<crate::transport::udp_session::UdpClientLink>>,
+    presented: Res<crate::PresentedSnapshot>,
+    mut last: Local<Option<std::time::Instant>>,
+) {
+    let Some(mut link) = link else {
+        return;
+    };
+    let checked = presented.snapshot().is_some_and(|snap| {
+        snap.meta
+            .objectives
+            .server_info
+            .iter()
+            .any(|(name, value)| name == "sv_pure" && value != "0")
+    });
+    if !checked
+        || last.is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(100))
+    {
+        return;
+    }
+    match link.send_pure_report() {
+        Ok(true) => *last = Some(std::time::Instant::now()),
+        Ok(false) => {}
+        Err(error) => diag::warn!(Net, "file report not sent: {error}"),
+    }
 }
 
 /// The session's sign-on steps: a joining client's admission, and a host's (listen or

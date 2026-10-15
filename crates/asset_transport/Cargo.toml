@@ -8,6 +8,7 @@ description = "Filesystem transport: discover games, inflate FastFiles, index IW
 [dependencies]
 asset_core.workspace = true
 diag.workspace = true
+sv_pure.workspace = true
 fastfile_iw4.workspace = true
 fastfile_t5.workspace = true
 fastfile_iw5.workspace = true

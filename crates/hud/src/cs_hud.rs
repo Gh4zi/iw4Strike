@@ -218,7 +218,7 @@ pub(crate) struct CsKillFeed {
 const EMBEDDED_FONT: &[u8] = include_bytes!("../../console/assets/FreeMono.otf");
 
 fn read_font(fonts: &mut Assets<Font>, path: &Path) -> Option<Handle<Font>> {
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = asset_transport::read_cs_file(path).ok()?;
     Some(fonts.add(Font::from_bytes(bytes)))
 }
 

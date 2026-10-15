@@ -26,6 +26,7 @@ use crate::transport::udp_socket::UdpSendError;
 use crate::transport::wire::WireReader;
 
 use super::account_wire::{AccountMessage, profile_payload};
+use super::pure_wire::{MAX_REPORT_FILES, decode_pure_report, encode_pure_report};
 
 // Packets waiting each way between the master relay and the game: several seconds of a match's
 // traffic (100 ticks a second), so a hitch on either side delays a player's commands instead of
@@ -175,6 +176,8 @@ pub struct UdpAuthorityHub {
 
     denied: HashSet<master_protocol::MemberId>,
     accounts_required: bool,
+    /// Players' file reports for the file check (`sv_pure`), not yet taken.
+    pure_reports: Vec<(ClientId, Vec<(sv_pure::FileKey, sv_pure::Digest)>)>,
 }
 
 #[derive(Debug)]
@@ -329,6 +332,7 @@ impl UdpAuthorityHub {
             committed_admissions: Vec::new(),
             denied: HashSet::new(),
             accounts_required: false,
+            pure_reports: Vec::new(),
         }
     }
 
@@ -338,6 +342,11 @@ impl UdpAuthorityHub {
 
     pub fn attach_bootstrap(&mut self, lane: Arc<BootstrapLane>) {
         self.bootstrap = Some(lane);
+    }
+
+    /// The file reports players sent since the last take (see `sv_pure`).
+    pub fn take_pure_reports(&mut self) -> Vec<(ClientId, Vec<(sv_pure::FileKey, sv_pure::Digest)>)> {
+        std::mem::take(&mut self.pure_reports)
     }
 
     fn enroll_relay_member(&mut self, member_id: MemberId, occupied: &[u32]) -> ConnectionId {
@@ -540,6 +549,21 @@ impl UdpAuthorityHub {
         }
         for (bytes, from, control) in packets {
             if control {
+                match decode_pure_report(&bytes) {
+                    Ok(Some(files)) => {
+                        // A report counts once the player has a slot; theirs come after it.
+                        match self.client_of_member(from) {
+                            Some(client) => self.pure_reports.push((client, files)),
+                            None => diag::warn!(Net, "file report from a member with no slot dropped"),
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        diag::warn!(Net, "file report refused: {error}");
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
                 match AccountMessage::decode(&bytes) {
                     Ok(Some(message)) => {
                         if self.accounts_required {
@@ -1164,6 +1188,8 @@ pub struct UdpClientLink {
     account_ack: Option<sim::AccountSnapshot>,
     account_offer: Option<sim::AccountSnapshot>,
     sent_actions: HashSet<sim::ActionRequestId>,
+    /// How many of the files this client read (`sv_pure::noted`) went to this server's file check.
+    pure_sent: usize,
 }
 
 impl UdpClientLink {
@@ -1192,10 +1218,33 @@ impl UdpClientLink {
             account_ack: None,
             account_offer: None,
             sent_actions: HashSet::new(),
+            pure_sent: 0,
             held_bootstrap: Vec::new(),
             failed: None,
             bootstrap: None,
         }
+    }
+
+    /// Sends the server's file check (`sv_pure`) the next of the Counter-Strike files this
+    /// client read, once it is in the match; false with nothing left to send.
+    pub fn send_pure_report(&mut self) -> Result<bool, UdpSendError> {
+        if self.connection.is_none() || !self.has_entered_match() {
+            return Ok(false);
+        }
+        let files = sv_pure::noted_since(self.pure_sent, MAX_REPORT_FILES);
+        if files.is_empty() {
+            return Ok(false);
+        }
+        let Some((bytes, count)) = encode_pure_report(&files) else {
+            diag::warn!(Net, "file report: {} does not fit a report", files[0].0.describe());
+            self.pure_sent += 1;
+            return Ok(true);
+        };
+        self.relay
+            .push_control_outbound(MemberId([0; 16]), bytes)
+            .map_err(relay_send_error)?;
+        self.pure_sent += count;
+        Ok(true)
     }
 
     pub fn mailbox(&self) -> RelayMailbox {
@@ -1317,6 +1366,7 @@ impl UdpClientLink {
         self.account_ack = None;
         self.account_offer = None;
         self.sent_actions.clear();
+        self.pure_sent = 0;
         self.failed = None;
         if let Some(lane) = &self.bootstrap {
             lane.set_epoch(0);

@@ -172,7 +172,7 @@ impl Install {
         match self {
             Self::Source { pack, dir } => pack
                 .read(&path)
-                .or_else(|| std::fs::read(dir.join(&path)).ok()),
+                .or_else(|| asset_transport::read_cs_file(dir.join(&path)).ok()),
             Self::GoldSrc { dirs } => dirs.read(&path),
         }
     }
@@ -217,7 +217,7 @@ impl Data {
             .map(|bytes| parse_localization(&bytes))
             .unwrap_or_default();
         let classic = cs16_dir()
-            .and_then(|dir| std::fs::read(dir.join("titles.txt")).ok())
+            .and_then(|dir| asset_transport::read_cs_file(dir.join("titles.txt")).ok())
             .map(|bytes| parse_titles(&String::from_utf8_lossy(&bytes)))
             .filter(|menus| menus.contains_key("buy"))
             .unwrap_or_else(own_classic_menus);

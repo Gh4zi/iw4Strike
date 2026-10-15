@@ -70,6 +70,7 @@ members = [
     "crates/session",
     "crates/sim",
     "crates/structured_data_iw4",
+    "crates/sv_pure",
     "crates/trace_iw4",
     "crates/ui",
     "crates/updater",
@@ -148,6 +149,7 @@ gamemode_iw4 = { path = "crates/gamemode_iw4" }
 hud = { path = "crates/hud" }
 hud_iw4 = { path = "crates/hud_iw4" }
 structured_data_iw4 = { path = "crates/structured_data_iw4" }
+sv_pure = { path = "crates/sv_pure" }
 killcam_iw4 = { path = "crates/killcam_iw4" }
 input_iw4 = { path = "crates/input_iw4" }
 launcher = { path = "crates/launcher" }

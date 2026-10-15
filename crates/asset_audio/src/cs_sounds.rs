@@ -483,7 +483,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                 continue;
             }
             let Some((rate, channels, pcm)) =
-                std::fs::read(&path).ok().and_then(|b| decode_wav(&b))
+                asset_transport::read_cs_file(&path).ok().and_then(|b| decode_wav(&b))
             else {
                 diag::warn!(Audio, "cs sounds: {} is not PCM wave", path.display());
                 continue;
@@ -539,7 +539,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
         .iter()
         .chain(&half_life)
         .map(|game| game.join("sound").join("common").join("bodysplat.wav"))
-        .find_map(|path| std::fs::read(path).ok())
+        .find_map(|path| asset_transport::read_cs_file(path).ok())
         .and_then(|bytes| decode_wav(&bytes))
         .map(|(rate, channels, pcm16)| {
             (
@@ -617,7 +617,7 @@ pub fn append_cs_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
                         .join("player")
                         .join(format!("pl_ladder{i}.wav"))
                 })
-                .find_map(|path| std::fs::read(path).ok())
+                .find_map(|path| asset_transport::read_cs_file(path).ok())
                 .and_then(|bytes| decode_wav(&bytes))
         })
         .collect();
@@ -1034,7 +1034,7 @@ pub fn append_css_weapon_sounds(catalog: &mut SoundCatalog) -> usize {
             let data = vpk.read(&format!("sound/{wave}")).or_else(|| {
                 loose
                     .as_ref()
-                    .and_then(|dir| std::fs::read(dir.join(wave)).ok())
+                    .and_then(|dir| asset_transport::read_cs_file(dir.join(wave)).ok())
             });
             match data.as_deref().and_then(decode_wav) {
                 Some((rate, channels, pcm16)) => {

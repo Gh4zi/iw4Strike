@@ -198,7 +198,7 @@ fn wanted(name: &str) -> bool {
 /// A sheet as a tintable mask: what GoldSrc adds onto the screen becomes coverage, the colour
 /// comes from the tint.
 fn sheet_image(path: &Path, images: &mut Assets<Image>) -> Option<Handle<Image>> {
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = asset_transport::read_cs_file(path).ok()?;
     let sprite = match SpriteFile::parse(&bytes) {
         Ok(sprite) => sprite,
         Err(error) => {
@@ -232,7 +232,7 @@ pub(crate) fn load(
     fonts: &mut Assets<Font>,
     images: &mut Assets<Image>,
 ) -> Option<Cs16HudAssets> {
-    let list = std::fs::read_to_string(dirs.file("sprites/hud.txt")?).ok()?;
+    let list = String::from_utf8(asset_transport::read_cs_file(dirs.file("sprites/hud.txt")?).ok()?).ok()?;
     let mut sheets: HashMap<String, Option<Handle<Image>>> = HashMap::new();
     let mut sheet = |name: &str, images: &mut Assets<Image>| {
         sheets

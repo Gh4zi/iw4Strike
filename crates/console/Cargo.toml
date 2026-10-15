@@ -26,6 +26,7 @@ session = { path = "../session" }
 render_fx.workspace = true
 replay = { path = "../replay" }
 sim = { path = "../sim" }
+sv_pure.workspace = true
 movement_iw4 = { path = "../movement_iw4" }
 weapon_iw4.workspace = true
 bots = { path = "../bots" }
