@@ -932,11 +932,33 @@ impl WorldScene {
         Ok(())
     }
 
+    /// `dyn_atpoint_walk_trace`'s `walk`: the first non-sun primary light whose volume and region
+    /// hulls both take the box, read straight from the scene's hulls (no per-call views of every
+    /// light's hulls, which glass asked for per pane per frame) and stopping at that light.
     pub fn dyn_atpoint_lookup_fallback(&self, mid: [f32; 3], box_half: Option<[f32; 3]>) -> u8 {
-        match self.dyn_atpoint_walk_trace(mid, box_half) {
-            Some(trace) => trace.walk as u8,
-            None => lighting_iw4::LIGHT_GRID_ATPOINT_EMPTY_PRIMARY,
+        let (Some(half), Some(regions)) = (box_half, self.light_region_hulls.as_ref()) else {
+            return lighting_iw4::LIGHT_GRID_ATPOINT_EMPTY_PRIMARY;
+        };
+        let start = self.sun_primary_light_count.saturating_add(1) as usize;
+        let n = self.primary_light_cull.len().min(regions.len());
+        for i in start..n {
+            let light = &self.primary_light_cull[i];
+            if !lighting_iw4::cull_box_from_primary_light(light, mid, half)
+                && !lighting_iw4::light_region_culls_box(
+                    regions[i].iter().map(|h| lighting_iw4::LightRegionHull {
+                        kdop_mid: h.kdop_mid,
+                        kdop_half: h.kdop_half,
+                        axes: &h.axes,
+                    }),
+                    light.origin,
+                    mid,
+                    half,
+                )
+            {
+                return i as u8;
+            }
         }
+        0
     }
 
     pub fn publish_dyn_atpoint(&self, lookup: &mut render_scene::DynAtPointLookup) {

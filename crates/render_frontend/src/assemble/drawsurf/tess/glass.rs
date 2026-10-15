@@ -839,10 +839,18 @@ pub(crate) fn enqueue_glass_model_lighting(
     camera_origin: Option<Res<render_fx::FxCameraOrigin>>,
     mut requests: ResMut<ModelLightingRequests>,
     mut plan: ResMut<GfxGlassMeshPlan>,
+    generation: Option<Res<frame::WorldGeneration>>,
+    mut fallbacks: Local<(Option<u64>, bevy::platform::collections::HashMap<(u16, [u32; 3]), u8>)>,
 ) {
     let eye = camera_origin.map(|origin| origin.0);
     if !plan.built {
         return;
+    }
+    // A pane's light-grid fallback depends only on where its lighting is sampled, which moves
+    // only when the eye crosses to the pane's other side: kept per pane and origin, for the map.
+    let world = generation.and_then(|generation| generation.0);
+    if fallbacks.0 != world {
+        *fallbacks = (world, Default::default());
     }
     let attempted = plan.draws.len() as u32;
     plan.lighting_runtime = None;
@@ -866,10 +874,13 @@ pub(crate) fn enqueue_glass_model_lighting(
             continue;
         }
         let origin = glass_lighting_origin(draw, eye);
-        let lookup_fallback = scene
-            .as_ref()
-            .map(|s| s.dyn_atpoint_lookup_fallback(origin, Some(box_half)))
-            .unwrap_or(lighting_iw4::LIGHT_GRID_ATPOINT_EMPTY_PRIMARY);
+        let lookup_fallback = match scene.as_ref() {
+            Some(s) => *fallbacks
+                .1
+                .entry((draw.piece, origin.map(f32::to_bits)))
+                .or_insert_with(|| s.dyn_atpoint_lookup_fallback(origin, Some(box_half))),
+            None => lighting_iw4::LIGHT_GRID_ATPOINT_EMPTY_PRIMARY,
+        };
         draw.pending_lighting = Some(requests.request(ModelLightingRequest {
             owner,
             origin,

@@ -35,6 +35,7 @@ pub struct SpotShadowCasterPlan {
     input_ranges: Vec<Range<usize>>,
     pub items: Vec<RetainedDrawItem>,
     pub marked_n: u32,
+    static_identity: StaticIdentity,
 }
 
 fn remap_sidecar(indices: &mut [u32], input: &Range<usize>, compact: &[u32]) {
@@ -184,39 +185,61 @@ fn host_dvars() -> SpotShadowChooseDvars {
     }
 }
 
-struct RetainedIdentityIndex<'a> {
-    retained: &'a [RetainedDrawItem],
-    xmodel_retained: &'a [RetainedDrawItem],
+/// Where each static-model and world surface sits in the static lane. The lane only changes when
+/// it is rebuilt (its membership revision moves) or the map changes, so these are kept until then.
+#[derive(Clone, Debug, Default)]
+struct StaticIdentity {
+    key: Option<(Option<u64>, u64, usize)>,
     smodel: HashMap<(u32, u32), usize>,
     world: HashMap<u16, usize>,
-    xmodel: HashMap<(u32, u16), usize>,
 }
 
-impl<'a> RetainedIdentityIndex<'a> {
-    fn new(retained: &'a [RetainedDrawItem]) -> Self {
-        Self::with_xmodels(retained, retained)
-    }
-
-    fn with_xmodels(
-        retained: &'a [RetainedDrawItem],
-        xmodel_retained: &'a [RetainedDrawItem],
-    ) -> Self {
-        let mut smodel = HashMap::new();
-        let mut world = HashMap::new();
-        let mut xmodel = HashMap::new();
+impl StaticIdentity {
+    fn refresh(&mut self, revision: (Option<u64>, u64), retained: &[RetainedDrawItem]) {
+        let key = (revision.0, revision.1, retained.len());
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        self.smodel.clear();
+        self.world.clear();
         for (i, item) in retained.iter().enumerate() {
             match item.kind {
                 RetainedDrawKind::Smodel {
                     placement, surface, ..
                 } => {
-                    smodel.entry((placement, surface)).or_insert(i);
+                    self.smodel.entry((placement, surface)).or_insert(i);
                 }
                 RetainedDrawKind::World { surf, .. } => {
-                    world.entry(surf).or_insert(i);
+                    self.world.entry(surf).or_insert(i);
                 }
                 _ => {}
             }
         }
+    }
+}
+
+struct RetainedIdentityIndex<'a> {
+    retained: &'a [RetainedDrawItem],
+    xmodel_retained: &'a [RetainedDrawItem],
+    statics: &'a StaticIdentity,
+    xmodel: HashMap<(u32, u16), usize>,
+}
+
+impl<'a> RetainedIdentityIndex<'a> {
+    /// An index for xmodel lookups only.
+    fn new(retained: &'a [RetainedDrawItem]) -> Self {
+        static NO_STATICS: std::sync::LazyLock<StaticIdentity> =
+            std::sync::LazyLock::new(StaticIdentity::default);
+        Self::with_xmodels(&NO_STATICS, retained, retained)
+    }
+
+    fn with_xmodels(
+        statics: &'a StaticIdentity,
+        retained: &'a [RetainedDrawItem],
+        xmodel_retained: &'a [RetainedDrawItem],
+    ) -> Self {
+        let mut xmodel = HashMap::new();
         for (i, item) in xmodel_retained.iter().enumerate() {
             if let RetainedDrawKind::XModel { surface, .. } = item.kind {
                 let object_id = dpvs_iw4::GfxDrawSurf::from_packed(item.key).object_id();
@@ -226,20 +249,20 @@ impl<'a> RetainedIdentityIndex<'a> {
         Self {
             retained,
             xmodel_retained,
-            smodel,
-            world,
+            statics,
             xmodel,
         }
     }
 
     fn smodel(&self, placement: u32, surface: u32) -> Option<&'a RetainedDrawItem> {
-        self.smodel
+        self.statics
+            .smodel
             .get(&(placement, surface))
             .map(|&i| &self.retained[i])
     }
 
     fn world(&self, surf: u16) -> Option<&'a RetainedDrawItem> {
-        self.world.get(&surf).map(|&i| &self.retained[i])
+        self.statics.world.get(&surf).map(|&i| &self.retained[i])
     }
 
     fn xmodel(&self, surface: u32, object_id: u16) -> Option<&'a RetainedDrawItem> {
@@ -381,6 +404,7 @@ pub fn fill_spot_shadow_caster_plan(
     xmodel: Option<&XModelDrawPlan>,
     catalog: &super::RuntimeMaterialCatalog,
     retained: &[RetainedDrawItem],
+    retained_revision: (Option<u64>, u64),
     world_run_surfs: &[u16],
     world_ranges: &[(u32, u32)],
     world_vertex_count: u32,
@@ -509,7 +533,9 @@ pub fn fill_spot_shadow_caster_plan(
     let shadow_materials = xmodel.map_or_else(Vec::new, |plan| {
         super::retained_list::xmodel_shadow_materials(plan, catalog)
     });
-    let identity = RetainedIdentityIndex::with_xmodels(retained, &shadow_materials);
+    let mut statics = std::mem::take(&mut plan.static_identity);
+    statics.refresh(retained_revision, retained);
+    let identity = RetainedIdentityIndex::with_xmodels(&statics, retained, &shadow_materials);
     // A scene entity can own many surfaces. Resolve them once in draw order;
     // each shadow slot then visits only that entity's retained surfaces.
     let mut xmodel_by_entity = HashMap::<u32, Vec<RetainedDrawItem>>::new();
@@ -760,4 +786,6 @@ pub fn fill_spot_shadow_caster_plan(
             plan.packed.push(packed);
         }
     }
+    drop(identity);
+    plan.static_identity = statics;
 }

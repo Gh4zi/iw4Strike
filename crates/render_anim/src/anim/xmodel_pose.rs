@@ -115,56 +115,16 @@ fn blend_skel_vertices_inner<const DECODED: bool>(
             })
             .collect()
     });
-    for (i, skin) in skel.vert_skin.iter().enumerate() {
+    for i in 0..skel.vert_skin.len() {
         if !active_vert.get(i).copied().unwrap_or(false) {
             continue;
         }
-        let p = Vec3::from_array(skel.positions[i]);
-        let n = DECODED.then(|| Vec3::from_array(skel.normals[i]));
-
-        let (mut posed_position, mut posed_normal, primary_basis) =
-            if rigid_vert.get(i).copied().unwrap_or(false) {
-                let matrix = bone_cache[usize::from(skin.bones[0])].0;
-                (
-                    matrix.transform_point3(p),
-                    n.map(|n| matrix.transform_vector3(n)),
-                    matrix,
-                )
-            } else {
-                let (primary, primary_esi) = &bone_cache[usize::from(skin.bones[0])];
-                let mut extras = [(primary_esi, 0u16); 3];
-                let mut extra_n = 0usize;
-                for extra in 1..4 {
-                    if skin.weights[extra] <= 0.0 {
-                        continue;
-                    }
-                    extras[extra_n] = (
-                        &bone_cache[usize::from(skin.bones[extra])].1,
-                        skin.weight_u16[extra],
-                    );
-                    extra_n += 1;
-                }
-                (
-                    Vec3::from_array(dpvs_iw4::skin_packed_weighted_point(
-                        p.to_array(),
-                        primary_esi,
-                        &extras[..extra_n],
-                    )),
-                    n.map(|n| primary.transform_vector3(n)),
-                    *primary,
-                )
-            };
-        if posed_position == Vec3::ZERO && skin.weights[0] == 0.0 {
-            posed_position = p;
-            posed_normal = n;
-        }
+        let rigid = rigid_vert.get(i).copied().unwrap_or(false);
+        let (posed_position, posed_normal, primary_basis) =
+            skin_vertex(skel, i, rigid, &bone_cache, DECODED);
         if let Some(posed_normal) = posed_normal {
             positions[i] = posed_position.to_array();
-            normals[i] = if posed_normal == Vec3::ZERO {
-                [0.0, 0.0, 1.0]
-            } else {
-                posed_normal.normalize_or_zero().to_array()
-            };
+            normals[i] = finish_normal(posed_normal);
         }
         if let Some(out) = &mut posed_packed {
             pose_packed_vertex(&mut out[i], posed_position, primary_basis);
@@ -173,6 +133,236 @@ fn blend_skel_vertices_inner<const DECODED: bool>(
     BlendedSkel {
         decoded: DECODED.then_some(DecodedSkel { positions, normals }),
         packed: posed_packed,
+    }
+}
+
+/// The bones' skinning matrices, `0..=` the highest bone a posed vertex uses: each as a matrix
+/// and as the column array the weighted blend reads.
+type BoneCache = Vec<(Mat4, [f32; 16])>;
+
+/// Vertex `i` of `skel` posed by its bones: its position, its normal (with `with_normal`; not yet
+/// normalised) and the basis of its primary bone, which turns the packed vertex's normal and
+/// tangent. The full pose and the refresh both pose through this, so they give the same vertices.
+#[inline]
+fn skin_vertex(
+    skel: &FpvSkel,
+    i: usize,
+    rigid: bool,
+    bone_cache: &BoneCache,
+    with_normal: bool,
+) -> (Vec3, Option<Vec3>, Mat4) {
+    let skin = &skel.vert_skin[i];
+    let p = Vec3::from_array(skel.positions[i]);
+    let n = with_normal.then(|| Vec3::from_array(skel.normals[i]));
+
+    let (mut posed_position, mut posed_normal, primary_basis) = if rigid {
+        let matrix = bone_cache[usize::from(skin.bones[0])].0;
+        (
+            matrix.transform_point3(p),
+            n.map(|n| matrix.transform_vector3(n)),
+            matrix,
+        )
+    } else {
+        let (primary, primary_esi) = &bone_cache[usize::from(skin.bones[0])];
+        let mut extras = [(primary_esi, 0u16); 3];
+        let mut extra_n = 0usize;
+        for extra in 1..4 {
+            if skin.weights[extra] <= 0.0 {
+                continue;
+            }
+            extras[extra_n] = (
+                &bone_cache[usize::from(skin.bones[extra])].1,
+                skin.weight_u16[extra],
+            );
+            extra_n += 1;
+        }
+        (
+            Vec3::from_array(dpvs_iw4::skin_packed_weighted_point(
+                p.to_array(),
+                primary_esi,
+                &extras[..extra_n],
+            )),
+            n.map(|n| primary.transform_vector3(n)),
+            *primary,
+        )
+    };
+    if posed_position == Vec3::ZERO && skin.weights[0] == 0.0 {
+        posed_position = p;
+        posed_normal = n;
+    }
+    (posed_position, posed_normal, primary_basis)
+}
+
+#[inline]
+fn finish_normal(normal: Vec3) -> [f32; 3] {
+    if normal == Vec3::ZERO {
+        [0.0, 0.0, 1.0]
+    } else {
+        normal.normalize_or_zero().to_array()
+    }
+}
+
+/// What changes when a model already in a draw plan is posed again: each surface's positions,
+/// normals and packed vertices, surface after surface in the order (and at the sizes)
+/// `skin_model_filtered` lists them. Kept between frames, so posing again allocates nothing.
+#[derive(Debug, Default)]
+pub struct PoseRefresh {
+    pub surface_vertex_counts: Vec<usize>,
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub packed: Vec<[u8; asset_iw4::size::GFX_PACKED_VERTEX]>,
+}
+
+impl PoseRefresh {
+    pub fn clear(&mut self) {
+        self.surface_vertex_counts.clear();
+        self.positions.clear();
+        self.normals.clear();
+        self.packed.clear();
+    }
+}
+
+/// Below this many vertices a refresh is posed on the calling thread; above it, in pieces of
+/// this size across the compute pool (a Ferris wheel is tens of thousands).
+const REFRESH_PIECE_VERTICES: usize = 2048;
+
+/// Appends to `out` the vertices `skin_model_filtered` poses for `skel` at `lod` (same math,
+/// through `skin_vertex`), without what a model already in a draw plan keeps: no meshes, no
+/// index remap, no UV or colour copies. Big models are posed across the compute pool. `None`
+/// where the full pose would not give per-surface meshes with packed vertices; the caller then
+/// poses in full.
+pub fn skin_model_refresh(
+    skel: &FpvSkel,
+    bone_to_local: impl Fn(usize) -> Mat4,
+    surface_is_visible: impl Fn(usize) -> bool,
+    surface_rigid: impl Fn(usize) -> bool,
+    lod: u8,
+    out: &mut PoseRefresh,
+) -> Option<()> {
+    let surface_count = skel.surface_vertex_ranges.len();
+    let vertex_count = skel.positions.len();
+    if surface_count == 0
+        || skel.surface_index_ranges.len() != surface_count
+        || skel.surface_materials.len() != surface_count
+        || skel.packed_vertices.len() != vertex_count
+        || skel.vert_skin.len() != vertex_count
+        || skel.normals.len() != vertex_count
+    {
+        return None;
+    }
+    // (first source vertex, count, `Some(rigid)` to pose or `None` to keep the bind pose).
+    let mut segments: Vec<(usize, usize, Option<bool>)> = Vec::new();
+    let mut max_bone: Option<u16> = None;
+    for surface_index in skel.surfaces_for_lod(lod) {
+        let (first, count) = skel.surface_vertex_ranges[surface_index];
+        let (index_start, index_count) = skel.surface_index_ranges[surface_index];
+        let end = first.checked_add(count)?;
+        let index_end = index_start.checked_add(index_count)?;
+        if end > vertex_count
+            || end > skel.uvs.len()
+            || end > skel.colors.len()
+            || index_end > skel.indices.len()
+        {
+            return None;
+        }
+        let mode = surface_is_visible(surface_index).then(|| surface_rigid(surface_index));
+        if mode.is_some() {
+            for skin in &skel.vert_skin[first..end] {
+                let used = std::iter::once(skin.bones[0]).chain(
+                    (1..4)
+                        .filter(|&extra| skin.weights[extra] > 0.0)
+                        .map(|extra| skin.bones[extra]),
+                );
+                max_bone = used.chain(max_bone).max();
+            }
+        }
+        segments.push((first, count, mode));
+        out.surface_vertex_counts.push(count);
+    }
+    let bone_cache: BoneCache = max_bone.map_or_else(Vec::new, |max_bone| {
+        (0..=usize::from(max_bone))
+            .map(|bone| {
+                let matrix = bone_to_local(bone);
+                (matrix, matrix.to_cols_array())
+            })
+            .collect()
+    });
+    let start = out.positions.len();
+    let added: usize = segments.iter().map(|(_, count, _)| count).sum();
+    out.positions.resize(start + added, [0.0; 3]);
+    out.normals.resize(start + added, [0.0; 3]);
+    out.packed
+        .resize(start + added, [0; asset_iw4::size::GFX_PACKED_VERTEX]);
+
+    // Pieces of at most REFRESH_PIECE_VERTICES, each with its own slice of the output.
+    let mut pieces = Vec::new();
+    for &(first, count, mode) in &segments {
+        let mut done = 0;
+        while done < count {
+            let n = (count - done).min(REFRESH_PIECE_VERTICES);
+            pieces.push((first + done, n, mode));
+            done += n;
+        }
+    }
+    let mut positions = &mut out.positions[start..];
+    let mut normals = &mut out.normals[start..];
+    let mut packed = &mut out.packed[start..];
+    let mut jobs = Vec::with_capacity(pieces.len());
+    for (first, n, mode) in pieces {
+        let (p, rest_p) = positions.split_at_mut(n);
+        let (nm, rest_n) = normals.split_at_mut(n);
+        let (pk, rest_k) = packed.split_at_mut(n);
+        positions = rest_p;
+        normals = rest_n;
+        packed = rest_k;
+        jobs.push((first, mode, p, nm, pk));
+    }
+    let run = |(first, mode, positions, normals, packed): (
+        usize,
+        Option<bool>,
+        &mut [[f32; 3]],
+        &mut [[f32; 3]],
+        &mut [[u8; asset_iw4::size::GFX_PACKED_VERTEX]],
+    )| {
+        refresh_vertices(skel, &bone_cache, first, mode, positions, normals, packed);
+    };
+    if added <= REFRESH_PIECE_VERTICES || jobs.len() < 2 {
+        jobs.into_iter().for_each(run);
+    } else {
+        bevy::tasks::ComputeTaskPool::get().scope(|scope| {
+            for job in jobs {
+                scope.spawn(async move { run(job) });
+            }
+        });
+    }
+    Some(())
+}
+
+fn refresh_vertices(
+    skel: &FpvSkel,
+    bone_cache: &BoneCache,
+    first: usize,
+    mode: Option<bool>,
+    positions: &mut [[f32; 3]],
+    normals: &mut [[f32; 3]],
+    packed: &mut [[u8; asset_iw4::size::GFX_PACKED_VERTEX]],
+) {
+    let n = positions.len();
+    let Some(rigid) = mode else {
+        // Not drawn this pose: the full pose leaves these at the bind pose too.
+        positions.copy_from_slice(&skel.positions[first..first + n]);
+        normals.copy_from_slice(&skel.normals[first..first + n]);
+        packed.copy_from_slice(&skel.packed_vertices[first..first + n]);
+        return;
+    };
+    for k in 0..n {
+        let i = first + k;
+        let (posed_position, posed_normal, primary_basis) =
+            skin_vertex(skel, i, rigid, bone_cache, true);
+        positions[k] = posed_position.to_array();
+        normals[k] = finish_normal(posed_normal.unwrap_or(Vec3::ZERO));
+        packed[k] = skel.packed_vertices[i];
+        pose_packed_vertex(&mut packed[k], posed_position, primary_basis);
     }
 }
 

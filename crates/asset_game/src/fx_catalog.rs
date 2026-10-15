@@ -694,9 +694,15 @@ impl FxDefinitions {
             .and_then(|index| self.defs.get(index))
     }
 
+    /// The slot of a definition this catalog holds (that very entry, not one with its name),
+    /// from its address: the effects call this per running effect and per particle every
+    /// frame, and the name lookup built a `String` key each time.
     pub fn index_of(&self, def: &OwnedFxEffectDef) -> Option<usize> {
-        self.index_in(def.namespace, &def.name)
-            .filter(|&index| std::ptr::eq(&self.defs[index], def))
+        let size = std::mem::size_of::<OwnedFxEffectDef>();
+        let offset = (def as *const OwnedFxEffectDef as usize)
+            .checked_sub(self.defs.as_ptr() as usize)?;
+        let index = offset / size;
+        (offset % size == 0 && index < self.defs.len()).then_some(index)
     }
 
     pub fn names(&self) -> impl Iterator<Item = &str> {

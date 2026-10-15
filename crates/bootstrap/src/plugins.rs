@@ -47,6 +47,19 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
         .add_plugins(RenderPlugin)
         .add_plugins(SessionPlugin);
 
+    // Bevy lays the whole UI tree out, and rebuilds its draw order, every frame. With none of
+    // what they read changed, that is last frame's result again, and walking the HUD's tree for
+    // them was 3-7% of the main thread. `IW4L_UI_LAYOUT_ALWAYS=1` runs both every frame anyway.
+    if !ui_layout_always() {
+        app.configure_sets(
+            PostUpdate,
+            (
+                bevy::ui::UiSystems::Layout.run_if(ui_layout_needed),
+                bevy::ui::UiSystems::Stack.run_if(ui_stack_needed),
+            ),
+        );
+    }
+
     app.edit_schedule(Update, |schedule| {
         schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
     });
@@ -87,6 +100,99 @@ pub fn add_runtime_plugins_with_role(app: &mut App, role: RuntimeRole) {
             schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
         });
     }
+}
+
+/// What `bevy::ui::ui_layout_system` reads, besides measured content: node styles, render
+/// targets, UI transforms, scrolling, outlines, layout configs and the UI hierarchy.
+type UiLayoutInputsChanged = Or<(
+    Changed<bevy::ui::Node>,
+    Changed<bevy::ui::ComputedUiRenderTargetInfo>,
+    Changed<bevy::ui::UiTransform>,
+    Changed<bevy::ui::ScrollPosition>,
+    Changed<bevy::ui::Outline>,
+    Changed<bevy::ui::LayoutConfig>,
+    Changed<bevy::ui::IgnoreScroll>,
+    Changed<Children>,
+    Changed<ChildOf>,
+)>;
+
+/// Whether the UI needs laying out this frame: anything layout reads changed, or a UI node, a
+/// child list or a parent link went away. Measured content counts when it changed, except an
+/// editable text's: Bevy's own text-input layout takes every `EditableText` mutably each frame
+/// and its content-size system then sets the same size again, which alone laid the whole UI out
+/// every frame (the closed console's prompt). That size follows only the text's font, line
+/// height and render target, which are watched instead. Logs how often layout was needed, at
+/// debug level.
+fn ui_layout_needed(
+    changed: Query<(), UiLayoutInputsChanged>,
+    content: Query<(), (Changed<bevy::ui::ContentSize>, Without<bevy::text::EditableText>)>,
+    editable: Query<
+        (),
+        (
+            With<bevy::text::EditableText>,
+            Or<(
+                Added<bevy::ui::ContentSize>,
+                Changed<bevy::text::TextFont>,
+                Changed<bevy::text::LineHeight>,
+            )>,
+        ),
+    >,
+    mut removed_nodes: RemovedComponents<bevy::ui::Node>,
+    mut removed_children: RemovedComponents<Children>,
+    mut removed_parents: RemovedComponents<ChildOf>,
+    mut census: Local<(u32, u32)>,
+) -> bool {
+    // Every reader drained every frame, so a removal never waits for a later frame to count.
+    let removed = (removed_nodes.read().count()
+        + removed_children.read().count()
+        + removed_parents.read().count())
+        > 0;
+    let needed = removed || !changed.is_empty() || !content.is_empty() || !editable.is_empty();
+    let (laid_out, skipped) = &mut *census;
+    if needed {
+        *laid_out += 1;
+    } else {
+        *skipped += 1;
+    }
+    if *laid_out + *skipped >= 2000 {
+        diag::debug!(Ui, "ui layout: {laid_out} frames laid out, {skipped} skipped (unchanged)");
+        *census = (0, 0);
+    }
+    needed
+}
+
+/// What `bevy::ui::UiSystems::Stack` (the UI's draw order) reads: z-indexes and the UI tree.
+/// A new node arrives with a fresh `ComputedStackIndex`.
+type UiStackInputsChanged = Or<(
+    Added<bevy::ui::ComputedStackIndex>,
+    Changed<bevy::ui::ZIndex>,
+    Changed<bevy::ui::GlobalZIndex>,
+    Changed<Children>,
+    Changed<ChildOf>,
+)>;
+
+/// Whether the UI's draw order needs rebuilding this frame: a z-index or the UI tree changed, or
+/// a node, a z-index, a child list or a parent link went away.
+fn ui_stack_needed(
+    changed: Query<(), UiStackInputsChanged>,
+    mut removed_nodes: RemovedComponents<bevy::ui::Node>,
+    mut removed_z: RemovedComponents<bevy::ui::ZIndex>,
+    mut removed_global_z: RemovedComponents<bevy::ui::GlobalZIndex>,
+    mut removed_children: RemovedComponents<Children>,
+    mut removed_parents: RemovedComponents<ChildOf>,
+) -> bool {
+    // Every reader drained every frame, so a removal never waits for a later frame to count.
+    let removed = (removed_nodes.read().count()
+        + removed_z.read().count()
+        + removed_global_z.read().count()
+        + removed_children.read().count()
+        + removed_parents.read().count())
+        > 0;
+    removed || !changed.is_empty()
+}
+
+fn ui_layout_always() -> bool {
+    std::env::var("IW4L_UI_LAYOUT_ALWAYS").is_ok_and(|value| value.trim() == "1")
 }
 
 pub fn assemble_listen_app() -> App {

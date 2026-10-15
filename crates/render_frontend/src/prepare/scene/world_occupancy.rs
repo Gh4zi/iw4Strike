@@ -192,6 +192,12 @@ pub fn place(
         if !instance.metadata.gameobject.is_empty() {
             script_gameobject_tagged += 1;
         }
+        diag::debug!(
+            World,
+            "script model {} at {:.0?} (game units)",
+            instance.current_model.0,
+            instance.lighting_origin
+        );
         let transform = instance.transform;
         let gameobject = instance.metadata.gameobject.clone();
         let visibility = Visibility::Inherited;

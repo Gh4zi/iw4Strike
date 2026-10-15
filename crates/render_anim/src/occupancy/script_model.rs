@@ -5,12 +5,13 @@ use bevy::prelude::*;
 
 use crate::anim::scene_submission::{AnimDObjSceneModel, AnimDObjSceneSubmission, AnimSceneSubmit};
 use crate::anim::xmodel_pose::{
-    PosedModelSurface, lod_local_surface, skin_model_filtered, stream_lod_surface_rigid,
+    PoseRefresh, PosedModelSurface, lod_local_surface, skin_model_filtered, skin_model_refresh,
+    stream_lod_surface_rigid,
 };
 use crate::occupancy::dyn_ent::{fpv_frustum_planes, sphere_behind_frustum};
 use crate::{
     ScriptModelDrawPlan, ScriptModelOwnerDraw, append_script_model_asset,
-    overwrite_script_model_asset, retain_script_model_assets,
+    overwrite_script_model_asset, refresh_script_model_asset, retain_script_model_assets,
 };
 use render_frame::RenderFocusFrame;
 use render_scene::FpvLens;
@@ -115,8 +116,12 @@ struct ScriptPosedAsset {
     key: asset_world::MapXModelAssetKey,
     dobj_state: xmodel_runtime::DObjSemanticState,
     camera_lods: Vec<Option<u8>>,
+    /// The last full pose: meshes the draw plan can be built from.
     surfaces: Vec<PosedModelSurface>,
     authored: Vec<Option<assets::MaterialIndex>>,
+    /// This frame's pose when it was posed again without meshes (an animated model: a Ferris
+    /// wheel turning, a flag): what changed since `surfaces`, written over the plan's copy.
+    refresh: Option<PoseRefresh>,
 }
 
 impl ScriptModelPoseProduct {
@@ -694,36 +699,57 @@ fn pose_script_models(
                     continue;
                 };
                 let skin_entries = slot.as_ref().map(|slot| slot.skin_entries).unwrap_or(&[]);
-                let Some((surfaces, surface_materials)) = pose_script_dobj_with_materials(
-                    Some(&assets),
-                    &skels,
-                    &slot_dobj.dobj,
-                    &request,
-                    lod_view,
-                    skin_entries,
-                ) else {
-                    continue;
-                };
-                for (surface, authored) in surfaces.iter().zip(surface_materials.iter()) {
-                    if authored.is_none() {
-                        product.surface_material_unbound += 1;
-                        if product.surface_material_first.is_none() {
-                            product.surface_material_first = Some(format!(
-                                "{} surface={}",
-                                owner.current_model.0, surface.surface_index
-                            ));
-                        }
-                    }
-                }
-                append_or_overwrite_script_pose(
+                // Posed before with the same parts: pose only what moves (no meshes).
+                if let Some(index) = refresh_script_pose(
                     &mut product,
                     &live_assets,
-                    owner.current_model.clone(),
-                    owner.dobj_state.clone(),
-                    camera_lods.clone(),
-                    surfaces,
-                    surface_materials,
-                )
+                    &owner.current_model,
+                    &owner.dobj_state,
+                    &camera_lods,
+                    |out| {
+                        refresh_script_dobj(
+                            &skels,
+                            &slot_dobj.dobj,
+                            &request,
+                            lod_view,
+                            skin_entries,
+                            out,
+                        )
+                    },
+                ) {
+                    index
+                } else {
+                    let Some((surfaces, surface_materials)) = pose_script_dobj_with_materials(
+                        Some(&assets),
+                        &skels,
+                        &slot_dobj.dobj,
+                        &request,
+                        lod_view,
+                        skin_entries,
+                    ) else {
+                        continue;
+                    };
+                    for (surface, authored) in surfaces.iter().zip(surface_materials.iter()) {
+                        if authored.is_none() {
+                            product.surface_material_unbound += 1;
+                            if product.surface_material_first.is_none() {
+                                product.surface_material_first = Some(format!(
+                                    "{} surface={}",
+                                    owner.current_model.0, surface.surface_index
+                                ));
+                            }
+                        }
+                    }
+                    append_or_overwrite_script_pose(
+                        &mut product,
+                        &live_assets,
+                        owner.current_model.clone(),
+                        owner.dobj_state.clone(),
+                        camera_lods.clone(),
+                        surfaces,
+                        surface_materials,
+                    )
+                }
             };
             live_assets.push(index);
             index
@@ -853,15 +879,20 @@ fn commit_script_model_draw_plan(
                     model_materials.authored(&tess.catalog, authored?).cloned()
                 })
                 .collect::<Vec<_>>();
-            append_or_overwrite_script_model(
-                &mut plan,
-                &live_plan,
-                posed.key.clone(),
-                posed.dobj_state.clone(),
-                posed.camera_lods.clone(),
-                &posed.surfaces,
-                &materials,
-            )
+            match posed.refresh.as_ref() {
+                Some(refresh) => {
+                    refresh_or_place_script_model(&mut plan, &live_plan, posed, refresh, &materials)
+                }
+                None => append_or_overwrite_script_model(
+                    &mut plan,
+                    &live_plan,
+                    posed.key.clone(),
+                    posed.dobj_state.clone(),
+                    posed.camera_lods.clone(),
+                    &posed.surfaces,
+                    &materials,
+                ),
+            }
         };
         product_to_plan[product_index] = plan_index;
         live_plan.push(plan_index);
@@ -987,6 +1018,7 @@ fn append_or_overwrite_script_pose(
             camera_lods,
             surfaces,
             authored,
+            refresh: None,
         };
         return index;
     }
@@ -997,9 +1029,106 @@ fn append_or_overwrite_script_pose(
         camera_lods,
         surfaces,
         authored,
+        refresh: None,
     });
     index
 }
+
+/// Poses a model again without meshes when the product already holds a full pose of it with the
+/// same parts (the asset `append_or_overwrite_script_pose` would overwrite): `pose` fills that
+/// asset's refresh, which keeps its buffers from frame to frame. `None` when there is no such
+/// asset or the model cannot be refreshed; the caller then poses in full.
+fn refresh_script_pose(
+    product: &mut ScriptModelPoseProduct,
+    live_assets: &[usize],
+    key: &asset_world::MapXModelAssetKey,
+    dobj_state: &xmodel_runtime::DObjSemanticState,
+    camera_lods: &[Option<u8>],
+    pose: impl FnOnce(&mut PoseRefresh) -> Option<()>,
+) -> Option<usize> {
+    if !refresh_enabled() {
+        return None;
+    }
+    let index = product.assets.iter().enumerate().find_map(|(index, asset)| {
+        let matches = &asset.key == key
+            && asset.camera_lods == camera_lods
+            && script_model_pose_topology_matches(&asset.dobj_state, dobj_state)
+            && !live_assets.contains(&index);
+        matches.then_some(index)
+    })?;
+    let asset = &mut product.assets[index];
+    let mut refresh = asset.refresh.take().unwrap_or_default();
+    refresh.clear();
+    if pose(&mut refresh).is_none() || refresh.surface_vertex_counts.len() != asset.surfaces.len()
+    {
+        return None;
+    }
+    asset.dobj_state = dobj_state.clone();
+    asset.refresh = Some(refresh);
+    // The same surfaces as the full pose, so the same ones without a material.
+    for (surface, authored) in asset.surfaces.iter().zip(&asset.authored) {
+        if authored.is_none() {
+            product.surface_material_unbound += 1;
+            if product.surface_material_first.is_none() {
+                product.surface_material_first =
+                    Some(format!("{} surface={}", key.0, surface.surface_index));
+            }
+        }
+    }
+    Some(index)
+}
+
+/// `pose_script_dobj_with_materials` for a refresh: the same models, LODs and visible surfaces,
+/// posed into `out` without meshes.
+fn refresh_script_dobj(
+    skels: &[&asset_model::ModelSkel],
+    dobj: &xmodel_runtime::DObj,
+    request: &xmodel_runtime::DObjPoseRequest,
+    lod_view: Option<DObjLodView>,
+    skin_entries: &[dpvs_iw4::SceneEntSkinEntry],
+    out: &mut PoseRefresh,
+) -> Option<()> {
+    let world = xmodel_runtime::pose_dobj(dobj, request, Mat4::IDENTITY).ok()?;
+    let skin = dobj.skin_matrices(&world);
+    for (model, skel) in skels.iter().enumerate() {
+        let Some(lod) = submodel_camera_lod(skel, lod_view) else {
+            continue;
+        };
+        if skel.surfaces_for_lod(lod).is_empty() {
+            continue;
+        }
+        let base = dobj.models.get(model)?.base;
+        skin_model_refresh(
+            skel,
+            |bone| skin[base + bone],
+            |surface_index| {
+                dobj.surface_visible(
+                    model,
+                    &skel.surface_part_bits[surface_index],
+                    &request.hide_part_bits,
+                ) && dpvs_iw4::SceneEntSkinEntry::stream_draws(
+                    skin_entries,
+                    model as u16,
+                    lod_local_surface(skel, lod, surface_index) as u16,
+                )
+            },
+            |surface_index| {
+                stream_lod_surface_rigid(skel, lod, skin_entries, model as u16, surface_index)
+            },
+            lod,
+            out,
+        )?;
+    }
+    Some(())
+}
+
+/// `IW4L_SMODEL_REFRESH=0` poses every animated script model in full, as before the refresh
+/// (for comparing the two).
+fn refresh_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("IW4L_SMODEL_REFRESH").map_or(true, |value| value.trim() != "0"))
+}
+
 
 fn script_dobj_reuse_key(
     state: &xmodel_runtime::DObjSemanticState,
@@ -1035,6 +1164,39 @@ fn append_or_overwrite_script_model(
         return index;
     }
     append_script_model_asset(plan, key, dobj_state, camera_lods, surfaces, materials)
+}
+
+/// A model posed again without meshes: its refresh is written over the plan's copy of the same
+/// model and parts. With no copy to write over (a new plan after a material reset), the last full
+/// pose is placed first and the refresh brought over it, so this frame's pose is what is drawn.
+fn refresh_or_place_script_model(
+    plan: &mut ScriptModelDrawPlan,
+    live_assets: &[usize],
+    posed: &ScriptPosedAsset,
+    refresh: &PoseRefresh,
+    materials: &[Option<SmodelPassMaterial>],
+) -> usize {
+    if let Some(index) = plan.assets.iter().enumerate().find_map(|(index, asset)| {
+        let matches = asset.key == posed.key
+            && asset.camera_lods == posed.camera_lods
+            && script_model_pose_topology_matches(&asset.dobj_state, &posed.dobj_state)
+            && !live_assets.contains(&index);
+        matches.then_some(index)
+    }) && refresh_script_model_asset(plan, index, posed.dobj_state.clone(), refresh, materials)
+    {
+        return index;
+    }
+    let index = append_or_overwrite_script_model(
+        plan,
+        live_assets,
+        posed.key.clone(),
+        posed.dobj_state.clone(),
+        posed.camera_lods.clone(),
+        &posed.surfaces,
+        materials,
+    );
+    refresh_script_model_asset(plan, index, posed.dobj_state.clone(), refresh, materials);
+    index
 }
 
 fn script_model_pose_topology_matches(

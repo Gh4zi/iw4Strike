@@ -459,10 +459,10 @@ fn cull_dyn_ent_cell_models(
     cell_vis: Res<PublishedCellVis>,
     membership: Res<DynEntCellBits>,
     mut instances: Query<
-        (Ref<WorldDynEntInstance>, Ref<Transform>, &mut Visibility),
+        (Entity, Ref<WorldDynEntInstance>, Ref<Transform>, &mut Visibility),
         With<DynEntModelEntity>,
     >,
-    mut radii: Local<bevy::platform::collections::HashMap<String, f32>>,
+    mut radii: Local<bevy::platform::collections::HashMap<Entity, f32>>,
     mut last: Local<Option<DynEntCullKey>>,
 ) {
     let planes = fpv_frustum_planes(&cameras);
@@ -483,7 +483,7 @@ fn cull_dyn_ent_cell_models(
     };
     let catalog_changed = catalog.as_ref().is_some_and(|catalog| catalog.is_changed());
     // Change ticks only: reading them through `Mut` does not mark anything changed.
-    let props_changed = instances.iter_mut().any(|(inst, transform, visibility)| {
+    let props_changed = instances.iter_mut().any(|(_, inst, transform, visibility)| {
         inst.is_changed() || transform.is_changed() || visibility.is_changed()
     });
     if !props_changed && !catalog_changed && last.as_ref() == Some(&key) {
@@ -491,15 +491,17 @@ fn cull_dyn_ent_cell_models(
     }
     *last = Some(key);
     let vis = admitted_vis(&cell_vis);
-    // The catalog is ordered by name; a thousand props a frame each walking it by string compare
-    // is most of this system, and a map holds a few dozen distinct models.
-    if catalog.as_ref().is_none_or(|catalog| catalog.is_changed()) {
+    // Each prop's radius as last read (by entity: hashing a model name per prop per frame was
+    // most of this system), read again when the prop changes model or the catalog changes.
+    if catalog.as_ref().is_none_or(|catalog| catalog.is_changed())
+        || radii.len() > instances.iter().len() * 2
+    {
         radii.clear();
     }
     let catalog = catalog.as_deref();
     // `set_if_neq`: a map holds a thousand props, and writing an unchanged visibility still marks
     // every one of them changed for the visibility propagation behind this.
-    for (inst, transform, mut visibility) in &mut instances {
+    for (entity, inst, transform, mut visibility) in &mut instances {
         if inst.dead {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
@@ -509,11 +511,11 @@ fn cull_dyn_ent_cell_models(
             continue;
         }
         let origin = transform.translation.to_array();
-        let radius = match radii.get(inst.current_model.0.as_str()) {
-            Some(&radius) => radius,
-            None => {
+        let radius = match radii.get(&entity) {
+            Some(&radius) if !inst.is_changed() => radius,
+            _ => {
                 let radius = xmodel_radius(catalog, &inst.current_model);
-                radii.insert(inst.current_model.0.clone(), radius);
+                radii.insert(entity, radius);
                 radius
             }
         };
@@ -535,9 +537,27 @@ struct DynEntPoseKey {
     instances: usize,
 }
 
+/// A prop's model as last resolved: the catalog entry and, per camera LOD, its slot in the pose
+/// product. A map holds a couple of thousand props (Strike 2,064) over a few dozen models, and
+/// every frame the camera moves each prop looked its model up by name and scanned the product
+/// for its slot comparing names.
+struct DynEntModelMemo {
+    asset: Option<asset_world::MapXModelSceneAsset>,
+    slots: [Option<usize>; DYN_ENT_LOD_SLOTS],
+}
+
+/// Camera LODs 0..=6, and "no camera" in the last.
+const DYN_ENT_LOD_SLOTS: usize = 8;
+
+fn dyn_ent_lod_slot(camera_lod: Option<u8>) -> usize {
+    camera_lod.map_or(DYN_ENT_LOD_SLOTS - 1, |lod| {
+        usize::from(lod).min(DYN_ENT_LOD_SLOTS - 2)
+    })
+}
+
 fn pose_dyn_ents(
     catalog: Option<Res<asset_world::MapXModelSceneCatalog>>,
-    instances: Query<(Entity, &WorldDynEntInstance, &Transform, &Visibility)>,
+    instances: Query<(Entity, Ref<WorldDynEntInstance>, &Transform, &Visibility)>,
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<FpvLens>>,
     lod_skinned: Res<render_scene::LodRampSkinnedDvar>,
     prepared: Res<crate::anim::model_materials::PreparedModelMaterials>,
@@ -555,6 +575,7 @@ fn pose_dyn_ents(
         ),
     >,
     mut last: Local<Option<DynEntPoseKey>>,
+    mut memos: Local<bevy::platform::collections::HashMap<Entity, DynEntModelMemo>>,
 ) {
     // The product is a function of the props, the eye (LOD), the ramp and the shadow setting:
     // while none of them moved, last frame's product is this frame's.
@@ -583,8 +604,13 @@ fn pose_dyn_ents(
     }
     let Some(catalog) = catalog.as_deref() else {
         product.assets.clear();
+        memos.clear();
         return;
     };
+    // The memos point into the product and the catalog: both start over together.
+    if product.assets.is_empty() || memos.len() > instances.iter().len() * 2 {
+        memos.clear();
+    }
     let eye = cameras
         .single()
         .ok()
@@ -599,16 +625,27 @@ fn pose_dyn_ents(
         if camera_hidden && !pose_hidden {
             continue;
         }
-        let skel = match catalog.get(&inst.current_model) {
+        let memo = memos.entry(entity).or_insert_with(|| DynEntModelMemo {
+            asset: None,
+            slots: [None; DYN_ENT_LOD_SLOTS],
+        });
+        if inst.is_changed() || memo.asset.is_none() {
+            *memo = DynEntModelMemo {
+                asset: catalog.get(&inst.current_model).cloned(),
+                slots: [None; DYN_ENT_LOD_SLOTS],
+            };
+        }
+        let skel = match memo.asset.as_ref() {
             Some(
                 asset_world::MapXModelSceneAsset::Iw4(skel)
                 | asset_world::MapXModelSceneAsset::Iw5(skel)
                 | asset_world::MapXModelSceneAsset::T5(skel),
-            ) => skel.as_ref(),
+            ) => std::sync::Arc::clone(skel),
             Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) | None => {
                 continue;
             }
         };
+        let skel = skel.as_ref();
 
         let camera_lod = smodel_camera_lod(
             skel.lod,
@@ -620,8 +657,11 @@ fn pose_dyn_ents(
         if eye.is_some() && camera_lod.is_none() {
             continue;
         }
-        let asset_index = if let Some(index) = product.asset_index(&inst.current_model, camera_lod)
-        {
+        let slot = dyn_ent_lod_slot(camera_lod);
+        let asset_index = if let Some(index) = memo.slots[slot] {
+            index
+        } else if let Some(index) = product.asset_index(&inst.current_model, camera_lod) {
+            memo.slots[slot] = Some(index);
             index
         } else {
             let Some(dobj) = prepared.scene_dobj(&inst.current_model.0) else {
@@ -654,6 +694,7 @@ fn pose_dyn_ents(
                 surfaces,
                 authored,
             });
+            memo.slots[slot] = Some(index);
             index
         };
         let model = std::sync::Arc::clone(&product.assets[asset_index].name);
@@ -682,7 +723,12 @@ fn append_dynent_draws(
     mut last_material_generation: Local<Option<render_material::MaterialGenerationId>>,
     mut draws: Local<Vec<XModelSurfaceDraw>>,
     mut owners: Local<Vec<DynEntOwnerDraw>>,
+    mut fallbacks: Local<bevy::platform::collections::HashMap<Entity, DynEntLightingFallback>>,
 ) {
+    // The lookup's tables only change when a map is installed or torn down.
+    if atpoint.is_changed() {
+        fallbacks.clear();
+    }
     let atlas_ref = atlas.as_deref();
     if catalog.is_none() || atlas_ref.is_none() || !facts.spawned || tess.is_none() {
         plan.publish_no_rows();
@@ -748,7 +794,16 @@ fn append_dynent_draws(
         let box_half = row
             .radius
             .and_then(|radius| lighting_box_half(&[radius], &[DOBJ_RADIUS_PARENT_ROOT]));
-        let lookup_fallback = atpoint.fallback(row.lighting_origin, box_half);
+        // Most props never move: their light only changes with their origin or bounds.
+        let key = DynEntLightingFallback::key(row.lighting_origin, box_half);
+        let lookup_fallback = match fallbacks.get(&row.entity) {
+            Some(memo) if memo.key == key => memo.fallback,
+            _ => {
+                let fallback = atpoint.fallback(row.lighting_origin, box_half);
+                fallbacks.insert(row.entity, DynEntLightingFallback { key, fallback });
+                fallback
+            }
+        };
         let pending_lighting = (!row.camera_hidden).then(|| {
             lighting_requests.request(ModelLightingRequest {
                 owner: ModelLightingOwner::DynEnt(row.entity),
@@ -794,4 +849,22 @@ fn append_dynent_draws(
         plan.revision = stamp_plan_geometry(&mut plan.revisions, rev, topology);
     }
     plan.publish_frame_rows(&mut draws, &mut owners);
+    // Props that went away (broken, or a new round's) leave their entries behind.
+    if fallbacks.len() > product.owners.len().saturating_mul(2).max(256) {
+        let live: bevy::platform::collections::HashSet<Entity> =
+            product.owners.iter().map(|row| row.entity).collect();
+        fallbacks.retain(|entity, _| live.contains(entity));
+    }
+}
+
+/// A prop's light-grid fallback, kept with the origin and bounds it was looked up for.
+struct DynEntLightingFallback {
+    key: ([u32; 3], Option<[u32; 3]>),
+    fallback: u8,
+}
+
+impl DynEntLightingFallback {
+    fn key(origin: [f32; 3], box_half: Option<[f32; 3]>) -> ([u32; 3], Option<[u32; 3]>) {
+        (origin.map(f32::to_bits), box_half.map(|half| half.map(f32::to_bits)))
+    }
 }

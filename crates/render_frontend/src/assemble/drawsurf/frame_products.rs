@@ -1734,6 +1734,7 @@ pub(crate) fn bake_spot_shadow_casters(
         xmodel_plan.as_deref(),
         &generation.catalog,
         retained_items,
+        (inputs.world_generation.0, retained.membership_revision),
         world_run_surfs,
         world_plan
             .as_ref()

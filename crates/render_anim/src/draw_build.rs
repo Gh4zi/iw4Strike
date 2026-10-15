@@ -274,6 +274,95 @@ pub fn append_script_model_asset(
     plan.assets.len() - 1
 }
 
+/// `overwrite_script_model_asset` for a model posed again without meshes (`PoseRefresh`): only
+/// what posing changes is written, each surface's positions, normals and packed vertices. The
+/// plan's UVs, colours and indices are the asset's already. `materials` lines the refresh's
+/// surfaces up with the asset's as the overwrite does: the surfaces with a material, in order. A
+/// surface the asset draws nothing of is left alone. `false` when the refresh does not fit the
+/// asset (then the caller places the full pose).
+pub fn refresh_script_model_asset(
+    plan: &mut ScriptModelDrawPlan,
+    asset_index: usize,
+    dobj_state: xmodel_runtime::DObjSemanticState,
+    refresh: &crate::anim::xmodel_pose::PoseRefresh,
+    materials: &[Option<SmodelPassMaterial>],
+) -> bool {
+    let Some(asset) = plan.assets.get(asset_index) else {
+        return false;
+    };
+    if refresh.surface_vertex_counts.len() != materials.len() {
+        return false;
+    }
+    let mut incoming = Vec::with_capacity(asset.surfaces.len());
+    let mut start = 0usize;
+    for (&count, material) in refresh.surface_vertex_counts.iter().zip(materials) {
+        if let Some(material) = material {
+            incoming.push((start, count, material));
+        }
+        start += count;
+    }
+    if incoming.len() != asset.surfaces.len() || start != refresh.positions.len() {
+        return false;
+    }
+    let mut ranges = Vec::with_capacity(incoming.len());
+    for (&(source, count, material), &(surf_i, mat_i)) in incoming.iter().zip(&asset.surfaces) {
+        let Some(&(index_start, index_count)) = plan.surface_ranges.get(surf_i as usize) else {
+            return false;
+        };
+        let start = index_start as usize;
+        let Some(slice) = plan.indices.get(start..start.saturating_add(index_count as usize))
+        else {
+            return false;
+        };
+        let Some((vmin, vmax)) = slice.iter().fold(None, |span: Option<(u32, u32)>, &index| {
+            Some(span.map_or((index, index), |(lo, hi)| (lo.min(index), hi.max(index))))
+        }) else {
+            // Nothing of this surface is drawn: its vertices are never read.
+            continue;
+        };
+        let n = (vmax.saturating_sub(vmin)).saturating_add(1) as usize;
+        if n != count {
+            return false;
+        }
+        ranges.push((vmin as usize, source, n, mat_i as usize, material));
+    }
+    let mut materials_changed = false;
+    for (base, source, n, mat_i, material) in ranges {
+        let Some(dst) = plan.vertices.get_mut(base..base + n) else {
+            return false;
+        };
+        for ((vertex, position), normal) in dst
+            .iter_mut()
+            .zip(&refresh.positions[source..source + n])
+            .zip(&refresh.normals[source..source + n])
+        {
+            vertex.position = *position;
+            vertex.normal = *normal;
+        }
+        if let asset_world::PackedVertexPayload::Iw4(rows) = &mut plan.packed_vertices {
+            let Some(dst) = rows.get_mut(base..base + n) else {
+                return false;
+            };
+            dst.copy_from_slice(&refresh.packed[source..source + n]);
+        }
+        if let Some(slot) = plan.materials.get_mut(mat_i)
+            && *slot != *material
+        {
+            *slot = material.clone();
+            materials_changed = true;
+        }
+    }
+    if let Some(asset) = plan.assets.get_mut(asset_index) {
+        asset.dobj_state = dobj_state;
+    }
+    plan.revisions.bump_vertices();
+    if materials_changed {
+        plan.revisions.bump_materials();
+    }
+    plan.revision = plan.revision.wrapping_add(1);
+    true
+}
+
 pub fn overwrite_script_model_asset(
     plan: &mut ScriptModelDrawPlan,
     asset_index: usize,
@@ -303,7 +392,11 @@ pub fn overwrite_script_model_asset(
         let Some(slice) = plan.indices.get(start..end) else {
             return false;
         };
-        let (Some(&vmin), Some(&vmax)) = (slice.iter().min(), slice.iter().max()) else {
+        // One pass for both ends: this runs per surface of every animated script model, every
+        // frame (Carnival's rides).
+        let Some((vmin, vmax)) = slice.iter().fold(None, |span: Option<(u32, u32)>, &index| {
+            Some(span.map_or((index, index), |(lo, hi)| (lo.min(index), hi.max(index))))
+        }) else {
             return false;
         };
         let n = (vmax.saturating_sub(vmin)).saturating_add(1) as usize;
@@ -348,15 +441,37 @@ pub fn overwrite_script_model_asset(
         let Some(dst) = plan.vertices.get_mut(base..base + n) else {
             return false;
         };
-        for (i, vertex) in dst.iter_mut().enumerate() {
-            *vertex = SmodelVertex {
-                position: positions[i],
-                normal: normals
-                    .and_then(|a| a.get(i).copied())
-                    .unwrap_or([0.0, 0.0, 1.0]),
-                color: colors.and_then(|a| a.get(i).copied()).unwrap_or([1.0; 4]),
-                uv0: uvs.and_then(|a| a.get(i).copied()).unwrap_or([0.0; 2]),
-            };
+        if let (Some(normals), Some(colors), Some(uvs)) = (normals, colors, uvs)
+            && normals.len() >= n
+            && colors.len() >= n
+            && uvs.len() >= n
+        {
+            // Every attribute there: a straight copy, no per-vertex lookups.
+            for ((((vertex, position), normal), color), uv0) in dst
+                .iter_mut()
+                .zip(positions)
+                .zip(normals)
+                .zip(colors)
+                .zip(uvs)
+            {
+                *vertex = SmodelVertex {
+                    position: *position,
+                    normal: *normal,
+                    color: *color,
+                    uv0: *uv0,
+                };
+            }
+        } else {
+            for (i, vertex) in dst.iter_mut().enumerate() {
+                *vertex = SmodelVertex {
+                    position: positions[i],
+                    normal: normals
+                        .and_then(|a| a.get(i).copied())
+                        .unwrap_or([0.0, 0.0, 1.0]),
+                    color: colors.and_then(|a| a.get(i).copied()).unwrap_or([1.0; 4]),
+                    uv0: uvs.and_then(|a| a.get(i).copied()).unwrap_or([0.0; 2]),
+                };
+            }
         }
         if let asset_world::PackedVertexPayload::Iw4(rows) = &mut plan.packed_vertices {
             let Some(dst) = rows.get_mut(base..base + n) else {
