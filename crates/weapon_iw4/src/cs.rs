@@ -1455,7 +1455,8 @@ pub const CS_WEAPONS: [CsWeapon; 34] = [
         fire_sounds: &["m4a1_unsil-1", "m4a1_unsil-2"],
         css_view_model: "v_rif_m4a1",
         css_fire_sound: "Weapon_M4A1.Single",
-        price: 3100,
+        // CS2 lowered it to the M4A1-S's price.
+        price: 2900,
         damage: 33.0,
         range_modifier: 0.97,
         cycle: 0.09,
@@ -2544,6 +2545,33 @@ pub fn cs_loadout_flags(pistol: &str, m4: &str) -> u32 {
         flags |= CS_LOADOUT_M4A1_S;
     }
     flags
+}
+
+/// The knife choice in the loadout flags: 1 + the knife's place in [`CSGO_KNIVES`] (0 the side's
+/// default), in bits 8-15.
+const CS_LOADOUT_KNIFE_SHIFT: u32 = 8;
+
+/// The loadout bits of the CS:GO knife `name` (`cl_knife`; 0 for `default`).
+#[must_use]
+pub fn cs_knife_loadout_bits(name: &str) -> u32 {
+    CSGO_KNIVES
+        .iter()
+        .position(|(n, _, _)| n.eq_ignore_ascii_case(name.trim()))
+        .map_or(0, |index| (index as u32 + 1) << CS_LOADOUT_KNIFE_SHIFT)
+}
+
+/// The knife a player's loadout flags choose, as `PlayerState::cs_knife_skin` keeps it.
+#[must_use]
+pub fn cs_knife_skin_of_loadout(flags: u32) -> u32 {
+    let skin = (flags >> CS_LOADOUT_KNIFE_SHIFT) & 0xff;
+    if (skin as usize) <= CSGO_KNIVES.len() { skin } else { 0 }
+}
+
+/// The viewmodel of the knife `skin` (`PlayerState::cs_knife_skin`); `None` for the default.
+#[must_use]
+pub fn csgo_knife_view_model_of_skin(skin: u32) -> Option<&'static str> {
+    let index = usize::try_from(skin).ok()?.checked_sub(1)?;
+    CSGO_KNIVES.get(index).map(|(_, model, _)| *model)
 }
 
 /// The viewmodel of the CS:GO knife `name` (`cl_knife`); `None` for `default` or a name

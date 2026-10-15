@@ -2283,13 +2283,19 @@ pub fn update_cs_viewmodel(
         publish_aim(0.0, 0.0);
         return;
     };
-    let knife = weapon_iw4::cs::csgo_knife_view_model(&settings.knife);
     // The side of whoever's gun this is (the killer's in a killcam), with their agent's arms.
     let viewed = match *view {
         ViewSubject::Seat {
             focus: Some(focus), ..
         } => sim::ClientId(focus),
         _ => local.0,
+    };
+    // Your knife as you set it; anyone else's (spectated, a killcam) as the server says they
+    // carry it.
+    let knife = if viewed == local.0 {
+        weapon_iw4::cs::csgo_knife_view_model(&settings.knife)
+    } else {
+        weapon_iw4::cs::csgo_knife_view_model_of_skin(ps.cs_knife_skin)
     };
     let side = match presented.snapshot() {
         Some(snap) => {

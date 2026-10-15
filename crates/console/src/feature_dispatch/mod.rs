@@ -35,7 +35,7 @@ pub(crate) fn route_debug_feature_commands(
         Res<ConsoleSettings>,
         ResMut<ConsoleLine>,
     ),
-    mut bot_add: ResMut<BotAddQueue>,
+    (mut bot_add, mut bot_kick): (ResMut<BotAddQueue>, ResMut<bots::BotKickQueue>),
     (mut bot_hold, mut bot_tp, mut bot_fire, mut bot_test, mut bot_mimic): (
         ResMut<BotHold>,
         ResMut<BotTpQueue>,
@@ -84,6 +84,10 @@ pub(crate) fn route_debug_feature_commands(
                 Ok(BotVerb::Add(n)) => {
                     bot_add.push(n);
                     echo(format!("bot: queued add {n}"), console, line);
+                }
+                Ok(BotVerb::Kick(kick)) => {
+                    bot_kick.0.push(kick);
+                    echo(format!("bot: queued kick {kick:?}"), console, line);
                 }
                 Ok(BotVerb::Dummy(n)) => {
                     bot_add.push_dummy(n);
@@ -425,11 +429,12 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
     }
 }
 
-pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | dummy [N] | hold [on|off] | ride [<id>] | give <id> <weapon> [att...] | fire [all|<id>] | attack all|<id> [on|off] | use <id> [on|off] | buy <id> <item> | weapon <id> <weapon> | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
+pub(crate) const BOT_USAGE: &str = "usage: bot add [N] | kick [all | ct [N] | t [N] | <id>] | dummy [N] | hold [on|off] | ride [<id>] | give <id> <weapon> [att...] | fire [all|<id>] | attack all|<id> [on|off] | use <id> [on|off] | buy <id> <item> | weapon <id> <weapon> | tp all|<id> above <h> | tp all|<id> <x> <y> <z> [yaw] [pitch]";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum BotVerb {
     Add(u32),
+    Kick(bots::BotKick),
     Dummy(u32),
     Hold(bool),
     Give {
@@ -459,6 +464,31 @@ pub(crate) fn parse_bot_args(args: &[String]) -> Result<BotVerb, String> {
                 .unwrap_or(1)
                 .clamp(1, 16);
             Ok(BotVerb::Add(n))
+        }
+        "kick" => {
+            let count = |arg: Option<&String>| {
+                arg.map_or(Ok(1), |n| {
+                    n.parse::<u32>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .ok_or_else(|| format!("usage: bot kick ct|t [N] (got `{n}`)"))
+                })
+            };
+            match args.get(1).map(|s| s.to_ascii_lowercase()).as_deref() {
+                None | Some("all") => Ok(BotVerb::Kick(bots::BotKick::All)),
+                Some("ct") => Ok(BotVerb::Kick(bots::BotKick::Side {
+                    terrorist: false,
+                    count: count(args.get(2))?,
+                })),
+                Some("t") => Ok(BotVerb::Kick(bots::BotKick::Side {
+                    terrorist: true,
+                    count: count(args.get(2))?,
+                })),
+                Some(id) => id
+                    .parse::<u32>()
+                    .map(|id| BotVerb::Kick(bots::BotKick::One(ClientId(id))))
+                    .map_err(|_| "usage: bot kick [all | ct [N] | t [N] | <id>]".to_owned()),
+            }
         }
         "dummy" => {
             if args.len() > 2 {

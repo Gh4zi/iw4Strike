@@ -178,6 +178,11 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         bomb_defused: level_flag("bombDefused"),
     };
     let dvars = runtime.dvars.clone();
+    // What the match precached stays precached across rounds, as retail's config strings do: the
+    // gametype precaches some things only in the match's first round (`_gamelogic`'s
+    // `damage_heavy` rumble, inside `if (!isDefined(game["gamestarted"]))`), so a later round
+    // that cleared them failed every `playRumbleOnEntity` and `stopRumble` on it.
+    let precached = runtime.precached.clone();
     let local_presentation_dvars = runtime.local_presentation_dvars;
     let local_presentation_client = runtime.local_presentation_client;
     let pending_local_dvars = runtime.pending_local_dvars.clone();
@@ -272,6 +277,7 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         runtime.local_presentation_dvars = local_presentation_dvars;
         runtime.local_presentation_client = local_presentation_client;
         runtime.pending_local_dvars = pending_local_dvars;
+        runtime.precached = precached;
     }
     // The entries stay in the plan the next restart reads: they are recorded only at the first
     // start, so taking them out here left every later restart without the level's `main` (the

@@ -410,10 +410,15 @@ fn merged_palette(
         .collect()
 }
 
-/// The CS:GO world model a body holding CS weapon `index` shows (`w_rif_ak47`), the side's
-/// own knife for the knife.
-fn held_model_name(index: u8, ct: bool) -> Option<String> {
+/// The CS:GO world model a body holding CS weapon `index` shows (`w_rif_ak47`); for the knife,
+/// the one the player carries (`knife_skin`, `PlayerState::cs_knife_skin`), else their side's.
+fn held_model_name(index: u8, ct: bool, knife_skin: u32) -> Option<String> {
     use weapon_iw4::cs;
+    if cs::is_knife(index)
+        && let Some(view) = cs::csgo_knife_view_model_of_skin(knife_skin)
+    {
+        return Some(format!("w_{}", view.strip_prefix("v_")?));
+    }
     let name = if cs::is_knife(index) {
         "knife"
     } else if let Some(grenade) = cs::cs_grenade(index) {
@@ -818,8 +823,15 @@ pub fn update_csgo_bodies(
         // The weapon: CS:GO's world model on the body's bones, not the MW2 body's CS:S one.
         held.0.retain(|tag| tag.entity != entity);
         let held_model = cs_index
-            .and_then(|index| held_model_name(index, character.ct))
-            .and_then(|name| bodies.held_model(&pack, &name, &mut images));
+            .and_then(|index| {
+                held_model_name(index, character.ct, ps.cs_knife_skin)
+                    .and_then(|name| bodies.held_model(&pack, &name, &mut images))
+                    // A knife CS:GO lacks a world model for: the side's own.
+                    .or_else(|| {
+                        held_model_name(index, character.ct, 0)
+                            .and_then(|name| bodies.held_model(&pack, &name, &mut images))
+                    })
+            });
         if let Some(model) = held_model {
             let merge = bodies.merge(&character, &model);
             let palette = merged_palette(&model.studio, &merge, &world);

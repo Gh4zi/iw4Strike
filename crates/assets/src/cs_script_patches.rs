@@ -340,6 +340,21 @@ const PATCHES: &[Patch] = &[
         times: 2,
         why: "round end: players can still be hurt and killed until the next round",
     },
+    // CS's round draw: with a side empty (or not spawned yet), MW2 never decides a round (its
+    // elimination check waits for both teams to have spawned), so a player alone who died waited
+    // out the whole round timer. CS ends the round as a draw once everyone who played it is dead.
+    // First thing: the forfeit check above it returns early while a side is empty.
+    once(
+        GAMELOGIC,
+        "updateGameEvents()\n{",
+        "updateGameEvents()\n{\n\
+         \tif ( level.teamBased && !gameHasStarted() && !level.gameEnded \
+         && game[\"state\"] == \"playing\" \
+         && ( level.hasSpawned[\"allies\"] || level.hasSpawned[\"axis\"] ) \
+         && !level.aliveCount[\"allies\"] && !level.aliveCount[\"axis\"] ) \
+         { thread endGame( \"tie\", game[\"strings\"][\"tie\"] ); return; }",
+        "round draw: a round nobody is left alive in ends, even with a side empty",
+    ),
     // The match ends with CS:GO's vote for the next map: the level waits it out.
     once(
         GAMELOGIC,
@@ -625,8 +640,10 @@ const PATCHES: &[Patch] = &[
         "onDrop( player )\n{\n\
          \tif ( isDefined( player ) && isDefined( level.csBomb ) )\n\t{\n\
          \t\tplayer notify ( \"cs_bomb_gone\" );\n\
-         \t\tif ( isAlive( player ) )\n\t\t\tplayer takeWeapon( level.csBomb );\n\t}",
-        "CS C4: dropping (or planting) the bomb takes the C4",
+         \t\tif ( isAlive( player ) )\n\t\t\tplayer takeWeapon( level.csBomb );\n\t}\n\
+         \tif ( isDefined( level.csBomb ) && !level.bombPlanted )\n\
+         \t\tself.visuals[0] playSound( \"cs_c4_drop\" );",
+        "CS C4: dropping (or planting) the bomb takes the C4; a dropped one thuds where it lands",
     ),
     once(
         SD,

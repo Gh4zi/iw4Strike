@@ -207,12 +207,21 @@ pub(crate) fn advance_weapon_command(
             .map_or(cmd.angles, |(_, a)| *a);
 
         // The server's `shooting_mode` rides on every player; clients take it from snapshots.
+        // So does each player's knife choice, for everyone to draw.
         let shooting_mode = world
             .publishes_snapshot()
             .then(crate::cs_settings::shooting_mode);
+        let knife_skin = world.publishes_snapshot().then(|| {
+            world.client_meta(*id).map_or(0, |meta| {
+                weapon_iw4::cs::cs_knife_skin_of_loadout(meta.cs_loadout)
+            })
+        });
         if let Some(ps) = world.player_mut(*id) {
             if let Some(mode) = shooting_mode {
                 ps.cs_shooting_mode = mode;
+            }
+            if let Some(skin) = knife_skin {
+                ps.cs_knife_skin = skin;
             }
             if ps.cs_shooting_mode == weapon_iw4::csgo::SHOOTING_CS16 {
                 weapon_iw4::cs::drop_punch(&mut ps.cs_punch, frametime);

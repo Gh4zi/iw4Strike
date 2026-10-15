@@ -252,7 +252,8 @@ pub(crate) fn buy_action(
     })
 }
 
-/// Tells the server this player's CS:GO loadout choices (the starting pistol), when they change
+/// Tells the server this player's CS:GO loadout choices (the starting pistol, the M4, the knife
+/// everyone sees them carry), when they change
 /// and every few seconds besides, so a server joined later or a new map hears them too.
 pub(crate) fn send_cs_loadout(
     settings: Res<frame::GameSettings>,
@@ -267,7 +268,8 @@ pub(crate) fn send_cs_loadout(
     if presented.player(local.0).is_none() {
         return;
     }
-    let flags = weapon_iw4::cs::cs_loadout_flags(&settings.loadout_pistol, &settings.loadout_m4);
+    let flags = weapon_iw4::cs::cs_loadout_flags(&settings.loadout_pistol, &settings.loadout_m4)
+        | weapon_iw4::cs::cs_knife_loadout_bits(&settings.knife);
     let now = time.elapsed_secs();
     if last.is_some_and(|(client, sent, at)| {
         client == local.0.0 && sent == flags && now - at < RESEND_SECONDS
@@ -720,7 +722,8 @@ struct BotCompleter(WeaponArgCompletions);
 
 impl ArgCompleter for BotCompleter {
     fn complete(&self, prefix: &str) -> Vec<String> {
-        StaticCompleter::new(["add", "dummy", "hold", "ride", "give", "fire", "tp"]).complete(prefix)
+        StaticCompleter::new(["add", "kick", "dummy", "hold", "ride", "give", "fire", "tp"])
+            .complete(prefix)
     }
     fn complete_with_context(&self, prefix: &str, args: &[&str]) -> Vec<String> {
         let Some(verb) = args.first() else {
@@ -731,6 +734,14 @@ impl ArgCompleter for BotCompleter {
                 StaticCompleter::new((1..=16).map(|n| n.to_string())).complete(prefix)
             }
             ("hold", 1) => StaticCompleter::new(["on", "off"]).complete(prefix),
+            ("kick", 1) => {
+                let mut choices: Vec<String> = ["all", "ct", "t"].map(String::from).to_vec();
+                choices.extend(self.0.bots.read().map(|v| v.clone()).unwrap_or_default());
+                StaticCompleter::new(choices).complete(prefix)
+            }
+            ("kick", 2) if matches!(args.get(1), Some(&"ct" | &"t")) => {
+                StaticCompleter::new((1..=16).map(|n| n.to_string())).complete(prefix)
+            }
             ("give" | "fire" | "tp", 1) => {
                 let mut ids = self
                     .0

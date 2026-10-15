@@ -415,6 +415,7 @@ ps_netfields! {
     cs_defuser: u32 = Replication::Replicated, Validation::Exact;
     cs_money: u32 = Replication::Replicated, Validation::AdoptOnly("authority-owned CS account");
     cs_buy: u32 = Replication::Replicated, Validation::AdoptOnly("authority buy zone and buy time");
+    cs_knife_skin: u32 = Replication::Replicated, Validation::AdoptOnly("authority-owned knife choice");
 }
 
 pub const PS_FIELD_COUNT: usize = PS_NETFIELDS.len();

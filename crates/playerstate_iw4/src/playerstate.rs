@@ -222,6 +222,9 @@ pub struct PlayerState {
     pub cs_burst_shot: u32,
     /// The player's CS money (a copy of the server's account, for the HUD).
     pub cs_money: u32,
+    /// The CS:GO knife the player carries (their `cl_knife`, sent to the server): 0 their side's
+    /// default, else 1 + its place in `weapon_iw4::cs::CSGO_KNIVES`. Everyone sees it.
+    pub cs_knife_skin: u32,
     /// Where and when the player may buy: [`cs_buy::ZONE`] in a buy zone, [`cs_buy::TIME`] while
     /// the round's buy time lasts (both always set outside the bomb mode).
     pub cs_buy: u32,
@@ -520,6 +523,7 @@ impl PlayerState {
         cs_fire_gate_ms: 0,
         cs_burst_shot: 0,
         cs_money: 0,
+        cs_knife_skin: 0,
         cs_buy: 0,
     };
 

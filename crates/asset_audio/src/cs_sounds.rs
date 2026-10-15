@@ -156,7 +156,7 @@ pub const CS_C4_PREFIX: &str = "cs_c4_";
 /// The CS sounds the scripts play by name (the bomb mode's, and every death's cry). The server
 /// checks every script sound against the zones' aliases; these come from the local CS install on
 /// each client instead, so they are added to that list.
-pub const CS_SCRIPT_SOUNDS: [&str; 18] = [
+pub const CS_SCRIPT_SOUNDS: [&str; 19] = [
     CS_DEATH_CRY,
     CS_DEATH_HEADSHOT,
     "cs_c4_plant",
@@ -165,6 +165,7 @@ pub const CS_SCRIPT_SOUNDS: [&str; 18] = [
     "cs_c4_disarmed",
     "cs_c4_explode",
     "cs_c4_click",
+    "cs_c4_drop",
     "cs_c4_beep1",
     "cs_c4_beep2",
     "cs_c4_beep3",
@@ -193,8 +194,10 @@ const CS16_C4: [(&str, &str); 10] = [
 
 /// CS:S sound script entries behind each bomb sound. CS:S has one beep; its five steps are the
 /// same sound carrying farther as the timer runs down (see [`beep_reach`]).
-const CSS_C4: [(&str, &str); 10] = [
+const CSS_C4: [(&str, &str); 11] = [
     ("plant", "c4.plant"),
+    // A dropped bomb landing: Source's weapon drop (`BaseCombatWeapon.WeaponDrop`).
+    ("drop", "basecombatweapon.weapondrop"),
     ("disarm", "c4.disarmstart"),
     ("disarmed", "c4.disarmfinish"),
     ("explode", "c4.explode"),
@@ -835,8 +838,10 @@ pub fn append_csgo_radio_calls(catalog: &mut SoundCatalog) -> usize {
 /// carrying farther as the timer runs down as CS:S's does ([`beep_reach`]); `initiate` is the plant
 /// starting, heard by the others (the planter hears it from the C4's keypad); `warning` and `trip`
 /// sound in the bomb's last second across the map (their scripts fall to 0.7 at 3000 units).
-const CSGO_C4: [(&str, &str, Option<(f32, f32)>); 13] = [
+const CSGO_C4: [(&str, &str, Option<(f32, f32)>); 14] = [
     ("plant", "c4.plant", Some((60.0, 1500.0))),
+    // A dropped bomb landing: the weapon drop thud, at the default 75 dB (1250 units).
+    ("drop", "basecombatweapon.weapondrop", Some((60.0, 1250.0))),
     ("initiate", "c4.initiate", Some((60.0, 1500.0))),
     ("disarm", "c4.disarmstart", Some((60.0, 2000.0))),
     ("disarmed", "c4.disarmfinish", Some((60.0, 1750.0))),

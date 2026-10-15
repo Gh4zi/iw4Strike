@@ -10,6 +10,19 @@ const MAX_CLIENT_SLOTS: u32 = playerstate_iw4::PLAYER_CORPSE_ENTITY_BASE as u32;
 #[derive(Resource, Debug, Default)]
 pub struct BotAddQueue(pub Vec<BotAddRequest>);
 
+/// Bots to take off the server (`bot kick`), at the next update.
+#[derive(Resource, Debug, Default)]
+pub struct BotKickQueue(pub Vec<BotKick>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BotKick {
+    All,
+    One(ClientId),
+    /// `count` bots of one side (the Terrorists or the Counter-Terrorists), the latest added
+    /// first.
+    Side { terrorist: bool, count: u32 },
+}
+
 #[derive(Debug)]
 pub struct BotAddRequest {
     pub count: u32,

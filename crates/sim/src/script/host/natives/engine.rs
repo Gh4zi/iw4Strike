@@ -1988,8 +1988,12 @@ fn register_level(registry: &mut NativeRegistry) {
             });
         )*};
     }
-    unavailable!("no script ranking service is connected": "sendranks", "setplayerteamrank");
-    unavailable!("no script skill-rating service is connected": "updateskill");
+    // Online ranking and skill rating: a private match has neither, and retail's natives do
+    // nothing there. As errors they ended the script function calling them part-way:
+    // `_skill::processKill` on every kill, `callback_playerdisconnect` on every leave.
+    for name in ["sendranks", "setplayerteamrank", "updateskill"] {
+        registry.register(Function, name, |_, _, _| Ok(Value::Undefined));
+    }
     unavailable!("no script match-data upload service is connected": "sendmatchdata", "sendclientmatchdata");
     // The match-data store keeps whatever keys the script writes, with no schema to load: the
     // definition file's name is accepted and the script goes on (an error here ended

@@ -5,7 +5,7 @@ use net::{
     AuthorityClock, AuthorityWorld, ClientActionInbox, ClientCommandInbox, LocalPresentClient,
     ReliableEventHub, authority_should_tick, look_angles_from_degrees,
 };
-use sim::{ClientAction, ClientLifecycle, SimWorld, Tick};
+use sim::{ClientAction, ClientId, ClientLifecycle, SimWorld, Tick};
 
 use crate::nav::{self, NAV_HULL, NAV_SCHEMA, NavGraph, RouteStats};
 use crate::query::{Budgeted, QueryCounters, QuerySubsystem, TraceBudget};
@@ -103,6 +103,7 @@ impl Plugin for BotsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BotRoster>()
             .init_resource::<BotAddQueue>()
+            .init_resource::<crate::BotKickQueue>()
             .init_resource::<BotHold>()
             .init_resource::<crate::BotMimic>()
             .init_resource::<BotTpQueue>()
@@ -116,6 +117,7 @@ impl Plugin for BotsPlugin {
                 (
                     fill_bots_from_rules,
                     drain_bot_add_queue,
+                    drain_bot_kick_queue,
                     evict_bots_claiming_local_client,
                     boot_bots,
                     apply_bot_tp,
@@ -244,6 +246,63 @@ fn drain_bot_add_queue(
             "bots: add {count} (dummy={}) → clients {:?}",
             request.dummy,
             added.iter().map(|id| id.0).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// `bot kick`: the bots leave the roster and the match (their slots free for players).
+fn drain_bot_kick_queue(
+    mut queue: ResMut<crate::BotKickQueue>,
+    mut roster: ResMut<BotRoster>,
+    mut world: Option<ResMut<AuthorityWorld>>,
+) {
+    if queue.0.is_empty() {
+        return;
+    }
+    let requests = std::mem::take(&mut queue.0);
+    for request in requests {
+        let mut ids: Vec<ClientId> = roster.bots.iter().map(|bot| bot.id).collect();
+        // The latest added go first.
+        ids.sort_by_key(|id| std::cmp::Reverse(id.0));
+        let chosen: Vec<ClientId> = match request {
+            crate::BotKick::All => ids,
+            crate::BotKick::One(id) => ids.into_iter().filter(|bot| *bot == id).collect(),
+            crate::BotKick::Side { terrorist, count } => {
+                let Some(world) = world.as_ref() else {
+                    continue;
+                };
+                let attackers = world.0.gsc_dvar("cs_attackers");
+                let teams: Vec<(ClientId, i32)> =
+                    world.0.roster().into_iter().map(|row| (row.id, row.team)).collect();
+                ids.into_iter()
+                    .filter(|id| {
+                        teams.iter().any(|(row, team)| {
+                            row == id
+                                && matches!(*team, entity_iw4::TEAM_AXIS | entity_iw4::TEAM_ALLIES)
+                                && weapon_iw4::cs::cs_plays_terrorist(
+                                    attackers.as_deref(),
+                                    *team == entity_iw4::TEAM_ALLIES,
+                                ) == terrorist
+                        })
+                    })
+                    .take(count as usize)
+                    .collect()
+            }
+        };
+        if chosen.is_empty() {
+            diag::info!(Sim, "bots: kick {request:?}: no such bot");
+            continue;
+        }
+        roster.bots.retain(|bot| !chosen.contains(&bot.id));
+        if let Some(world) = world.as_mut() {
+            for id in &chosen {
+                world.0.retire_client(*id);
+            }
+        }
+        diag::info!(
+            Sim,
+            "bots: kick {request:?} → clients {:?}",
+            chosen.iter().map(|id| id.0).collect::<Vec<_>>()
         );
     }
 }
