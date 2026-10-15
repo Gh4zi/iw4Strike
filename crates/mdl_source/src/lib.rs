@@ -43,8 +43,37 @@ impl LoadedModel {
     }
 }
 
-fn flag(shader: &kv::Value, key: &str) -> bool {
-    shader.text(key).is_some_and(|v| v.trim() != "0")
+/// A material's shader block, by its shader name (`VertexLitGeneric`, `patch`…).
+struct Shader<'a> {
+    name: &'a str,
+    block: &'a kv::Value,
+}
+
+/// How many `patch` materials deep an include is followed.
+const PATCH_DEPTH: u8 = 4;
+
+/// `key` of a material: a `patch` material's own (`insert`, then `replace`), else those of the
+/// material it includes (CS:GO's Separatist agent patches every body part over one shared
+/// material, its `$baseTexture` inside `insert`: read only at the top, its body found no texture
+/// and drew as nothing but its gloves).
+fn material_key(vpk: &Vpk, shader: &Shader<'_>, key: &str, depth: u8) -> Option<String> {
+    if !shader.name.eq_ignore_ascii_case("patch") {
+        return shader.block.text(key).map(str::to_owned);
+    }
+    for section in ["insert", "replace"] {
+        if let Some(value) = shader.block.block(section).and_then(|b| b.text(key)) {
+            return Some(value.to_owned());
+        }
+    }
+    let include = shader.block.text("include")?;
+    let bytes = vpk.read(&include.replace('\\', "/")).filter(|_| depth > 0)?;
+    let root = kv::parse(&String::from_utf8_lossy(&bytes));
+    let (name, block) = root.entries().next()?;
+    material_key(vpk, &Shader { name, block }, key, depth - 1)
+}
+
+fn flag(vpk: &Vpk, shader: &Shader<'_>, key: &str) -> bool {
+    material_key(vpk, shader, key, PATCH_DEPTH).is_some_and(|v| v.trim() != "0")
 }
 
 /// Resolve `name` through the model's material directories to a material and its base texture.
@@ -66,13 +95,16 @@ pub fn load_material(vpk: &Vpk, dirs: &[String], name: &str) -> Material {
             continue;
         };
         let root = kv::parse(&String::from_utf8_lossy(&bytes));
-        let Some((_, shader)) = root.entries().next() else {
+        let Some((name, block)) = root.entries().next() else {
             continue;
         };
-        material.alpha_test = flag(shader, "$alphatest") || flag(shader, "$translucent");
-        material.additive = flag(shader, "$additive");
-        material.fullbright = flag(shader, "$selfillum") && !flag(shader, "$basealphaenvmapmask");
-        if let Some(base) = shader.text("$basetexture") {
+        let shader = Shader { name, block };
+        material.alpha_test =
+            flag(vpk, &shader, "$alphatest") || flag(vpk, &shader, "$translucent");
+        material.additive = flag(vpk, &shader, "$additive");
+        material.fullbright = flag(vpk, &shader, "$selfillum")
+            && !flag(vpk, &shader, "$basealphaenvmapmask");
+        if let Some(base) = material_key(vpk, &shader, "$basetexture", PATCH_DEPTH) {
             let tex = format!(
                 "materials/{}.vtf",
                 base.replace('\\', "/").trim_end_matches(".vtf")

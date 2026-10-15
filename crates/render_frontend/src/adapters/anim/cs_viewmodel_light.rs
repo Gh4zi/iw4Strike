@@ -21,8 +21,9 @@ const SUN_FADE_PER_SECOND: f32 = 6.0;
 const CONTENTS_SOLID: u32 = 0x1;
 const SURF_SKY: u32 = 0x4;
 
-/// Linear light-grid colour → ambient light on a CS world model (third-person guns).
-const WORLD_GRID_AMBIENT: f32 = 3.0;
+/// Linear light-grid colour → ambient light on a CS world model (third-person guns, CS:GO
+/// bodies): the viewmodel's, its shader adding the viewmodel's fill over it.
+const WORLD_GRID_AMBIENT: f32 = GRID_AMBIENT;
 
 /// Sun visibility is cached per cell of this many units: the world the ray crosses does not move,
 /// and an 8192-unit trace per gun per frame was most of these systems' time with a dozen players.

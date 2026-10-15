@@ -349,6 +349,11 @@ pub(crate) fn apply_hit(
     let Some(state) = &mut dobj.t5_destructible else {
         return false;
     };
+    // `sv_destructibles 0`: the car or crate stops the hit but takes no damage (as the script
+    // destructibles do); its state never changes, so nothing is published.
+    if !crate::cs_settings::destructibles_enabled() {
+        return true;
+    }
     let tag = dobj
         .capability
         .as_ref()
@@ -388,6 +393,9 @@ pub(crate) fn apply_piece_hit(
     else {
         return false;
     };
+    if !crate::cs_settings::destructibles_enabled() {
+        return true;
+    }
     let mut breaks = Vec::new();
     if piece < 0 {
         for i in 0..state.health.len() {
@@ -420,7 +428,8 @@ pub(crate) fn apply_radius(world: &mut FrameWorld, tick: Tick, damage: &RadiusDa
         exclude,
         cone,
     } = *damage;
-    if radius <= 0.0 {
+    // `sv_destructibles 0`: blasts (grenades, the bomb) break no car, crate or barrel either.
+    if radius <= 0.0 || !crate::cs_settings::destructibles_enabled() {
         return;
     }
     let mut hits = Vec::new();

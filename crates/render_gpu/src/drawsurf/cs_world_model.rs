@@ -46,6 +46,9 @@ use super::depth_range::{GFX_DEPTH_RANGE_SCENE, reverse_z_viewport_depth};
 use super::scene_depth::{SCENE_DEPTH_FORMAT, SceneDepthTexture};
 
 const SHADER_PATH: &str = "embedded://render_gpu/drawsurf/cs_world_model.wgsl";
+const SHADOW_SHADER_PATH: &str = "embedded://render_gpu/drawsurf/cs_world_model_shadow.wgsl";
+/// One sun shadow partition's light transform in the shadow uniform buffer (a 4x4 matrix).
+const SHADOW_MATRIX_SIZE: u64 = 64;
 /// `Instance` in the shader: a 4x4 matrix and four vec4s.
 const INSTANCE_SIZE: u64 = 64 + 4 * 16;
 /// One bone in the palette: three rows of a 3x4 matrix.
@@ -134,6 +137,58 @@ fn ensure_buffer(
 #[derive(Component)]
 pub(super) struct CsWorldModelViewBind(BindGroup);
 
+/// The models' vertices: position, normal, uv, four bone ids and their weights.
+fn vertex_layout() -> VertexBufferLayout {
+    VertexBufferLayout {
+        array_stride: core::mem::size_of::<CsViewmodelVertex>() as u64,
+        step_mode: VertexStepMode::Vertex,
+        attributes: vec![
+            VertexAttribute {
+                format: VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            VertexAttribute {
+                format: VertexFormat::Float32x3,
+                offset: 12,
+                shader_location: 1,
+            },
+            VertexAttribute {
+                format: VertexFormat::Float32x2,
+                offset: 24,
+                shader_location: 2,
+            },
+            VertexAttribute {
+                format: VertexFormat::Uint32,
+                offset: 32,
+                shader_location: 3,
+            },
+            VertexAttribute {
+                format: VertexFormat::Unorm8x4,
+                offset: 36,
+                shader_location: 4,
+            },
+        ],
+    }
+}
+
+/// A model's instance, texture and bone palette: the colour pass's and the shadow pass's, the
+/// same layout, so one bind group serves both.
+fn mesh_layout() -> BindGroupLayoutDescriptor {
+    BindGroupLayoutDescriptor::new(
+        "cs_world_model_mesh",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::VERTEX_FRAGMENT,
+            (
+                uniform_buffer_sized(true, NonZeroU64::new(INSTANCE_SIZE)),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                storage_buffer_read_only_sized(false, NonZeroU64::new(BONE_SIZE)),
+            ),
+        ),
+    )
+}
+
 impl SpecializedRenderPipeline for CsWorldModelPipeline {
     type Key = CsWorldModelPipelineKey;
 
@@ -146,37 +201,7 @@ impl SpecializedRenderPipeline for CsWorldModelPipeline {
                 shader: self.shader.clone(),
                 shader_defs: Vec::new(),
                 entry_point: Some("vs_world".into()),
-                buffers: vec![VertexBufferLayout {
-                    array_stride: core::mem::size_of::<CsViewmodelVertex>() as u64,
-                    step_mode: VertexStepMode::Vertex,
-                    attributes: vec![
-                        VertexAttribute {
-                            format: VertexFormat::Float32x3,
-                            offset: 0,
-                            shader_location: 0,
-                        },
-                        VertexAttribute {
-                            format: VertexFormat::Float32x3,
-                            offset: 12,
-                            shader_location: 1,
-                        },
-                        VertexAttribute {
-                            format: VertexFormat::Float32x2,
-                            offset: 24,
-                            shader_location: 2,
-                        },
-                        VertexAttribute {
-                            format: VertexFormat::Uint32,
-                            offset: 32,
-                            shader_location: 3,
-                        },
-                        VertexAttribute {
-                            format: VertexFormat::Unorm8x4,
-                            offset: 36,
-                            shader_location: 4,
-                        },
-                    ],
-                }],
+                buffers: vec![vertex_layout()],
             },
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
@@ -230,19 +255,136 @@ fn init_pipeline(mut commands: Commands, asset_server: Res<AssetServer>) {
                 (uniform_buffer::<ViewUniform>(true),),
             ),
         ),
-        mesh_layout: BindGroupLayoutDescriptor::new(
-            "cs_world_model_mesh",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::VERTEX_FRAGMENT,
-                (
-                    uniform_buffer_sized(true, NonZeroU64::new(INSTANCE_SIZE)),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    storage_buffer_read_only_sized(false, NonZeroU64::new(BONE_SIZE)),
-                ),
+        mesh_layout: mesh_layout(),
+    });
+    commands.insert_resource(CsWorldModelShadowPipeline {
+        shader: asset_server.load(SHADOW_SHADER_PATH),
+        shadow_layout: BindGroupLayoutDescriptor::new(
+            "cs_world_model_shadow",
+            &BindGroupLayoutEntries::single(
+                ShaderStages::VERTEX,
+                uniform_buffer_sized(true, NonZeroU64::new(SHADOW_MATRIX_SIZE)),
             ),
         ),
+        id: None,
     });
+}
+
+/// The models into the sun's shadow map (see `cs_world_model_shadow.wgsl`): the bodies cast
+/// their own shadows, holding their own guns, instead of the MW2 bodies under them.
+#[derive(Resource)]
+pub(super) struct CsWorldModelShadowPipeline {
+    shader: Handle<Shader>,
+    shadow_layout: BindGroupLayoutDescriptor,
+    id: Option<bevy::render::render_resource::CachedRenderPipelineId>,
+}
+
+impl CsWorldModelShadowPipeline {
+    fn descriptor(&self) -> RenderPipelineDescriptor {
+        RenderPipelineDescriptor {
+            label: Some("cs_world_model_shadow".into()),
+            layout: vec![self.shadow_layout.clone(), mesh_layout()],
+            immediate_size: 0,
+            vertex: VertexState {
+                shader: self.shader.clone(),
+                shader_defs: Vec::new(),
+                entry_point: Some("vs_shadow".into()),
+                buffers: vec![vertex_layout()],
+            },
+            fragment: Some(FragmentState {
+                shader: self.shader.clone(),
+                shader_defs: Vec::new(),
+                entry_point: Some("fs_shadow".into()),
+                targets: vec![Some(ColorTargetState {
+                    format: super::shadowmap_sun_gpu::SHADOWMAP_SUN_COLOR_FORMAT,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState {
+                front_face: FrontFace::Ccw,
+                cull_mode: None,
+                ..default()
+            },
+            depth_stencil: Some(DepthStencilState {
+                format: super::shadowmap_sun_gpu::SHADOWMAP_SUN_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: MultisampleState::default(),
+            zero_initialize_workgroup_memory: false,
+        }
+    }
+}
+
+/// This frame's sun shadow partitions' light transforms, each at its offset in `matrices`.
+#[derive(Resource, Default)]
+pub(super) struct CsWorldModelShadowGpu {
+    matrices: Option<Buffer>,
+    bind: Option<BindGroup>,
+    offsets: Vec<u32>,
+}
+
+/// Queues the shadow pipeline once, and writes this frame's partition transforms.
+fn prepare_cs_world_model_shadow(
+    pipeline: Option<ResMut<CsWorldModelShadowPipeline>>,
+    frame: Option<Res<super::colour_submit::PublishedRenderFrame>>,
+    extracted: Res<ExtractedCsWorldModels>,
+    mut gpu: ResMut<CsWorldModelShadowGpu>,
+    cache: Res<PipelineCache>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
+    let gpu = &mut *gpu;
+    gpu.offsets.clear();
+    let Some(mut pipeline) = pipeline else {
+        return;
+    };
+    if pipeline.id.is_none() {
+        let descriptor = pipeline.descriptor();
+        pipeline.id = Some(cache.queue_render_pipeline(descriptor));
+    }
+    if extracted.0.instances.is_empty() {
+        return;
+    }
+    let Some(sun) = frame.as_deref().and_then(|frame| frame.sun_shadow.as_ref()) else {
+        return;
+    };
+    let stride = u64::from(device.limits().min_uniform_buffer_offset_alignment)
+        .max(SHADOW_MATRIX_SIZE) as usize;
+    let mut bytes = vec![0u8; stride * sun.partitions.len()];
+    for (i, partition) in sun.partitions.iter().enumerate() {
+        let at = i * stride;
+        bytes[at..at + SHADOW_MATRIX_SIZE as usize]
+            .copy_from_slice(bytemuck::cast_slice(&partition.clip_from_world.to_cols_array()));
+        gpu.offsets.push(at as u32);
+    }
+    if ensure_buffer(
+        &mut gpu.matrices,
+        &device,
+        "cs_world_model_shadow_matrices",
+        BufferUsages::UNIFORM,
+        bytes.len() as u64,
+    ) {
+        gpu.bind = None;
+    }
+    let Some(matrices) = &gpu.matrices else {
+        return;
+    };
+    queue.write_buffer(matrices, 0, &bytes);
+    if gpu.bind.is_none() {
+        gpu.bind = Some(device.create_bind_group(
+            "cs_world_model_shadow",
+            &cache.get_bind_group_layout(&pipeline.shadow_layout),
+            &BindGroupEntries::single(BufferBinding {
+                buffer: matrices,
+                offset: 0,
+                size: NonZeroU64::new(SHADOW_MATRIX_SIZE),
+            }),
+        ));
+    }
 }
 
 fn extract_cs_world_models(
@@ -435,9 +577,112 @@ pub(super) struct CsWorldModelDraw<'w> {
     cache: Res<'w, PipelineCache>,
     images: Res<'w, RenderAssets<GpuImage>>,
     drawn: ResMut<'w, CsWorldModelsDrawn>,
+    shadow_pipeline: Option<Res<'w, CsWorldModelShadowPipeline>>,
+    shadow_gpu: Res<'w, CsWorldModelShadowGpu>,
 }
 
 impl CsWorldModelDraw<'_> {
+    /// Draws the models into sun shadow partition `partition` of the map (`color`, `depth`),
+    /// at its viewport and scissor, over the map's own casters there.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn record_sun_casters(
+        &self,
+        device: &RenderDevice,
+        encoder: &mut CommandEncoder,
+        color: &bevy::render::render_resource::TextureView,
+        depth: &bevy::render::render_resource::TextureView,
+        partition: usize,
+        viewport: [u32; 4],
+        scissor: [u32; 4],
+    ) {
+        use bevy::render::render_resource::{
+            LoadOp, Operations, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+        };
+        let (Some(pipeline), Some(bind), Some(&shadow_offset)) = (
+            self.shadow_pipeline.as_deref(),
+            self.shadow_gpu.bind.as_ref(),
+            self.shadow_gpu.offsets.get(partition),
+        ) else {
+            return;
+        };
+        let Some(gpu_pipeline) = pipeline.id.and_then(|id| self.cache.get_render_pipeline(id))
+        else {
+            return;
+        };
+        let instances = &self.extracted.0.instances;
+        if instances.is_empty() || self.gpu.offsets.len() != instances.len() {
+            return;
+        }
+        let mut draws = Vec::new();
+        for (instance, &offset) in instances.iter().zip(&self.gpu.offsets) {
+            if instance.overlay {
+                continue;
+            }
+            let Some(vertices) = self.gpu.vertices.get(&instance.model.id) else {
+                continue;
+            };
+            for draw in &instance.model.draws {
+                let Some(mesh_bind) = self
+                    .images
+                    .get(&draw.image)
+                    .and_then(|image| self.gpu.binds.get(&image.texture_view.id()))
+                else {
+                    continue;
+                };
+                draws.push((mesh_bind, offset, vertices, draw.first_vertex, draw.vertex_count));
+            }
+        }
+        if draws.is_empty() {
+            return;
+        }
+        let attachments = [Some(RenderPassColorAttachment {
+            view: color,
+            resolve_target: None,
+            ops: Operations {
+                load: LoadOp::Load,
+                store: StoreOp::Store,
+            },
+            depth_slice: None,
+        })];
+        let mut pass = TrackedRenderPass::new(
+            device,
+            encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("cs_world_model_sun_shadow"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    }),
+                    stencil_ops: Some(Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            }),
+        );
+        let [x, y, w, h] = viewport;
+        if w == 0 || h == 0 {
+            return;
+        }
+        pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+        let [sx, sy, sw, sh] = scissor;
+        if sw > 0 && sh > 0 {
+            pass.set_scissor_rect(sx, sy, sw, sh);
+        }
+        pass.set_render_pipeline(gpu_pipeline);
+        pass.set_bind_group(0, bind, &[shadow_offset]);
+        for (mesh_bind, offset, vertices, first, count) in &draws {
+            pass.set_bind_group(1, *mesh_bind, &[*offset]);
+            pass.set_vertex_buffer(0, vertices.slice(..));
+            pass.draw(*first..*first + *count, 0..1);
+        }
+    }
+
     /// Records the models into `encoder`; the pass after the colour pass then skips them.
     pub(super) fn record(
         &mut self,
@@ -602,6 +847,7 @@ fn record_cs_world_models(
 
 pub(super) fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "cs_world_model.wgsl");
+    bevy::asset::embedded_asset!(app, "cs_world_model_shadow.wgsl");
     app.init_resource::<CsWorldModelsFrame>();
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
@@ -610,6 +856,7 @@ pub(super) fn register(app: &mut App) {
         .init_resource::<ExtractedCsWorldModels>()
         .init_resource::<CsWorldModelGpu>()
         .init_resource::<CsWorldModelsDrawn>()
+        .init_resource::<CsWorldModelShadowGpu>()
         .init_resource::<SpecializedRenderPipelines<CsWorldModelPipeline>>()
         .add_systems(RenderStartup, init_pipeline)
         .add_systems(ExtractSchedule, extract_cs_world_models)
@@ -619,6 +866,7 @@ pub(super) fn register(app: &mut App) {
                 prepare_cs_world_models.in_set(RenderSystems::PrepareResources),
                 prepare_views.in_set(RenderSystems::PrepareBindGroups),
                 prepare_mesh_binds.in_set(RenderSystems::PrepareBindGroups),
+                prepare_cs_world_model_shadow.in_set(RenderSystems::PrepareBindGroups),
             ),
         )
         .add_systems(

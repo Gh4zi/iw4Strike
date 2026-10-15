@@ -3330,6 +3330,11 @@ fn collect_xmodel_sun_shadow_casters(
             plan.xmodel_skipped_viewmodel = plan.xmodel_skipped_viewmodel.saturating_add(1);
             continue;
         }
+        // A CS:GO body casts its own sun shadow (the CS model pass draws it into the map): the
+        // MW2 body it stands in for casts none there. Spot lights still take the MW2 body's.
+        if draw.colour_refusal == Some(super::tess::xmodel::XModelColourRefusal::StandIn) {
+            continue;
+        }
         plan.xmodel_eligible = plan.xmodel_eligible.saturating_add(1);
         let Some(item) = xmodel_shadow_draw(xmodel, draw, catalog) else {
             plan.xmodel_missing_key = plan.xmodel_missing_key.saturating_add(1);

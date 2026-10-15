@@ -35,7 +35,13 @@ struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) world: vec3<f32>,
 }
+
+// The fill light, over the ambient: the viewmodel's (3.2 of the grid's colour over its 2.4
+// ambient), from the viewer's side and above, so a model in the shade reads as the gun in hand
+// does rather than as a silhouette.
+const FILL: f32 = 1.3333;
 
 fn bone_point(bone: u32, p: vec3<f32>) -> vec3<f32> {
     let r0 = bones[bone * 3u];
@@ -82,6 +88,7 @@ fn vs_world(in: VsIn) -> VsOut {
     }
     let world = inst.world_from_model * vec4<f32>(position, 1.0);
     out.clip = view.clip_from_world * world;
+    out.world = world.xyz;
     out.uv = in.uv;
     out.normal = (inst.world_from_model * vec4<f32>(normal, 0.0)).xyz;
     return out;
@@ -102,10 +109,14 @@ fn fs_world(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     let n = normalize(in.normal);
-    // The sky lights the top a little more than the bottom, the sun where it reaches.
-    let sky = 0.75 + 0.25 * n.z;
+    // The fill comes from the viewer's side and above (MW2's z is up), wrapped a little past the
+    // terminator as the viewmodel's; the sun where it reaches.
+    let to_eye = view.world_position - in.world;
+    let side = normalize(vec3<f32>(to_eye.xy, 0.0) + vec3<f32>(0.0, 0.0, 1e-4));
+    let fill_dir = normalize(side * 0.6 + vec3<f32>(0.0, 0.0, 0.75));
+    let wrap = clamp((dot(n, fill_dir) + 0.5) / 1.5, 0.0, 1.0);
     let sun = max(dot(n, inst.sun_dir.xyz), 0.0);
-    let shade = inst.ambient.rgb * sky + inst.sun.rgb * sun;
+    let shade = inst.ambient.rgb * (1.0 + FILL * wrap) + inst.sun.rgb * sun;
     return vec4<f32>(encode(texel.rgb * shade), 1.0);
 }
 

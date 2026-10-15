@@ -232,9 +232,13 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
         let mut runtime = world.resource_mut::<Runtime>();
         let by_name = matches!(
             runtime.object_field(object, "targetname"),
-            Value::String(name) if crate::cs_settings::DESTRUCTIBLE_TARGETNAMES
-                .iter()
-                .any(|t| name.eq_ignore_ascii_case(t))
+            Value::String(name) if crate::cs_settings::is_destructible_targetname(&name)
+        );
+        // Whatever MW2's destructible scripts drive carries its kind (`destructible_type`),
+        // whatever a map's own script names it (Carnival's van: `destructible_vehicle_dlc2`).
+        let by_type = matches!(
+            runtime.object_field(object, "destructible_type"),
+            Value::String(kind) if !kind.is_empty()
         );
         // The vending machines `_dynamic_world` breaks carry no destructible targetname.
         let by_model = matches!(
@@ -245,7 +249,7 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
                     .get(..prefix.len())
                     .is_some_and(|head| head.eq_ignore_ascii_case(prefix)))
         );
-        if by_name || by_model {
+        if by_name || by_type || by_model {
             // Destructibles off: the car, barrel or vending machine stops the hit but takes no
             // damage.
             diag::debug!(Sim, "destructibles off: an entity took no {} damage", hit.amount);
@@ -320,10 +324,7 @@ pub(crate) fn destructible_spots(world: &mut World) -> Vec<(String, String, [f32
         let Value::String(name) = runtime.object_field(id, "targetname") else {
             continue;
         };
-        if !crate::cs_settings::DESTRUCTIBLE_TARGETNAMES
-            .iter()
-            .any(|t| name.eq_ignore_ascii_case(t))
-        {
+        if !crate::cs_settings::is_destructible_targetname(&name) {
             continue;
         }
         let model = match runtime.object_field(id, "model") {

@@ -234,6 +234,11 @@ pub(super) fn draw_exact_colour(
         &mut context,
         shadow_skinned_vertex,
         shadow_skinned_index,
+        &mut |encoder, color, depth, partition, viewport, scissor| {
+            cs_models.record_sun_casters(
+                &device, encoder, color, depth, partition, viewport, scissor,
+            );
+        },
     );
     laps.lap("sun_shadow");
     let spot_submit = record_shadowmap_spot(

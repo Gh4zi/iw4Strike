@@ -5916,6 +5916,14 @@ fn record_shadowmap_sun(
     context: &mut RenderContext,
     smodel_skinned_vertex: Option<&Buffer>,
     smodel_skinned_index: Option<&Buffer>,
+    cs_casters: &mut dyn FnMut(
+        &mut CommandEncoder,
+        &bevy::render::render_resource::TextureView,
+        &bevy::render::render_resource::TextureView,
+        usize,
+        [u32; 4],
+        [u32; 4],
+    ),
 ) -> SunShadowSubmit {
     if let Some(submit) = work.early.take() {
         return submit;
@@ -5983,6 +5991,17 @@ fn record_shadowmap_sun(
             );
             indexed = indexed.saturating_add(run_indexed);
             record_n.add(run_binds);
+            // The CS bodies (and the guns in their hands) cast into the same partition.
+            let vp = part.envelope.viewport;
+            let (sx, sy, sw, sh) = scissor_xywh(part.envelope.scissor);
+            cs_casters(
+                encoder,
+                &color_view,
+                &depth_view,
+                part.pi,
+                [vp.x, vp.y, vp.width, vp.height],
+                [sx, sy, sw, sh],
+            );
         }
     }
     let ms_record = record_started.elapsed().as_secs_f32() * 1000.0;
