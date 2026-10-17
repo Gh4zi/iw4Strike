@@ -315,6 +315,10 @@ pub struct FxSystemHost {
 
     pub last_decal_size0: Option<f32>,
 
+    /// The radius the decals of the effect being played get instead of their own, while it is
+    /// set (a CS flashbang's scorch is CS:GO's size).
+    pub decal_radius_override: Option<f32>,
+
     pub last_decal_rotation: Option<f32>,
 
     pub last_decal_mat0_edge: Option<String>,
@@ -557,6 +561,7 @@ impl FxSystemHost {
             last_decal_msec: None,
             last_decal_vis: None,
             last_decal_size0: None,
+            decal_radius_override: None,
             last_decal_rotation: None,
             last_decal_mat0_edge: None,
             last_decal_mat1_edge: None,

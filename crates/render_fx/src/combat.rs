@@ -9,6 +9,7 @@ use weapon_iw4::SURFACE_TYPE_NAMES;
 
 use crate::present::{
     FxElemInfoCache, FxScene, play_named_bolted_in_world, play_named_oriented_in_world,
+    play_named_oriented_in_world_only,
 };
 use crate::{
     CombatFxDump, FxJournalCursor, HostFxSystem, PreparedFxCatalog, PreparedImpactFx,
@@ -16,6 +17,10 @@ use crate::{
 };
 
 pub const IDENTITY_AXIS: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+/// CS:GO's scorch decal (`Scorch`: `decals/scorch1`, 128 by 128 texels at `$decalscale` 1, so
+/// 128 units across), as a mark's radius.
+const CSGO_SCORCH_RADIUS: f32 = 64.0;
 
 pub fn try_play_weapon_fx_at_origin(
     host: &mut FxSystemHost,
@@ -32,6 +37,55 @@ pub fn try_play_weapon_fx_at_origin(
     };
     cache.sync(catalog);
     match play_named_oriented_in_world(host, catalog, cache, name, origin, axis, scene) {
+        Some(PlayResult::PlayedReleased { .. } | PlayResult::Held { .. }) => {
+            *played = played.saturating_add(1);
+            true
+        }
+        Some(PlayResult::Failed(_)) | None => false,
+    }
+}
+
+/// A CS flashbang's pop: [`try_play_weapon_fx_at_origin`] with only the effect's lights and its
+/// scorch, the scorch as big as CS:GO's. CS:GO has particle effects for the HE grenade's and the
+/// smoke's blasts but none for the flashbang, whose pop is its bang, a burst of light, a black
+/// scorch and the blinding; MW2's flashbang effect also rained glittering sparks and left a puff
+/// of smoke.
+#[allow(clippy::too_many_arguments)]
+pub fn try_play_flashbang_fx_at_origin(
+    host: &mut FxSystemHost,
+    catalog: &asset_game::FxDefinitions,
+    cache: &mut FxElemInfoCache,
+    name: Option<asset_game::FxName<'_>>,
+    origin: [f32; 3],
+    axis: [[f32; 3]; 3],
+    played: &mut u32,
+    scene: Option<&dyn FxScene>,
+) -> bool {
+    let Some(name) = name else {
+        return false;
+    };
+    cache.sync(catalog);
+    let lights_and_scorch = |elem: &fx::FxElemDefInfo| {
+        matches!(
+            fx_iw4::FxElemType::from_u8(elem.elem_type),
+            Some(
+                fx_iw4::FxElemType::OmniLight
+                    | fx_iw4::FxElemType::SpotLight
+                    | fx_iw4::FxElemType::Decal
+            )
+        )
+    };
+    match play_named_oriented_in_world_only(
+        host,
+        catalog,
+        cache,
+        name,
+        origin,
+        axis,
+        scene,
+        lights_and_scorch,
+        Some(CSGO_SCORCH_RADIUS),
+    ) {
         Some(PlayResult::PlayedReleased { .. } | PlayResult::Held { .. }) => {
             *played = played.saturating_add(1);
             true

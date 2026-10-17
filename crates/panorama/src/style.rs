@@ -432,7 +432,13 @@ impl Style {
             "opacity" => self.opacity = v.parse().unwrap_or(self.opacity),
             "wash-color" | "wash-color-fast" => self.wash = parse_color(v),
             "z-index" => self.z_index = v.parse::<f32>().ok().map(|z| z as i32),
-            "overflow" => self.clip = v.contains("clip") || v.contains("scroll"),
+            // `squish`, `clip`, `scroll` or `noclip`, for both axes or each: `noclip` (it holds
+            // "clip") draws what overflows, as CS:GO's 1-pixel-wide weapon names need.
+            "overflow" => {
+                self.clip = v
+                    .split_whitespace()
+                    .any(|word| word.eq_ignore_ascii_case("clip") || word.eq_ignore_ascii_case("scroll"));
+            }
             "transform" => parse_transform(v, self),
             "transform-origin" => {
                 let mut it = v

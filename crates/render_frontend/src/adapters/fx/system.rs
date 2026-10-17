@@ -2676,7 +2676,13 @@ fn explosion(
     if let Some(catalog) = catalog.as_deref().filter(|_| !volumetric && !static_cloud) {
         elem_infos.0.sync(&catalog.0);
         let mut boom_played = cursor.boom_played;
-        let table_ok = try_play_weapon_fx_at_origin(
+        // A CS flashbang pops with a light and CS:GO's scorch, no sparks or smoke.
+        let play = if cs_grenade == Some("flashbang") {
+            render_fx::combat::try_play_flashbang_fx_at_origin
+        } else {
+            try_play_weapon_fx_at_origin
+        };
+        let table_ok = play(
             &mut host.0,
             &catalog.0,
             &mut elem_infos.0,
@@ -2686,7 +2692,7 @@ fn explosion(
             &mut boom_played,
             fx_world.view().as_ref().map(|s| s as &dyn FxScene),
         );
-        let slot_ok = try_play_weapon_fx_at_origin(
+        let slot_ok = play(
             &mut host.0,
             &catalog.0,
             &mut elem_infos.0,

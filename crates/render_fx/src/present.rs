@@ -337,6 +337,58 @@ pub fn play_named_oriented_in_world(
     Some(result)
 }
 
+/// [`play_named_oriented_in_world`], starting only the elements `keep` passes: the others' spawn
+/// counts are zeroed, so every element keeps its place in the definition. Elements that loop
+/// still loop as defined (an explosion's are one-shot). With `decal_radius`, the decals it lays
+/// at once are that big instead of their own size.
+#[allow(clippy::too_many_arguments)]
+pub fn play_named_oriented_in_world_only(
+    host: &mut FxSystemHost,
+    catalog: &FxDefinitions,
+    cache: &FxElemInfoCache,
+    name: FxName<'_>,
+    origin: [f32; 3],
+    axis: [[f32; 3]; 3],
+    world: Option<&dyn FxScene>,
+    keep: fn(&FxElemDefInfo) -> bool,
+    decal_radius: Option<f32>,
+) -> Option<PlayResult> {
+    let msec = host.msec_now;
+    let effect = name.resolve(catalog)?;
+    let looping = usize::try_from(effect.view.looping_count).unwrap_or(0);
+    let elems: Vec<FxElemDefInfo> = cache
+        .arc_for(catalog, effect)
+        .iter()
+        .enumerate()
+        .map(|(index, elem)| {
+            let mut elem = *elem;
+            if !keep(&elem) {
+                // A looping element's spawn is (interval, count), a one-shot's (count, spread).
+                if index >= looping {
+                    elem.spawn_a = 0;
+                }
+                elem.spawn_b = 0;
+            }
+            elem
+        })
+        .collect();
+    let result = play_oriented(
+        host,
+        FxPlayRequest {
+            def_name: effect.name.as_str(),
+            pose: FxPlayPose { origin, axis, msec },
+            wants_spotlight: false,
+            catalog_index: catalog_index_of(catalog, effect),
+            def: Some(def_info(effect, &elems)),
+        },
+    );
+    let result = stamp_play_lighting(host, catalog, world, result);
+    host.decal_radius_override = decal_radius;
+    drain_spawn_side_effects(host, catalog, cache, world);
+    host.decal_radius_override = None;
+    Some(result)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_named_oriented_in_world(
     host: &mut FxSystemHost,
@@ -591,6 +643,9 @@ fn record_spawn_decal(
             0.0,
             rand_size,
         );
+        if let Some(radius) = host.decal_radius_override {
+            host.last_decal_size0 = Some(radius);
+        }
         host.last_decal_rotation = evaluate_rotation_total(
             elem.vis_samples.as_slice(),
             elem.view.vis_state_interval_count,

@@ -702,6 +702,7 @@ pub(crate) fn advance_weapon_command(
                 ps.cs_grenade = 0;
             }
         }
+        drop_spent_cs_grenades(world, *id);
         if hands[0].delayed_rechamber {
             if let Some(ps) = world.player_mut(*id) {
                 movement_iw4::add_predictable_event(
@@ -1510,6 +1511,33 @@ fn cs_unzoom_for_bolt(cs: &weapon_iw4::cs::CsWeapon, ps: &mut PlayerState, serve
             ps.cs_zoom = 0;
         }
         ps.cs_next_attack2_ms = server_time + (cs.cycle * 1000.0).round() as i32;
+    }
+}
+
+/// CS grenades with none left that are not in hand leave the inventory, as CS:GO's do once
+/// thrown. One switched away from right after its last throw (before [`cs_grenade_frame`]
+/// retired it) stayed in the weapon list with 0 left, until taken out again.
+fn drop_spent_cs_grenades(world: &mut FrameWorld, id: ClientId) {
+    let Some(ps) = world.player(id).copied() else {
+        return;
+    };
+    for weapon in ps.weapons {
+        let Ok(weapon) = u32::try_from(weapon) else {
+            continue;
+        };
+        if weapon == 0 || weapon == ps.weapon {
+            continue;
+        }
+        let Some(facts) = world.combat_facts_for(weapon) else {
+            continue;
+        };
+        if weapon_iw4::cs::cs_grenade(facts.cs_weapon).is_none() {
+            continue;
+        }
+        let clip_key = clip_table_key(facts.clip_index, weapon);
+        if get_clip_for_hand(&ps.ammoclip, clip_key, 0) <= 0 {
+            crate::script_player::take_weapon(world, id, weapon);
+        }
     }
 }
 

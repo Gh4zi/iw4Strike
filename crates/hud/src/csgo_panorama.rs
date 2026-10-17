@@ -603,8 +603,45 @@ pub(crate) struct CsgoPanorama {
     weapon_list: Vec<(u8, &'static str, bool)>,
 }
 
+/// CS:GO's equipment icon and HUD name of each knife `cl_knife` picks, in
+/// [`weapon_iw4::cs::CSGO_KNIVES`] order (`PlayerState::cs_knife_skin` 1 is the first).
+const KNIFE_ICONS: [(&str, &str); weapon_iw4::cs::CSGO_KNIVES.len()] = [
+    ("bayonet", "SFUI_WPNHUD_KnifeBayonet"),
+    ("knife_m9_bayonet", "SFUI_WPNHUD_KnifeM9"),
+    ("knife_karambit", "SFUI_WPNHUD_KnifeKaram"),
+    ("knife_butterfly", "SFUI_WPNHUD_Knife_Butterfly"),
+    ("knife_flip", "SFUI_WPNHUD_KnifeFlip"),
+    ("knife_gut", "SFUI_WPNHUD_KnifeGut"),
+    ("knife_tactical", "SFUI_WPNHUD_KnifeTactical"),
+    ("knife_falchion", "SFUI_WPNHUD_knife_falchion_advanced"),
+    ("knife_survival_bowie", "SFUI_WPNHUD_knife_survival_bowie"),
+    ("knife_push", "SFUI_WPNHUD_knife_push"),
+    ("knife_gypsy_jackknife", "SFUI_WPNHUD_knife_gypsy_jackknife"),
+    ("knife_stiletto", "SFUI_WPNHUD_knife_stiletto"),
+    ("knife_ursus", "SFUI_WPNHUD_knife_ursus"),
+    ("knife_widowmaker", "SFUI_WPNHUD_knife_widowmaker"),
+    ("knife_css", "SFUI_WPNHUD_KnifeCSS"),
+    ("knife_cord", "SFUI_WPNHUD_knife_cord"),
+    ("knife_canis", "SFUI_WPNHUD_knife_canis"),
+    ("knife_outdoor", "SFUI_WPNHUD_knife_outdoor"),
+    ("knife_skeleton", "SFUI_WPNHUD_knife_skeleton"),
+    ("knifegg", "SFUI_WPNHUD_Knife_GG"),
+];
+
+/// The equipment icon of the knife `skin` (`PlayerState::cs_knife_skin`), else the side's own.
+fn knife_icon(skin: u32, terrorist: bool) -> &'static str {
+    usize::try_from(skin)
+        .ok()
+        .and_then(|skin| skin.checked_sub(1))
+        .and_then(|index| KNIFE_ICONS.get(index))
+        .map_or(if terrorist { "knife_t" } else { "knife" }, |(icon, _)| icon)
+}
+
 /// CS:GO's name of the weapon an equipment icon shows (`SFUI_WPNHUD_*` in its strings).
 fn weapon_name_token(icon: &str) -> Option<&'static str> {
+    if let Some((_, token)) = KNIFE_ICONS.iter().find(|(knife, _)| *knife == icon) {
+        return Some(token);
+    }
     Some(match icon {
         "ak47" => "SFUI_WPNHUD_AK47",
         "aug" => "SFUI_WPNHUD_Aug",
@@ -670,7 +707,7 @@ fn weapon_list(
             let name = weapons.0.script_name_of(id);
             let index = cs::cs_weapon_index_for(&name)?;
             let (slot, icon) = if cs::is_knife(index) {
-                (3, if terrorist { "knife_t" } else { "knife" })
+                (3, knife_icon(ps.cs_knife_skin, terrorist))
             } else if let Some(grenade) = cs::cs_grenade(index) {
                 (4, grenade.name)
             } else if cs::is_c4(index) {
@@ -757,8 +794,12 @@ fn build_weapon_list(
                 .unwrap_or_default();
             doc.set_var(item, "WeaponIcon--name", &name);
             for label in doc.find_class_in(item, "weapon-selection-item-name") {
-                // Its 1-pixel width is Panorama's way to right-align a name wider than it.
-                doc.set_style(label, "width", Some("fit-children"));
+                // Its 1-pixel width is Panorama's way to right-align a name wider than it: the name
+                // reaches left from the icon's right edge under its neighbours and takes no room.
+                // Laid out right to left, the layout does the same (aligned to the right, a name
+                // wider than its panel spilled out to the right instead). Sized to the name, every
+                // hidden grenade name pushed the grenade icons apart.
+                doc.set_style(label, "flow-children", Some("left"));
             }
             if let Some(&image) = doc.find_class_in(item, "weapon-selection-item-icon-main").first() {
                 doc.set_image(
