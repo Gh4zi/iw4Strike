@@ -401,6 +401,7 @@ pub(super) fn prepare_camera_colour(lane: CameraLane<'_>) {
         uploaded,
         sampler_table,
         textures: &textures,
+        texture_epoch: (binding_cache.generation, binding_cache.views_revision),
         skinned: &skinned,
         exec_view,
         prepare_target,
@@ -988,6 +989,7 @@ struct CameraRowsInput<'a> {
     uploaded: &'a RuntimeUploadedImageRegistry,
     sampler_table: &'a SamplerTable,
     textures: &'a std::sync::Mutex<SceneTextureState>,
+    texture_epoch: (render_material::MaterialGenerationId, u64),
     skinned: &'a std::sync::Mutex<smodel_skinned::SmodelSkinnedTess>,
     exec_view: Option<MaterialExecView<'a>>,
     prepare_target: ExactPrepareTarget,
@@ -1196,6 +1198,7 @@ fn prepare_camera_rows(
         uploaded,
         sampler_table,
         textures,
+        texture_epoch,
         skinned,
         exec_view,
         prepare_target,
@@ -1257,7 +1260,13 @@ fn prepare_camera_rows(
         uploaded,
         spot_shadow_select: None,
         sampler_table,
-        textures: PrepareTextureTables::SceneShared(textures),
+        textures: PrepareTextureTables::SceneShared {
+            shared: textures,
+            local: {
+                lane.texture_slots.open_epoch(texture_epoch);
+                &mut lane.texture_slots
+            },
+        },
         arena: Some(&mut lane.arena_pack),
         run_pack,
         cost: PrepareCost::default(),

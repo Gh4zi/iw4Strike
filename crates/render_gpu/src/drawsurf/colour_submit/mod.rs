@@ -444,6 +444,7 @@ const COLOUR_PREPARE_LANES: usize = 4;
 struct ColourPrepareLane {
     run_pack: RunPackCache,
     arena_pack: ArenaPack,
+    texture_slots: LaneTextureSlots,
     executor: MaterialRunExecutor,
     prepared: Vec<PreparedExactDraw>,
     submitted_keys: Vec<u64>,
@@ -2378,8 +2379,14 @@ impl ExactPrepare<'_> {
             texture_slot_words(device, table, &textures)
         };
         let mut shared_guard;
+        let mut lane_slots = None;
         let (texture_slots, table) = match &mut self.textures {
-            PrepareTextureTables::SceneShared(shared) => {
+            PrepareTextureTables::SceneShared { shared, local } => {
+                if let Some(slots) = local.slots[scene_index].get(&key) {
+                    self.cost.tex_bind_hit_n = self.cost.tex_bind_hit_n.saturating_add(1);
+                    return Ok(Arc::clone(slots));
+                }
+                lane_slots = Some(&mut local.slots[scene_index]);
                 shared_guard = shared
                     .lock()
                     .expect("scene texture tables are never poisoned");
@@ -2390,11 +2397,18 @@ impl ExactPrepare<'_> {
         };
         if let Some(slots) = texture_slots.get(&key) {
             self.cost.tex_bind_hit_n = self.cost.tex_bind_hit_n.saturating_add(1);
-            return Ok(Arc::clone(slots));
+            let slots = Arc::clone(slots);
+            if let Some(lane_slots) = lane_slots {
+                lane_slots.insert(key, Arc::clone(&slots));
+            }
+            return Ok(slots);
         }
         self.cost.tex_bind_miss_n = self.cost.tex_bind_miss_n.saturating_add(1);
         let slots = resolve(table)?;
         texture_slots.insert(key, Arc::clone(&slots));
+        if let Some(lane_slots) = lane_slots {
+            lane_slots.insert(key, Arc::clone(&slots));
+        }
         Ok(slots)
     }
 }
@@ -2431,8 +2445,31 @@ struct SceneTextureState {
     tables: [ExactTextureTable; 4],
 }
 
+/// A colour lane's copy of the shared texture slots it has looked up: the lanes take the shared
+/// table's lock only for a binding new to them. The shared table only gains entries within an
+/// epoch (material generation, views revision), so the copy is cleared when that changes.
+#[derive(Default)]
+struct LaneTextureSlots {
+    epoch: Option<(MaterialGenerationId, u64)>,
+    slots: [HashMap<BoundTextureKey, Arc<[u32]>>; 4],
+}
+
+impl LaneTextureSlots {
+    fn open_epoch(&mut self, epoch: (MaterialGenerationId, u64)) {
+        if self.epoch != Some(epoch) {
+            self.epoch = Some(epoch);
+            for slots in &mut self.slots {
+                slots.clear();
+            }
+        }
+    }
+}
+
 enum PrepareTextureTables<'a> {
-    SceneShared(&'a std::sync::Mutex<SceneTextureState>),
+    SceneShared {
+        shared: &'a std::sync::Mutex<SceneTextureState>,
+        local: &'a mut LaneTextureSlots,
+    },
     Shadow {
         slots: &'a mut HashMap<BoundTextureKey, Arc<[u32]>>,
         table: &'a mut ExactTextureTable,
@@ -6053,7 +6090,7 @@ impl ExactPrepare<'_> {
         binds_spot_shadow: bool,
         out: &mut Vec<PreparedExactDraw>,
     ) -> Result<usize, GpuSubmitRefusal> {
-        let after_scene_resolve = matches!(self.textures, PrepareTextureTables::SceneShared(_))
+        let after_scene_resolve = matches!(self.textures, PrepareTextureTables::SceneShared { .. })
             && (item.camera_region == Some(asset_iw4::CAMERA_REGION_EMISSIVE)
                 || matches!(item.kind, RetainedDrawKind::CodeMesh { .. })
                 || matches!(item.kind, RetainedDrawKind::Glass { .. })
