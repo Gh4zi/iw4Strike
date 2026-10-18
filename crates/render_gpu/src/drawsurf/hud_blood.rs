@@ -64,7 +64,8 @@ impl BloodPortGpu {
             return Err(BloodGpuRefusal::SamplerSlots);
         }
         let size = (port.module().vertex_constant_len + port.module().pixel_constant_len) * 16
-            + d3d9_sm3::texture_slot_rows(port.module().sampler_count) * 16;
+            + d3d9_sm3::texture_slot_rows(port.module().sampler_count) * 16
+            + port.inline_frame_row_count() * 16;
         let (constant_entries, texture_entries) = split_bind_layout(port.wgpu_layout());
         let constants_layout = super::colour_submit::bind_group_layout_from_entries(
             "iw4_blood_constants",
@@ -160,6 +161,7 @@ impl BloodPortGpu {
             slots[ordinal] = d3d9_sm3::texture_slot_word(u16::from(slot), u16::from(slot));
         }
         bytes.extend_from_slice(bytemuck::cast_slice(&slots));
+        port.append_inline_frame_rows(&mut bytes, 0);
         queue.write_buffer(&self.arena, 0, &bytes);
         Ok(())
     }

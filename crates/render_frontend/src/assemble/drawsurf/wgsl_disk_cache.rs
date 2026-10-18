@@ -5,7 +5,7 @@ use d3d9_sm3::{PassLoweringAbi, PassWgsl};
 use super::material_runtime::RuntimeShaderPair;
 
 // Bump when emitted WGSL changes as well as when the binary format changes.
-pub const WGSL_CACHE_FORMAT: u32 = 5;
+pub const WGSL_CACHE_FORMAT: u32 = 6;
 
 const MAGIC: &[u8; 8] = b"IWLWGSL\n";
 
@@ -52,7 +52,7 @@ fn cache_key(pair: RuntimeShaderPair, abi: &PassLoweringAbi) -> String {
 
 fn encode(module: &PassWgsl) -> Vec<u8> {
     let source = module.source.as_bytes();
-    let mut out = Vec::with_capacity(8 + 24 + source.len());
+    let mut out = Vec::with_capacity(8 + 28 + source.len());
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&WGSL_CACHE_FORMAT.to_le_bytes());
     out.extend_from_slice(&(module.attribute_count as u32).to_le_bytes());
@@ -60,13 +60,16 @@ fn encode(module: &PassWgsl) -> Vec<u8> {
     out.extend_from_slice(&(module.vertex_constant_len as u32).to_le_bytes());
     out.extend_from_slice(&(module.pixel_constant_len as u32).to_le_bytes());
     out.extend_from_slice(&(module.sampler_count as u32).to_le_bytes());
+    let frame_shared =
+        u32::from(module.vertex_frame_shared) | u32::from(module.pixel_frame_shared) << 1;
+    out.extend_from_slice(&frame_shared.to_le_bytes());
     out.extend_from_slice(&(source.len() as u32).to_le_bytes());
     out.extend_from_slice(source);
     out
 }
 
 fn decode(bytes: &[u8]) -> Option<PassWgsl> {
-    if bytes.len() < 8 + 24 {
+    if bytes.len() < 8 + 28 {
         return None;
     }
     if &bytes[..8] != MAGIC {
@@ -81,8 +84,9 @@ fn decode(bytes: &[u8]) -> Option<PassWgsl> {
     let vertex_constant_len = u32::from_le_bytes(bytes[20..24].try_into().ok()?) as usize;
     let pixel_constant_len = u32::from_le_bytes(bytes[24..28].try_into().ok()?) as usize;
     let sampler_count = u32::from_le_bytes(bytes[28..32].try_into().ok()?) as usize;
-    let source_len = u32::from_le_bytes(bytes[32..36].try_into().ok()?) as usize;
-    let source = bytes.get(36..36 + source_len)?;
+    let frame_shared = u32::from_le_bytes(bytes[32..36].try_into().ok()?);
+    let source_len = u32::from_le_bytes(bytes[36..40].try_into().ok()?) as usize;
+    let source = bytes.get(40..40 + source_len)?;
     let source = std::str::from_utf8(source).ok()?.to_owned();
     Some(PassWgsl {
         source,
@@ -91,5 +95,7 @@ fn decode(bytes: &[u8]) -> Option<PassWgsl> {
         vertex_constant_len,
         pixel_constant_len,
         sampler_count,
+        vertex_frame_shared: frame_shared & 1 != 0,
+        pixel_frame_shared: frame_shared & 2 != 0,
     })
 }

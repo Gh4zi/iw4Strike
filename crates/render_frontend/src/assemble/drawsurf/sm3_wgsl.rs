@@ -32,6 +32,18 @@ fn known_decl_type(decl_type: DeclType) -> DeclType {
     }
 }
 
+fn constant_slot(binding: &super::sm3_abi::ConstantBinding) -> ConstantSlot {
+    ConstantSlot {
+        register: binding.register,
+        program_defined: binding.source == ConstantSource::ProgramDefined,
+        frame_shared: matches!(
+            binding.source,
+            ConstantSource::Code { index, .. }
+                if render_material::is_frame_shared_code_constant(index)
+        ),
+    }
+}
+
 pub fn pass_lowering_abi(abi: &PassProgramAbi) -> PassLoweringAbi {
     PassLoweringAbi {
         vertex_inputs: abi
@@ -65,18 +77,12 @@ pub fn pass_lowering_abi(abi: &PassProgramAbi) -> PassLoweringAbi {
         vertex_constants: abi
             .vertex_constants
             .iter()
-            .map(|binding| ConstantSlot {
-                register: binding.register,
-                program_defined: binding.source == ConstantSource::ProgramDefined,
-            })
+            .map(constant_slot)
             .collect(),
         pixel_constants: abi
             .pixel_constants
             .iter()
-            .map(|binding| ConstantSlot {
-                register: binding.register,
-                program_defined: binding.source == ConstantSource::ProgramDefined,
-            })
+            .map(constant_slot)
             .collect(),
         samplers: abi
             .samplers

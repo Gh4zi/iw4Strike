@@ -40,6 +40,11 @@ pub struct ConstantSlot {
     pub register: u16,
 
     pub program_defined: bool,
+
+    /// A value shared by many draws of a frame (the view-projection, the shadow lookup). The
+    /// draw's own row holds the index of the row with the value, so a draw's rows stay the same
+    /// while the camera moves. Not in a stage that indexes its constants (`c[a0.x + n]`).
+    pub frame_shared: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

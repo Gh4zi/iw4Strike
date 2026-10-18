@@ -140,6 +140,16 @@ impl PackedCodeSamplers {
     }
 }
 
+/// Code constants that hold one value for many draws of a view: the transposed view-projection
+/// (0x56), the shadow map partition switch (0x1f) and the transposed shadow lookup (0x5a, the
+/// sun's or a shadowed spot light's). A translated shader reads them through a row index, so a
+/// draw's packed rows don't change when the camera turns.
+pub const FRAME_SHARED_CODE_CONSTANTS: [u16; 3] = [0x1f, 0x56, 0x5a];
+
+pub fn is_frame_shared_code_constant(index: u16) -> bool {
+    FRAME_SHARED_CODE_CONSTANTS.contains(&index)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackedCodeConstantLane {
     pub stage: RuntimeShaderStage,
@@ -174,15 +184,29 @@ impl PackedCodeConstants {
         hash_packed_code_constants(lanes)
     }
 
+    /// [`Self::hash_lanes`] over the lanes `keep` takes.
+    pub fn hash_lanes_where(
+        lanes: &[PackedCodeConstantLane],
+        keep: impl Fn(&PackedCodeConstantLane) -> bool,
+    ) -> u64 {
+        fold_packed_code_constants(lanes.iter().filter(|lane| keep(lane)))
+    }
+
     fn refresh_id(&mut self) {
         self.id = Self::hash_lanes(&self.lanes);
     }
 }
 
 fn hash_packed_code_constants(lanes: &[PackedCodeConstantLane]) -> u64 {
+    fold_packed_code_constants(lanes.iter())
+}
+
+fn fold_packed_code_constants<'a>(
+    lanes: impl Iterator<Item = &'a PackedCodeConstantLane> + Clone,
+) -> u64 {
     // The id keys packed constant caches with no second comparison: keep a
     // full-strength mix.
-    let mut hash = fold_mix(FOLD_SEED, lanes.len() as u64);
+    let mut hash = fold_mix(FOLD_SEED, lanes.clone().count() as u64);
     for lane in lanes {
         let stage = match lane.stage {
             RuntimeShaderStage::Vertex => 0u64,

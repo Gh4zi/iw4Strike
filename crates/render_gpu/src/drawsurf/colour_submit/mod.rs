@@ -2299,22 +2299,21 @@ impl RunPackCache {
             .retain(|_, (_, seen)| *seen == self.intern_stamp);
     }
 
+    /// `code_key` is the pass's code constant id, or with frame-shared rows the id of its other
+    /// lanes: the span holds row indices for those, so their values don't key the banks.
     fn pack(
         &mut self,
         pass_index: usize,
         port: &super::AdmittedExactPort,
         executable: ExecutablePassView<'_>,
+        code_key: u64,
         prepare_cost: &mut PrepareCost,
     ) -> Result<Arc<PassConstantBuffers>, ConstantPackRefusal> {
         if let Some(Some(existing)) = self.passes.get(pass_index) {
             prepare_cost.note_intern_hit();
             return Ok(Arc::clone(existing));
         }
-        let key = packed_bank_key(
-            executable.port,
-            executable.local_banks,
-            executable.code_constant_id,
-        );
+        let key = packed_bank_key(executable.port, executable.local_banks, code_key);
         let (packed, hit) = intern_packed_bank(&mut self.intern, self.intern_stamp, key, || {
             port.pack_hit(executable).map(Arc::new)
         })?;
@@ -3931,6 +3930,7 @@ impl ResidentSunCommands {
         generation: u64,
         world: &[Option<ShadowmapSunFlushGpu>],
         smodel: &[Option<ShadowmapSunFlushGpu>],
+        pipeline: &ExactColourPipeline,
     ) {
         self.generation = Some(generation);
         self.world_n = world.len();
@@ -3944,10 +3944,10 @@ impl ResidentSunCommands {
         let mut world_draws = Vec::new();
         let mut smodel_draws = Vec::new();
         for flush in world.iter().flatten() {
-            self.push_flush(flush, &mut seen, &mut world_draws);
+            self.push_flush(flush, &mut seen, &mut world_draws, pipeline);
         }
         for flush in smodel.iter().flatten() {
-            self.push_flush(flush, &mut seen, &mut smodel_draws);
+            self.push_flush(flush, &mut seen, &mut smodel_draws, pipeline);
         }
         coalesce_shadow_draws(&mut world_draws);
         coalesce_shadow_draws(&mut smodel_draws);
@@ -3985,6 +3985,7 @@ impl ResidentSunCommands {
         flush: &ShadowmapSunFlushGpu,
         seen: &mut HashMap<(usize, usize, [u32; 16]), u32>,
         out: &mut Vec<PreparedExactDraw>,
+        pipeline: &ExactColourPipeline,
     ) {
         let world_key = overlay_world_key(flush.world_from_local);
         for (draw, code) in flush.draws.iter().zip(flush.pass_code.iter()) {
@@ -4008,7 +4009,19 @@ impl ResidentSunCommands {
                     };
                     let base =
                         u32::try_from(vertex_off / 16).expect("sun constant arena row fits u32");
-                    append_constant_span(&mut self.bytes, constants, &draw.texture_slots);
+                    match pipeline
+                        .get(draw.port)
+                        .map(|gpu| &gpu.port)
+                        .filter(|port| port.any_frame_shared())
+                    {
+                        Some(port) => {
+                            let mut span = Vec::new();
+                            append_constant_span(&mut span, constants, &draw.texture_slots);
+                            port.append_inline_frame_rows(&mut span, base);
+                            self.bytes.extend_from_slice(&span);
+                        }
+                        None => append_constant_span(&mut self.bytes, constants, &draw.texture_slots),
+                    }
                     self.dirty.push(ArenaDirty::Identity {
                         start: vertex_off,
                         end: self.bytes.len(),
@@ -5791,7 +5804,7 @@ fn prepare_shadowmap_sun(
             || retry_n != retry_before
             || smodel_identity_changed
         {
-            plan.rebuild(generation, &resident_world[pi], &resident_smodel[pi]);
+            plan.rebuild(generation, &resident_world[pi], &resident_smodel[pi], pipeline_res);
         }
         if plan.refused > 0 {
             miss = miss.saturating_add(plan.refused);
@@ -5801,7 +5814,7 @@ fn prepare_shadowmap_sun(
         let mut xmodel_draws = Vec::with_capacity(xmodel_gpu.len());
         let mut xmodel_seen = HashMap::new();
         for flush in &xmodel_gpu {
-            plan.push_flush(flush, &mut xmodel_seen, &mut xmodel_draws);
+            plan.push_flush(flush, &mut xmodel_seen, &mut xmodel_draws, pipeline_res);
         }
         let dynamic_refused = plan.refused.saturating_sub(refused_before);
         plan.refused = refused_before;
@@ -5813,7 +5826,7 @@ fn prepare_shadowmap_sun(
         let mut skinned_draws = Vec::with_capacity(skinned_gpu.len());
         let mut skinned_seen = HashMap::new();
         for flush in &skinned_gpu {
-            plan.push_flush(flush, &mut skinned_seen, &mut skinned_draws);
+            plan.push_flush(flush, &mut skinned_seen, &mut skinned_draws, pipeline_res);
         }
         coalesce_shadow_draws(&mut skinned_draws);
         if plan.world_draws.is_empty()
@@ -6365,12 +6378,34 @@ impl ExactPrepare<'_> {
                     && place_code.is_none();
                 let (constants, constant_base) =
                     if identity_placement_kind(&kind) || unplaced_shadow {
+                        let shared = match self.arena.as_deref_mut() {
+                            Some(arena) if port_gpu.port.any_frame_shared() => {
+                                Some(arena.frame_shared_code(&port_gpu.port, executable))
+                            }
+                            _ => None,
+                        };
                         let constants = self
                             .run_pack
-                            .pack(pass_index, &port_gpu.port, executable, &mut self.cost)
+                            .pack(
+                                pass_index,
+                                &port_gpu.port,
+                                executable,
+                                shared.map_or(executable.code_constant_id, |shared| shared.stable),
+                                &mut self.cost,
+                            )
                             .map_err(GpuSubmitRefusal::ConstantPack)?;
                         match self.arena.as_deref_mut() {
-                            Some(arena) => (None, Some(arena.base_for(&constants, &texture_slots))),
+                            Some(arena) => {
+                                let frame_rows = match shared {
+                                    Some(shared) => SpanFrameRows::Table {
+                                        port: &port_gpu.port,
+                                        lanes: executable.code_constants,
+                                        shared,
+                                    },
+                                    None => SpanFrameRows::None,
+                                };
+                                (None, Some(arena.base_for(&constants, &texture_slots, frame_rows)))
+                            }
                             None => (Some(constants), None),
                         }
                     } else if let Some(arena) = self.arena.as_deref_mut() {
@@ -6706,16 +6741,123 @@ struct SpanSource<'a, F> {
     pixel_len: usize,
     slots: &'a [u32],
     pack: F,
+
+    /// With frame-shared rows: the port that says which lanes those are, and their row indices
+    /// in lane order (code lanes, then overlay).
+    shared: Option<(&'a super::AdmittedExactPort, &'a [u32])>,
 }
 
-impl<F> SpanSource<'_, F> {
+impl<'a, F> SpanSource<'a, F> {
     fn writes(&self) -> impl Iterator<Item = SpanLaneWrite<'_>> + Clone {
-        span_lane_writes(self.lanes.iter().chain(self.overlay))
+        let shared = self.selectors();
+        span_lane_writes(
+            self.lanes
+                .iter()
+                .chain(self.overlay)
+                .filter(move |lane| !shared.is_shared(lane)),
+        )
     }
 
     fn sites(&self) -> Vec<SpanLane> {
         self.writes().map(|write| write.site).collect()
     }
+
+    fn selectors(&self) -> SpanSelectors<'a> {
+        SpanSelectors {
+            lanes: self.lanes,
+            overlay: self.overlay,
+            vertex_len: self.vertex_len,
+            shared: self.shared,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SpanSelectors<'a> {
+    lanes: &'a [PackedCodeConstantLane],
+    overlay: &'a [PackedCodeConstantLane],
+    vertex_len: usize,
+    shared: Option<(&'a super::AdmittedExactPort, &'a [u32])>,
+}
+
+impl SpanSelectors<'_> {
+    fn is_shared(&self, lane: &PackedCodeConstantLane) -> bool {
+        self.shared
+            .is_some_and(|(port, _)| port.frame_shared_lane(lane))
+    }
+
+    /// Writes the frame-shared row indices into `span`; the touched byte range if any changed.
+    fn write(&self, span: &mut [u8]) -> Option<(usize, usize)> {
+        let (_, selectors) = self.shared?;
+        write_frame_selectors(
+            span,
+            self.lanes
+                .iter()
+                .chain(self.overlay)
+                .filter(|lane| self.is_shared(lane)),
+            selectors,
+            self.vertex_len,
+        )
+    }
+}
+
+fn write_frame_selectors<'a>(
+    span: &mut [u8],
+    lanes: impl Iterator<Item = &'a PackedCodeConstantLane>,
+    selectors: &[u32],
+    vertex_len: usize,
+) -> Option<(usize, usize)> {
+    let mut touched: Option<(usize, usize)> = None;
+    let mut selectors = selectors.iter();
+    for lane in lanes {
+        let bank = if matches!(lane.stage, RuntimeShaderStage::Pixel) {
+            vertex_len
+        } else {
+            0
+        };
+        for r in 0..usize::from(lane.row_count) {
+            let Some(&row) = selectors.next() else {
+                return touched;
+            };
+            let at = (bank + usize::from(lane.destination) + r) * 16;
+            let Some(dst) = span.get_mut(at..at + 16) else {
+                continue;
+            };
+            let bytes: [u8; 16] = bytemuck::cast([row, 0u32, 0, 0]);
+            if *dst != bytes {
+                dst.copy_from_slice(&bytes);
+                touched = Some(touched.map_or((at, at + 16), |(lo, hi)| {
+                    (lo.min(at), hi.max(at + 16))
+                }));
+            }
+        }
+    }
+    touched
+}
+
+fn hash_frame_selectors(selectors: &[u32]) -> u64 {
+    selectors.iter().fold(
+        0x243f_6a88_85a3_08d3 ^ selectors.len() as u64,
+        |hash, &row| {
+            let mixed = (hash ^ u64::from(row)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            mixed ^ (mixed >> 29)
+        },
+    )
+}
+
+/// How a span holds its frame-shared code constant rows.
+#[derive(Clone, Copy)]
+enum SpanFrameRows<'a> {
+    /// The port reads none, or the span holds them as values.
+    None,
+    /// Row indices into the arena's frame table, claimed this frame for `lanes`.
+    Table {
+        port: &'a super::AdmittedExactPort,
+        lanes: &'a [PackedCodeConstantLane],
+        shared: FrameSharedDraw,
+    },
+    /// The values after the span itself (a list with no frame table).
+    Inline(&'a super::AdmittedExactPort),
 }
 
 fn intern_placed_span<E, F>(
@@ -6753,13 +6895,18 @@ where
             )
             .is_some()
         {
+            if let Some((lo, hi)) = source.selectors().write(&mut placed[start..start + entry.len]) {
+                dirty.push((start + lo, start + hi));
+            }
             entry.version = version;
             return Ok((mark_placed_base(entry.base), true));
         }
         scratch.clear();
         let sites = source.sites();
         let packed = scratch;
+        let selectors = source.selectors();
         (source.pack)(packed)?;
+        selectors.write(packed);
         if packed.len() == entry.len && start.saturating_add(entry.len) <= placed.len() {
             placed[start..start + entry.len].copy_from_slice(packed);
             entry.version = version;
@@ -6785,7 +6932,9 @@ where
     let vertex_len = source.vertex_len;
     let pixel_len = source.pixel_len;
     let packed = scratch;
+    let selectors = source.selectors();
     (source.pack)(packed)?;
+    selectors.write(packed);
     let (base, start) = place_span(placed, free, packed);
     intern.insert(
         key,
@@ -6818,13 +6967,152 @@ fn place_span(placed: &mut Vec<u8>, free: &mut Vec<(u32, usize)>, packed: &[u8])
     }
 }
 
+/// The frame-shared code constant rows of one arena (`render_material::FRAME_SHARED_CODE_CONSTANTS`):
+/// each distinct row value of the frame sits in one identity row, and a draw's span holds that
+/// row's index. A value takes the row its draws used last frame, so spans stay the same while
+/// the camera moves and only the table rows are written.
+#[derive(Default)]
+struct FrameSharedRows {
+    rows: Vec<FrameSharedRow>,
+    claimed: HashMap<[u32; 4], u32>,
+    by_code: HashMap<(u64, u8), FrameSharedDraw>,
+    selectors: Vec<u32>,
+    last_by_stable: HashMap<u64, (u32, u32)>,
+    last_selectors: Vec<u32>,
+}
+
+#[derive(Clone, Copy)]
+struct FrameSharedRow {
+    row: u32,
+    stamp: u32,
+}
+
+/// One pass's frame-shared rows this frame: `stable` ids its other code lanes, and
+/// `selectors[start..start + len]` are its row indices.
+#[derive(Clone, Copy)]
+struct FrameSharedDraw {
+    stable: u64,
+    start: u32,
+    len: u32,
+}
+
+impl FrameSharedRows {
+    fn begin_frame(&mut self) {
+        self.last_by_stable.clear();
+        for draw in self.by_code.values() {
+            self.last_by_stable
+                .insert(draw.stable, (draw.start, draw.len));
+        }
+        std::mem::swap(&mut self.selectors, &mut self.last_selectors);
+        self.selectors.clear();
+        self.by_code.clear();
+        self.claimed.clear();
+    }
+
+    fn selectors_of(&self, draw: FrameSharedDraw) -> &[u32] {
+        &self.selectors[draw.start as usize..][..draw.len as usize]
+    }
+
+    /// The table row holding `value` this frame: the one it already has, else `hint` if no
+    /// other value took it this frame, else a row nothing used this frame or last.
+    fn claim(
+        &mut self,
+        value: [u32; 4],
+        hint: Option<u32>,
+        stamp: u32,
+        identity: &mut Vec<u8>,
+        dirty: &mut Vec<ArenaDirty>,
+    ) -> u32 {
+        if let Some(&row) = self.claimed.get(&value) {
+            return row;
+        }
+        let last = stamp.wrapping_sub(1);
+        let at = hint
+            .and_then(|hint| {
+                self.rows
+                    .iter()
+                    .position(|row| row.row == hint && row.stamp != stamp)
+            })
+            .or_else(|| {
+                self.rows
+                    .iter()
+                    .position(|row| row.stamp != stamp && row.stamp != last)
+            })
+            .unwrap_or_else(|| {
+                let row = u32::try_from(identity.len() / 16).expect("constant row fits u32");
+                identity.extend_from_slice(&[0u8; 16]);
+                self.rows.push(FrameSharedRow {
+                    row,
+                    stamp: stamp.wrapping_sub(2),
+                });
+                self.rows.len() - 1
+            });
+        let entry = &mut self.rows[at];
+        entry.stamp = stamp;
+        let start = entry.row as usize * 16;
+        let bytes: [u8; 16] = bytemuck::cast(value);
+        if identity[start..start + 16] != bytes {
+            identity[start..start + 16].copy_from_slice(&bytes);
+            dirty.push(ArenaDirty::Identity {
+                start,
+                end: start + 16,
+            });
+        }
+        self.claimed.insert(value, entry.row);
+        entry.row
+    }
+
+    fn code(
+        &mut self,
+        port: &super::AdmittedExactPort,
+        executable: ExecutablePassView<'_>,
+        stamp: u32,
+        identity: &mut Vec<u8>,
+        dirty: &mut Vec<ArenaDirty>,
+    ) -> FrameSharedDraw {
+        let routes = u8::from(port.frame_shared(RuntimeShaderStage::Vertex))
+            | u8::from(port.frame_shared(RuntimeShaderStage::Pixel)) << 1;
+        let memo = (executable.code_constant_id, routes);
+        if let Some(&draw) = self.by_code.get(&memo) {
+            return draw;
+        }
+        let lanes = executable.code_constants;
+        let stable = PackedCodeConstants::hash_lanes_where(lanes, |lane| {
+            !port.frame_shared_lane(lane)
+        }) ^ u64::from(routes);
+        let last = self.last_by_stable.get(&stable).copied();
+        let start = self.selectors.len();
+        for lane in lanes.iter().filter(|lane| port.frame_shared_lane(lane)) {
+            let first = usize::from(lane.first_row);
+            for r in 0..usize::from(lane.row_count) {
+                let value = lane.rows.get(first + r).copied().unwrap_or_default();
+                let i = self.selectors.len() - start;
+                let hint = last
+                    .filter(|&(_, len)| i < len as usize)
+                    .and_then(|(at, _)| self.last_selectors.get(at as usize + i).copied());
+                let row = self.claim(value, hint, stamp, identity, dirty);
+                self.selectors.push(row);
+            }
+        }
+        let draw = FrameSharedDraw {
+            stable,
+            start: u32::try_from(start).expect("selector index fits u32"),
+            len: u32::try_from(self.selectors.len() - start).expect("selector count fits u32"),
+        };
+        self.by_code.insert(memo, draw);
+        draw
+    }
+}
+
 #[derive(Default)]
 struct ArenaPack {
     identity: Vec<u8>,
 
     identity_reserved: usize,
 
-    seen: HashMap<(usize, usize), (u32, Arc<PassConstantBuffers>, Arc<[u32]>, u32)>,
+    /// Identity spans by banks, texture slots and frame-shared rows (their row indices' hash,
+    /// or a tag): base, the banks and slots kept alive, last stamp, byte length.
+    seen: HashMap<(usize, usize, u64), (u32, Arc<PassConstantBuffers>, Arc<[u32]>, u32, usize)>,
     placed: Vec<u8>,
 
     placed_seen: HashMap<PlacedPackKey, PlacedSpan>,
@@ -6837,25 +7125,20 @@ struct ArenaPack {
     pack_scratch: Vec<u8>,
     placed_dirty_scratch: Vec<(usize, usize)>,
     full_upload: bool,
+
+    frame: FrameSharedRows,
+    selector_scratch: Vec<u32>,
 }
 
 impl ArenaPack {
     fn begin_list(&mut self) {
         let live = self.stamp;
-        if self.seen.values().any(|(_, _, _, stamp)| *stamp != live) {
+        if self.seen.values().any(|(_, _, _, stamp, _)| *stamp != live) {
             let dead: Vec<_> = self
                 .seen
                 .iter()
-                .filter(|(_, (_, _, _, stamp))| *stamp != live)
-                .map(|(key, (base, constants, slots, _))| {
-                    (
-                        *key,
-                        *base,
-                        std::mem::size_of_val(constants.vertex.as_slice())
-                            + std::mem::size_of_val(constants.pixel.as_slice())
-                            + d3d9_sm3::texture_slot_rows(slots.len()) * 16,
-                    )
-                })
+                .filter(|(_, (_, _, _, stamp, _))| *stamp != live)
+                .map(|(key, (base, _, _, _, len))| (*key, *base, *len))
                 .collect();
             for (key, base, len) in dead {
                 self.seen.remove(&key);
@@ -6877,6 +7160,21 @@ impl ArenaPack {
         self.stamp = self.stamp.wrapping_add(1);
         self.share_n = 0;
         self.dirty.clear();
+        self.frame.begin_frame();
+    }
+
+    fn frame_shared_code(
+        &mut self,
+        port: &super::AdmittedExactPort,
+        executable: ExecutablePassView<'_>,
+    ) -> FrameSharedDraw {
+        self.frame.code(
+            port,
+            executable,
+            self.stamp,
+            &mut self.identity,
+            &mut self.dirty,
+        )
     }
 
     fn reserved_rows(&self) -> u32 {
@@ -6884,32 +7182,68 @@ impl ArenaPack {
             .expect("exact constant arena row fits u32")
     }
 
-    fn base_for(&mut self, constants: &Arc<PassConstantBuffers>, slots: &Arc<[u32]>) -> u32 {
+    fn base_for(
+        &mut self,
+        constants: &Arc<PassConstantBuffers>,
+        slots: &Arc<[u32]>,
+        frame_rows: SpanFrameRows<'_>,
+    ) -> u32 {
+        // Row index hashes are made odd, apart from the even tags.
+        let tag = match frame_rows {
+            SpanFrameRows::None => 0,
+            SpanFrameRows::Inline(_) => 2,
+            SpanFrameRows::Table { shared, .. } => {
+                hash_frame_selectors(self.frame.selectors_of(shared)) | 1
+            }
+        };
         let key = (
             Arc::as_ptr(constants) as usize,
             Arc::as_ptr(slots).cast::<u32>() as usize,
+            tag,
         );
-        if let Some((base, _, _, stamp)) = self.seen.get_mut(&key) {
+        if let Some((base, _, _, stamp, _)) = self.seen.get_mut(&key) {
             *stamp = self.stamp;
             self.share_n = self.share_n.saturating_add(1);
             return *base;
         }
         let mut span = Vec::new();
         append_constant_span(&mut span, constants, slots);
-        let (base, start) = if let Some(base) = take_exact_free(&mut self.identity_free, span.len())
-        {
-            let start = base as usize * 16;
-            self.identity[start..start + span.len()].copy_from_slice(&span);
-            (base, start)
+        let inline_len = match frame_rows {
+            SpanFrameRows::Inline(port) => port.inline_frame_row_count() * 16,
+            _ => 0,
+        };
+        let len = span.len() + inline_len;
+        let (base, start) = if let Some(base) = take_exact_free(&mut self.identity_free, len) {
+            (base, base as usize * 16)
         } else {
             let start = self.identity.len();
-            let base = u32::try_from(start / 16).expect("exact constant arena row fits u32");
-            self.identity.extend_from_slice(&span);
-            (base, start)
+            self.identity.resize(start + len, 0);
+            (
+                u32::try_from(start / 16).expect("exact constant arena row fits u32"),
+                start,
+            )
         };
+        match frame_rows {
+            SpanFrameRows::None => {}
+            SpanFrameRows::Inline(port) => port.append_inline_frame_rows(&mut span, base),
+            SpanFrameRows::Table {
+                port,
+                lanes,
+                shared,
+            } => {
+                write_frame_selectors(
+                    &mut span,
+                    lanes.iter().filter(|lane| port.frame_shared_lane(lane)),
+                    self.frame.selectors_of(shared),
+                    constants.vertex.len(),
+                );
+            }
+        }
+        span.resize(len, 0);
+        self.identity[start..start + len].copy_from_slice(&span);
         self.seen.insert(
             key,
-            (base, Arc::clone(constants), Arc::clone(slots), self.stamp),
+            (base, Arc::clone(constants), Arc::clone(slots), self.stamp, len),
         );
         self.dirty.push(ArenaDirty::Identity {
             start,
@@ -6934,12 +7268,43 @@ impl ArenaPack {
             drawsurf_key,
             pass_index,
         );
-        let version = placed_span_version(executable.code_constant_id, overlay);
+        let shared = port.any_frame_shared();
+        let mut selectors = std::mem::take(&mut self.selector_scratch);
+        selectors.clear();
+        let version = if shared {
+            let code = self.frame_shared_code(port, executable);
+            selectors.extend_from_slice(self.frame.selectors_of(code));
+            let overlay_shared = overlay.iter().any(|lane| port.frame_shared_lane(lane));
+            for lane in overlay.iter().filter(|lane| port.frame_shared_lane(lane)) {
+                let first = usize::from(lane.first_row);
+                for r in 0..usize::from(lane.row_count) {
+                    let value = lane.rows.get(first + r).copied().unwrap_or_default();
+                    selectors.push(self.frame.claim(
+                        value,
+                        None,
+                        self.stamp,
+                        &mut self.identity,
+                        &mut self.dirty,
+                    ));
+                }
+            }
+            let overlay_hash = if overlay_shared {
+                PackedCodeConstants::hash_lanes_where(overlay, |lane| {
+                    !port.frame_shared_lane(lane)
+                })
+            } else {
+                PackedCodeConstants::hash_lanes(overlay)
+            };
+            code.stable ^ overlay_hash ^ hash_frame_selectors(&selectors).rotate_left(1)
+        } else {
+            placed_span_version(executable.code_constant_id, overlay)
+        };
         let Some(banks) = executable.local_banks else {
+            self.selector_scratch = selectors;
             return Err(ConstantPackRefusal::MissingLocalBanks);
         };
         self.placed_dirty_scratch.clear();
-        let (base, hit) = intern_placed_span(
+        let interned = intern_placed_span(
             &mut self.placed_seen,
             &mut self.placed,
             self.stamp,
@@ -6959,8 +7324,11 @@ impl ArenaPack {
                     append_slot_rows(placed, slots);
                     Ok(())
                 },
+                shared: shared.then_some((port, &selectors[..])),
             },
-        )?;
+        );
+        self.selector_scratch = selectors;
+        let (base, hit) = interned?;
         for (start, end) in self.placed_dirty_scratch.drain(..) {
             self.dirty.push(ArenaDirty::Placed { start, end });
         }
@@ -7008,7 +7376,11 @@ fn upload_constant_arena(
         if draw.constant_base.is_none()
             && let Some(ref constants) = draw.constants
         {
-            draw.constant_base = Some(packed.base_for(constants, &draw.texture_slots));
+            let frame_rows = match pipeline.get(draw.port).map(|gpu| &gpu.port) {
+                Some(port) if port.any_frame_shared() => SpanFrameRows::Inline(port),
+                _ => SpanFrameRows::None,
+            };
+            draw.constant_base = Some(packed.base_for(constants, &draw.texture_slots, frame_rows));
         }
     }
     let needed = packed.identity.len();

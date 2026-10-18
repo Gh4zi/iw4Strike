@@ -21,10 +21,12 @@ pub use catalog::{
 };
 pub use code_sources::{CodeSourceError, CodeSourceLookup, LayeredCodeSources, RuntimeCodeSources};
 pub use execute::{
-    ExecutablePass, ExecutablePassView, MaterialDrawKey, MaterialExecution, MaterialRefusal,
+    ExecutablePass, ExecutablePassView, FRAME_SHARED_CODE_CONSTANTS, MaterialDrawKey,
+    MaterialExecution, MaterialRefusal,
     PackedCodeConstantLane, PackedCodeConstants, PackedCodeSamplerLane, PackedCodeSamplers,
     StableMaterialShell, StablePassShell, UnsupportedStateFields, add_surf_has_technique,
     capture_stable_shell, draw_binds_code_texture, draw_code_sampler_mask, execute_material,
+    is_frame_shared_code_constant,
     execute_material_with_shell, prepared_draw_technique, rebind_stable_material,
     resolve_material_technique, resolve_sorted_material, smodel_tess_vertex_type,
     world_tess_vertex_type, world_tess_vertex_type_authored,

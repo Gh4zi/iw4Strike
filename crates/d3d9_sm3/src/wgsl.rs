@@ -64,6 +64,10 @@ pub struct PassWgsl {
     pub vertex_constant_len: usize,
     pub pixel_constant_len: usize,
     pub sampler_count: usize,
+
+    /// The stage reads its `frame_shared` constants through row indices.
+    pub vertex_frame_shared: bool,
+    pub pixel_frame_shared: bool,
 }
 
 /// WGSL text kept LZ4-compressed. A generated pass runs to tens of KB, thousands of them stay
@@ -100,6 +104,9 @@ pub struct PackedPassWgsl {
     pub vertex_constant_len: usize,
     pub pixel_constant_len: usize,
     pub sampler_count: usize,
+
+    pub vertex_frame_shared: bool,
+    pub pixel_frame_shared: bool,
 }
 
 impl From<&PassWgsl> for PackedPassWgsl {
@@ -111,6 +118,8 @@ impl From<&PassWgsl> for PackedPassWgsl {
             vertex_constant_len: module.vertex_constant_len,
             pixel_constant_len: module.pixel_constant_len,
             sampler_count: module.sampler_count,
+            vertex_frame_shared: module.vertex_frame_shared,
+            pixel_frame_shared: module.pixel_frame_shared,
         }
     }
 }
@@ -817,6 +826,8 @@ pub fn lower_pass_to_wgsl(
         vertex_constant_len,
         pixel_constant_len,
         sampler_count: abi.samplers.len(),
+        vertex_frame_shared: reads_frame_shared(abi, &vertex_plan, Stage::Vertex),
+        pixel_frame_shared: reads_frame_shared(abi, &pixel_plan, Stage::Pixel),
     })
 }
 
@@ -925,6 +936,17 @@ fn emit_constant_prologue(
         if bound.program_defined {
             continue;
         }
+        if bound.frame_shared && !plan.uses_relative_float {
+            writeln!(
+                wgsl,
+                "    let {} = sm3_constants.c[bitcast<u32>(sm3_constants.c[{} + {}u].x)];",
+                register_name(register),
+                arena_base,
+                register.index
+            )
+            .unwrap();
+            continue;
+        }
         writeln!(
             wgsl,
             "    let {} = sm3_constants.c[{} + {}u];",
@@ -935,6 +957,21 @@ fn emit_constant_prologue(
         .unwrap();
     }
     Ok(())
+}
+
+fn reads_frame_shared(abi: &PassLoweringAbi, plan: &LoweringPlan, stage: Stage) -> bool {
+    let bindings = match stage {
+        Stage::Vertex => &abi.vertex_constants,
+        Stage::Pixel => &abi.pixel_constants,
+    };
+    !plan.uses_relative_float
+        && stage_constant_registers(plan).iter().any(|register| {
+            bindings.iter().any(|binding| {
+                binding.register == register.index
+                    && binding.frame_shared
+                    && !binding.program_defined
+            })
+        })
 }
 
 fn emit_prologue(wgsl: &mut String, plan: &LoweringPlan, defined: &mut BTreeMap<Sm3Register, u8>) {

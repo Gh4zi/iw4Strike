@@ -536,7 +536,8 @@ fn create_postfx_gpu(
     let pipeline = postfx_pipeline(&film, cache, pipelines)?;
     let module = film.port.module();
     let total_size = (module.vertex_constant_len + module.pixel_constant_len) * 16
-        + d3d9_sm3::texture_slot_rows(module.sampler_count) * 16;
+        + d3d9_sm3::texture_slot_rows(module.sampler_count) * 16
+        + film.port.inline_frame_row_count() * 16;
     let (constants_layout, textures_layout) = postfx_layouts(&film);
     let constants_arena = device.create_buffer(&BufferDescriptor {
         label: Some("iw4_postfx_constant_arena"),
@@ -788,6 +789,7 @@ fn draw_postfx(
                     d3d9_sm3::texture_slot_word(index as u16, u16::from(lane.index == 15));
             }
             bytes.extend_from_slice(bytemuck::cast_slice(&slots));
+            ready.film.port.append_inline_frame_rows(&mut bytes, 0);
             uploads.push(bytes);
         }
         Ok(uploads)
