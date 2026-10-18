@@ -24,7 +24,7 @@ impl Default for AuthorityWorld {
     }
 }
 
-#[derive(Resource, Debug, Default)]
+#[derive(Resource, Clone, Debug, Default)]
 pub struct ClientShotSamples(pub HashMap<(ClientId, i32), sim::ShotSampleProvenance>);
 
 impl ClientShotSamples {
@@ -453,11 +453,13 @@ fn reset_authority_on_match_torn_down(
     mut pending_acks: ResMut<PendingAcks>,
     mut pending_step: ResMut<PendingStepResult>,
     mut server_tick: ResMut<ServerTick>,
+    mut overlap: ResMut<AuthorityStepOverlap>,
 ) {
     if torn.read().count() == 0 {
         return;
     }
     *clock = AuthorityClock::default();
+    overlap.queued.clear();
 
     inbox.clear();
     transactions.open_new_scope();
@@ -724,14 +726,23 @@ fn step_authority(
     mut pending_step: ResMut<PendingStepResult>,
     mut pending_svc: ResMut<crate::PendingSvcSounds>,
     samples: Res<ClientShotSamples>,
+    mut pending_acks: ResMut<PendingAcks>,
     mut exit_level: MessageWriter<ExitLevelCalled>,
     mut overlap: ResMut<AuthorityStepOverlap>,
     trace: Option<ResMut<AuthorityPhaseTrace>>,
 ) {
     push_phase(trace, "Step");
-    if overlap.enabled && pending.0.is_some() {
-        // Stepped on a worker while the client presents (`spawn_overlapped_step`).
-        overlap.deferred = true;
+    if overlap.enabled
+        && let Some(input) = pending.0.take()
+    {
+        // Stepped on a worker while the client presents (`spawn_overlapped_step`), after any
+        // tick queued before it this frame. What the tick's publish reads is kept with it.
+        overlap.queued.push(QueuedTick {
+            tick: clock.tick,
+            input,
+            samples: samples.clone(),
+            acks: std::mem::take(&mut pending_acks.0),
+        });
         return;
     }
     pending_svc.occupy_cs(&mut world.0);
@@ -824,23 +835,32 @@ fn finish_step(
     })
 }
 
-type OverlappedStep = (
-    AuthorityWorld,
-    sim::TickInput,
-    u32,
-    Result<sim::Snapshot, sim::script::Fault>,
-);
+/// A tick FixedUpdate gathered, waiting to be stepped: its input, the shot samples its step
+/// rewinds with and the command acks its publish sends.
+struct QueuedTick {
+    tick: u32,
+    input: sim::TickInput,
+    samples: ClientShotSamples,
+    acks: Vec<(ClientId, CmdSeq)>,
+}
 
-/// A listen authority steps its tick on a worker while the client runs Present, instead of on
-/// the main thread before the frame: the step (~1 ms a tick, ~2 ms with a dozen bots) leaves the
-/// main thread. The host then sees that tick one frame later; its own movement is predicted and
-/// does not wait for it. `IW4L_AUTHORITY_OVERLAP=0` steps inline as before.
+/// A queued tick, stepped: what its publish needs.
+type SteppedTick = (Result<ServerTickData, StepFailed>, Vec<(ClientId, CmdSeq)>);
+
+type OverlappedStep = (AuthorityWorld, Vec<SteppedTick>);
+
+/// A listen authority steps its ticks on a worker while the client runs Present, instead of on
+/// the main thread before the frame: the steps (~2-3 ms a tick with a dozen bots) leave the
+/// main thread. A frame longer than a tick gathers more than one; they are stepped in order on
+/// the worker and published in order when it is back. The host sees them one frame later; its
+/// own movement is predicted and does not wait for them. `IW4L_AUTHORITY_OVERLAP=0` steps inline
+/// as before.
 #[derive(Resource, Default)]
 pub struct AuthorityStepOverlap {
     enabled: bool,
-    /// FixedUpdate left this tick's input for `spawn_overlapped_step`.
-    deferred: bool,
-    /// A step is on the worker; the authority world is out of the ECS until it is joined.
+    /// The ticks FixedUpdate gathered this frame, for `spawn_overlapped_step`.
+    queued: Vec<QueuedTick>,
+    /// Steps are on the worker; the authority world is out of the ECS until they are joined.
     in_flight: bool,
     worker: Option<AuthorityStepWorker>,
 }
@@ -859,22 +879,22 @@ impl AuthorityStepOverlap {
 /// A thread of its own: on a shared task pool the step queued behind loading work (audio decode,
 /// image uploads) and the join stalled the main thread for hundreds of milliseconds.
 struct AuthorityStepWorker {
-    jobs: std::sync::mpsc::Sender<(AuthorityWorld, sim::TickInput, u32)>,
+    jobs: std::sync::mpsc::Sender<(AuthorityWorld, Vec<QueuedTick>)>,
     done: std::sync::Mutex<std::sync::mpsc::Receiver<OverlappedStep>>,
 }
 
 impl AuthorityStepWorker {
     fn spawn() -> Option<Self> {
-        let (jobs, job_rx) = std::sync::mpsc::channel::<(AuthorityWorld, sim::TickInput, u32)>();
+        let (jobs, job_rx) = std::sync::mpsc::channel::<(AuthorityWorld, Vec<QueuedTick>)>();
         let (done_tx, done) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("iw4l-authority-step".into())
             // The GSC interpreter recurses; the main thread it used to run on is not small either.
             .stack_size(8 << 20)
             .spawn(move || {
-                while let Ok((mut authority, input, tick)) = job_rx.recv() {
-                    let stepped = run_step(&mut authority.0, tick, &input);
-                    if done_tx.send((authority, input, tick, stepped)).is_err() {
+                while let Ok((mut authority, queued)) = job_rx.recv() {
+                    let stepped = step_queued(&mut authority.0, queued);
+                    if done_tx.send((authority, stepped)).is_err() {
                         break;
                     }
                 }
@@ -887,34 +907,36 @@ impl AuthorityStepWorker {
     }
 }
 
-/// FixedUpdate, before the tick's Advance: a tick still deferred (a second tick in one frame) or
-/// still on a worker is finished and published first, so ticks keep their order.
+/// FixedUpdate, before the tick's Advance: steps still on a worker are finished and published
+/// first, so ticks keep their order. A tick queued earlier this frame stays queued: the next
+/// tick's ingress and gather run before it steps, and both step on the worker.
 fn catch_up_overlapped_step(world: &mut World) {
     join_overlapped_step(world);
-    if !world.resource::<AuthorityStepOverlap>().deferred {
-        return;
-    }
-    world.resource_mut::<AuthorityStepOverlap>().deferred = false;
-    step_deferred_inline(world);
-    world.run_schedule(frame::AuthorityPublish);
 }
 
-fn step_deferred_inline(world: &mut World) {
-    let Some(input) = world.resource_mut::<PendingAuthorityInput>().0.take() else {
-        return;
-    };
-    let Some(mut authority) = world.remove_resource::<AuthorityWorld>() else {
-        return;
-    };
-    let tick = world.resource::<AuthorityClock>().tick;
-    world
-        .resource_mut::<crate::PendingSvcSounds>()
-        .occupy_cs(&mut authority.0);
-    prepare_step(&mut authority.0, world.resource::<ClientShotSamples>());
-    let stepped = run_step(&mut authority.0, tick, &input);
-    let finished = finish_step(&mut authority.0, tick, input, stepped);
-    world.insert_resource(authority);
-    adopt_finished_step(world, finished);
+/// Steps the queued ticks in order; each tick's results are taken from the world right after
+/// its own step.
+fn step_queued(world: &mut sim::SimWorld, queued: Vec<QueuedTick>) -> Vec<SteppedTick> {
+    queued
+        .into_iter()
+        .map(|queued| {
+            prepare_step(world, &queued.samples);
+            let stepped = run_step(world, queued.tick, &queued.input);
+            (
+                finish_step(world, queued.tick, queued.input, stepped),
+                queued.acks,
+            )
+        })
+        .collect()
+}
+
+/// Publishes stepped ticks in order, each with its own acks.
+fn publish_stepped_ticks(world: &mut World, stepped: Vec<SteppedTick>) {
+    for (finished, acks) in stepped {
+        world.resource_mut::<PendingAcks>().0 = acks;
+        adopt_finished_step(world, finished);
+        world.run_schedule(frame::AuthorityPublish);
+    }
 }
 
 fn adopt_finished_step(world: &mut World, finished: Result<ServerTickData, StepFailed>) {
@@ -927,50 +949,43 @@ fn adopt_finished_step(world: &mut World, finished: Result<ServerTickData, StepF
     }
 }
 
-/// FixedUpdate, in the Snapshot slot: publishes the tick just stepped, unless it was deferred.
+/// FixedUpdate, in the Snapshot slot: publishes the tick just stepped, unless it was queued.
 fn publish_stepped_tick(world: &mut World) {
-    if world.resource::<AuthorityStepOverlap>().deferred {
+    if !world.resource::<AuthorityStepOverlap>().queued.is_empty() {
         return;
     }
     world.run_schedule(frame::AuthorityPublish);
 }
 
-/// Update, just before Present: moves the authority world and the deferred tick's input to a
-/// worker. The world is out of the ECS until `join_overlapped_step`.
+/// Update, just before Present: moves the authority world and the queued ticks to a worker.
+/// The world is out of the ECS until `join_overlapped_step`.
 fn spawn_overlapped_step(world: &mut World) {
-    if !world.resource::<AuthorityStepOverlap>().deferred {
+    let queued = std::mem::take(&mut world.resource_mut::<AuthorityStepOverlap>().queued);
+    if queued.is_empty() {
         return;
     }
-    world.resource_mut::<AuthorityStepOverlap>().deferred = false;
-    let Some(input) = world.resource_mut::<PendingAuthorityInput>().0.take() else {
-        return;
-    };
     let Some(mut authority) = world.remove_resource::<AuthorityWorld>() else {
         return;
     };
-    let tick = world.resource::<AuthorityClock>().tick;
     world
         .resource_mut::<crate::PendingSvcSounds>()
         .occupy_cs(&mut authority.0);
-    prepare_step(&mut authority.0, world.resource::<ClientShotSamples>());
     let mut overlap = world.resource_mut::<AuthorityStepOverlap>();
     if overlap.worker.is_none() {
         overlap.worker = AuthorityStepWorker::spawn();
     }
     let sent = match overlap.worker.as_ref() {
-        Some(worker) => worker.jobs.send((authority, input, tick)).map_err(|e| e.0),
-        None => Err((authority, input, tick)),
+        Some(worker) => worker.jobs.send((authority, queued)).map_err(|e| e.0),
+        None => Err((authority, queued)),
     };
     match sent {
         Ok(()) => overlap.in_flight = true,
-        Err((mut authority, input, tick)) => {
+        Err((mut authority, queued)) => {
             // No worker: step here, as without the overlap.
             overlap.worker = None;
-            let stepped = run_step(&mut authority.0, tick, &input);
-            let finished = finish_step(&mut authority.0, tick, input, stepped);
+            let stepped = step_queued(&mut authority.0, queued);
             world.insert_resource(authority);
-            adopt_finished_step(world, finished);
-            world.run_schedule(frame::AuthorityPublish);
+            publish_stepped_ticks(world, stepped);
         }
     }
 }
@@ -989,15 +1004,13 @@ fn join_overlapped_step(world: &mut World) {
             .expect("authority step channel is never poisoned")
             .recv()
     });
-    let Some(Ok((mut authority, input, tick, stepped))) = received else {
+    let Some(Ok((authority, stepped))) = received else {
         // The step panicked on the worker and took the authority world with it, as it would have
         // taken the main thread.
         panic!("authority step worker died while stepping a tick");
     };
-    let finished = finish_step(&mut authority.0, tick, input, stepped);
     world.insert_resource(authority);
-    adopt_finished_step(world, finished);
-    world.run_schedule(frame::AuthorityPublish);
+    publish_stepped_ticks(world, stepped);
 }
 
 fn publish_server_tick(
