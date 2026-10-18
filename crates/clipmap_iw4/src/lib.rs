@@ -174,7 +174,21 @@ impl LeafHits {
 
 #[must_use]
 pub fn leaves_have_coll_aabb(leaves: &[ClipLeaf]) -> bool {
-    leaves.iter().any(|leaf| leaf.coll_aabb_count != 0)
+    // A trace asks once for every leaf it visits, and the first leaf with mesh AABBs can sit
+    // dozens of leaves in (45 on mp_strike). Where one was last found is remembered: that leaf
+    // having AABBs in this table answers yes exactly, whichever table set it.
+    static FOUND_AT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    let at = FOUND_AT.load(core::sync::atomic::Ordering::Relaxed);
+    if leaves.get(at).is_some_and(|leaf| leaf.coll_aabb_count != 0) {
+        return true;
+    }
+    match leaves.iter().position(|leaf| leaf.coll_aabb_count != 0) {
+        Some(at) => {
+            FOUND_AT.store(at, core::sync::atomic::Ordering::Relaxed);
+            true
+        }
+        None => false,
+    }
 }
 
 #[must_use]
