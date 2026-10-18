@@ -6969,8 +6969,9 @@ fn place_span(placed: &mut Vec<u8>, free: &mut Vec<(u32, usize)>, packed: &[u8])
 
 /// The frame-shared code constant rows of one arena (`render_material::FRAME_SHARED_CODE_CONSTANTS`):
 /// each distinct row value of the frame sits in one identity row, and a draw's span holds that
-/// row's index. A value takes the row its draws used last frame, so spans stay the same while
-/// the camera moves and only the table rows are written.
+/// row's index. A value takes the row its draws used last frame (by their other lanes), else the
+/// row the same constant row first took last frame, so spans stay the same while the camera
+/// moves and only the table rows are written.
 #[derive(Default)]
 struct FrameSharedRows {
     rows: Vec<FrameSharedRow>,
@@ -6979,6 +6980,9 @@ struct FrameSharedRows {
     selectors: Vec<u32>,
     last_by_stable: HashMap<u64, (u32, u32)>,
     last_selectors: Vec<u32>,
+    /// The row each (code constant, row) first took this frame, and last frame.
+    by_lane: HashMap<(u16, u8), u32>,
+    last_by_lane: HashMap<(u16, u8), u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -7005,6 +7009,8 @@ impl FrameSharedRows {
         }
         std::mem::swap(&mut self.selectors, &mut self.last_selectors);
         self.selectors.clear();
+        std::mem::swap(&mut self.by_lane, &mut self.last_by_lane);
+        self.by_lane.clear();
         self.by_code.clear();
         self.claimed.clear();
     }
@@ -7013,12 +7019,12 @@ impl FrameSharedRows {
         &self.selectors[draw.start as usize..][..draw.len as usize]
     }
 
-    /// The table row holding `value` this frame: the one it already has, else `hint` if no
-    /// other value took it this frame, else a row nothing used this frame or last.
+    /// The table row holding `value` this frame: the one it already has, else the first of
+    /// `hints` no other value took this frame, else a row nothing used this frame or last.
     fn claim(
         &mut self,
         value: [u32; 4],
-        hint: Option<u32>,
+        hints: [Option<u32>; 2],
         stamp: u32,
         identity: &mut Vec<u8>,
         dirty: &mut Vec<ArenaDirty>,
@@ -7027,8 +7033,10 @@ impl FrameSharedRows {
             return row;
         }
         let last = stamp.wrapping_sub(1);
-        let at = hint
-            .and_then(|hint| {
+        let at = hints
+            .into_iter()
+            .flatten()
+            .find_map(|hint| {
                 self.rows
                     .iter()
                     .position(|row| row.row == hint && row.stamp != stamp)
@@ -7087,10 +7095,13 @@ impl FrameSharedRows {
             for r in 0..usize::from(lane.row_count) {
                 let value = lane.rows.get(first + r).copied().unwrap_or_default();
                 let i = self.selectors.len() - start;
-                let hint = last
+                let own = last
                     .filter(|&(_, len)| i < len as usize)
                     .and_then(|(at, _)| self.last_selectors.get(at as usize + i).copied());
-                let row = self.claim(value, hint, stamp, identity, dirty);
+                let lane_row = (lane.index, u8::try_from(first + r).unwrap_or(u8::MAX));
+                let shared = self.last_by_lane.get(&lane_row).copied();
+                let row = self.claim(value, [own, shared], stamp, identity, dirty);
+                self.by_lane.entry(lane_row).or_insert(row);
                 self.selectors.push(row);
             }
         }
@@ -7281,7 +7292,7 @@ impl ArenaPack {
                     let value = lane.rows.get(first + r).copied().unwrap_or_default();
                     selectors.push(self.frame.claim(
                         value,
-                        None,
+                        [None, None],
                         self.stamp,
                         &mut self.identity,
                         &mut self.dirty,
