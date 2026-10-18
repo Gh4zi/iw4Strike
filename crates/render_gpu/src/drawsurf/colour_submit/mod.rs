@@ -7020,6 +7020,9 @@ struct FrameSharedRows {
     /// The row each (code constant, row) first took this frame, and last frame.
     by_lane: HashMap<(u16, u8), u32>,
     last_by_lane: HashMap<(u16, u8), u32>,
+    /// `rows` by identity row, and the rows nothing used last frame (free to take).
+    by_row: HashMap<u32, usize>,
+    spare: Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -7038,7 +7041,16 @@ struct FrameSharedDraw {
 }
 
 impl FrameSharedRows {
-    fn begin_frame(&mut self) {
+    fn begin_frame(&mut self, stamp: u32) {
+        let last = stamp.wrapping_sub(1);
+        self.spare.clear();
+        self.spare.extend(
+            self.rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.stamp != last)
+                .map(|(at, _)| at),
+        );
         self.last_by_stable.clear();
         for draw in self.by_code.values() {
             self.last_by_stable
@@ -7069,19 +7081,24 @@ impl FrameSharedRows {
         if let Some(&row) = self.claimed.get(&value) {
             return row;
         }
-        let last = stamp.wrapping_sub(1);
+        let rows = &self.rows;
         let at = hints
             .into_iter()
             .flatten()
             .find_map(|hint| {
-                self.rows
-                    .iter()
-                    .position(|row| row.row == hint && row.stamp != stamp)
+                self.by_row
+                    .get(&hint)
+                    .copied()
+                    .filter(|&at| rows[at].stamp != stamp)
             })
             .or_else(|| {
-                self.rows
-                    .iter()
-                    .position(|row| row.stamp != stamp && row.stamp != last)
+                // A hint may have taken a spare row already this frame.
+                while let Some(at) = self.spare.pop() {
+                    if self.rows[at].stamp != stamp {
+                        return Some(at);
+                    }
+                }
+                None
             })
             .unwrap_or_else(|| {
                 let row = u32::try_from(identity.len() / 16).expect("constant row fits u32");
@@ -7090,6 +7107,7 @@ impl FrameSharedRows {
                     row,
                     stamp: stamp.wrapping_sub(2),
                 });
+                self.by_row.insert(row, self.rows.len() - 1);
                 self.rows.len() - 1
             });
         let entry = &mut self.rows[at];
@@ -7208,7 +7226,7 @@ impl ArenaPack {
         self.stamp = self.stamp.wrapping_add(1);
         self.share_n = 0;
         self.dirty.clear();
-        self.frame.begin_frame();
+        self.frame.begin_frame(self.stamp);
     }
 
     fn frame_shared_code(
